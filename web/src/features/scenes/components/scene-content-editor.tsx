@@ -1,15 +1,19 @@
 import { FeedbackMessage } from "@/components/ui/feedback-message";
-import { Textarea } from "@/components/ui/textarea";
+import { TiptapEditor } from "@/features/scenes/editor/tiptap-editor";
 
 type SceneContentEditorProps = {
+  editorKey: string;
+  contentJson: string;
   contentText: string;
   wordCount: number;
   isSuccess: boolean;
   isError: boolean;
-  onContentChange: (contentText: string) => void;
+  onContentChange: (contentJson: string, contentText: string) => void;
 };
 
 export function SceneContentEditor({
+  editorKey,
+  contentJson,
   contentText,
   wordCount,
   isSuccess,
@@ -27,11 +31,12 @@ export function SceneContentEditor({
           <span className="text-sm text-zinc-600">Word count oficial: {wordCount}</span>
         </div>
 
-        <Textarea
-          value={contentText}
-          onChange={(event) => onContentChange(event.target.value)}
-          placeholder="Escreva a cena aqui..."
-          className="min-h-[62vh] resize-y rounded-lg border-zinc-200 bg-[#fffefb] px-5 py-5 text-[17px] leading-8 text-zinc-900 shadow-inner shadow-zinc-100 focus:border-zinc-800 focus:ring-2 focus:ring-zinc-200 md:px-7 md:py-6"
+        <TiptapEditor
+          key={editorKey}
+          initialContentJson={contentJson}
+          initialContentText={contentText}
+          onChange={(nextContentJson, nextContentText) => onContentChange(JSON.stringify(nextContentJson), nextContentText)}
+          className="min-h-[62vh] rounded-t-none bg-[#fffefb] px-5 py-5 text-[17px] leading-8 shadow-inner shadow-zinc-100 focus:ring-2 focus:ring-zinc-200 md:px-7 md:py-6"
         />
 
         <div className="min-h-10">
