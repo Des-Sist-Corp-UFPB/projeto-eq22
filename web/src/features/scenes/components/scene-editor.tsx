@@ -14,7 +14,7 @@ import { queryKeys } from "@/lib/query/keys";
 
 const SCENE_STATUSES: SceneStatus[] = ["IDEA", "PLANNED", "DRAFT", "WRITTEN", "REVISED", "FINAL"];
 const METADATA_FORM_ID = "scene-metadata-form";
-const CONTENT_AUTOSAVE_DELAY_MS = 1800;
+const CONTENT_AUTOSAVE_DELAY_MS = 1200;
 
 type SceneEditorProps = {
   bookId: string;
@@ -190,7 +190,7 @@ export function SceneEditor({ bookId, sceneId, onSceneDeleted }: SceneEditorProp
 
   function handleSaveContent(targetSceneId: string) {
     clearPendingAutosave();
-    void saveSceneContent(targetSceneId, contentJson, contentText);
+    void saveSceneContent(targetSceneId, currentContentJsonRef.current, currentContentTextRef.current);
   }
 
   function scheduleAutosave(targetSceneId: string, nextContentJson: string, nextContentText: string) {
@@ -285,7 +285,7 @@ export function SceneEditor({ bookId, sceneId, onSceneDeleted }: SceneEditorProp
     : contentMutation.isError && activeContentMutationSceneId === scene.id
       ? "error"
       : hasUnsavedContent
-        ? "dirty"
+        ? "editing"
         : "saved";
 
   return (

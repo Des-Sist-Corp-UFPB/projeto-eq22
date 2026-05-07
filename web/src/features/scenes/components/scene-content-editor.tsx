@@ -15,14 +15,14 @@ type SceneContentEditorProps = {
 
 const saveStatusLabels: Record<ContentSaveStatus, string> = {
   saved: "Salvo",
-  dirty: "Alterações não salvas",
+  editing: "Digitando...",
   saving: "Salvando...",
   error: "Erro ao salvar",
 };
 
 const saveStatusClasses: Record<ContentSaveStatus, string> = {
   saved: "border-emerald-200 bg-emerald-50 text-emerald-700",
-  dirty: "border-amber-200 bg-amber-50 text-amber-700",
+  editing: "border-amber-200 bg-amber-50 text-amber-700",
   saving: "border-zinc-200 bg-zinc-50 text-zinc-600",
   error: "border-red-200 bg-red-50 text-red-700",
 };
@@ -71,7 +71,7 @@ export function SceneContentEditor({
 
           {isError ? (
             <FeedbackMessage variant="error">
-              Não foi possível salvar o conteúdo agora. Verifique se o backend está rodando e tente novamente.
+              Não foi possível salvar o conteúdo agora. As alterações continuam no editor para nova tentativa.
             </FeedbackMessage>
           ) : null}
         </div>
