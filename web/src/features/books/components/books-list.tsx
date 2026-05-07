@@ -2,12 +2,13 @@
 
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
-import { listBooks } from "@/features/books/api/books-api";
-import { queryKeys } from "@/lib/query/keys";
 import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
-import { ErrorState, LoadingState } from "@/components/ui/feedback";
+import { FeedbackMessage } from "@/components/ui/feedback-message";
+import { LoadingState } from "@/components/ui/feedback";
+import { listBooks } from "@/features/books/api/books-api";
 import type { BookStatus } from "@/features/books/types";
+import { queryKeys } from "@/lib/query/keys";
 
 const statusLabels: Record<BookStatus, string> = {
   PLANNING: "Planejamento",
@@ -29,7 +30,15 @@ export function BooksList() {
 
   if (query.isError) {
     return (
-      <ErrorState message="Não foi possível carregar seus livros. Verifique se o backend está rodando em localhost:8085 e tente novamente." />
+      <div className="grid gap-3">
+        <EmptyState
+          title="Não foi possível carregar a biblioteca"
+          description="Nenhum livro foi carregado porque a API não respondeu como esperado."
+        />
+        <FeedbackMessage variant="error">
+          Verifique se o backend está rodando em localhost:8085 e tente novamente.
+        </FeedbackMessage>
+      </div>
     );
   }
 

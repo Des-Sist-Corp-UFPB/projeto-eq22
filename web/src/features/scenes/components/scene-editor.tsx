@@ -102,7 +102,7 @@ export function SceneEditor({ bookId, sceneId }: SceneEditorProps) {
   if (sceneQuery.isError) {
     return (
       <section className="p-6">
-        <ErrorState message={sceneQuery.error.message} />
+        <ErrorState message="Não foi possível carregar a cena. Verifique se o backend está rodando e tente novamente." />
       </section>
     );
   }
@@ -110,7 +110,15 @@ export function SceneEditor({ bookId, sceneId }: SceneEditorProps) {
   const scene = sceneQuery.data;
 
   if (!scene) {
-    return null;
+    return (
+      <section className="flex h-full overflow-y-auto p-6">
+        <EmptyState
+          className="m-auto max-w-md"
+          title="Cena indisponível"
+          description="Não recebemos dados para esta cena. Selecione outra cena ou tente novamente."
+        />
+      </section>
+    );
   }
 
   return (
@@ -152,7 +160,10 @@ export function SceneEditor({ bookId, sceneId }: SceneEditorProps) {
             <span className="font-medium text-zinc-700">Título</span>
             <input
               value={title}
-              onChange={(event) => setTitle(event.target.value)}
+              onChange={(event) => {
+                metadataMutation.reset();
+                setTitle(event.target.value);
+              }}
               className="min-h-10 rounded-md border border-zinc-300 bg-white px-3 py-2 outline-none transition focus:border-zinc-800 focus:ring-2 focus:ring-zinc-200"
             />
           </label>
@@ -161,7 +172,10 @@ export function SceneEditor({ bookId, sceneId }: SceneEditorProps) {
             <span className="font-medium text-zinc-700">Status</span>
             <select
               value={status}
-              onChange={(event) => setStatus(event.target.value as SceneStatus)}
+              onChange={(event) => {
+                metadataMutation.reset();
+                setStatus(event.target.value as SceneStatus);
+              }}
               className="min-h-10 rounded-md border border-zinc-300 bg-white px-3 py-2 outline-none transition focus:border-zinc-800 focus:ring-2 focus:ring-zinc-200"
             >
               {SCENE_STATUSES.map((sceneStatus) => (
@@ -177,11 +191,20 @@ export function SceneEditor({ bookId, sceneId }: SceneEditorProps) {
             <Textarea
               value={summary}
               rows={3}
-              onChange={(event) => setSummary(event.target.value)}
+              onChange={(event) => {
+                metadataMutation.reset();
+                setSummary(event.target.value);
+              }}
               className="resize-y focus:ring-2 focus:ring-zinc-200"
               placeholder="Resumo breve da função dramática desta cena."
             />
           </label>
+
+          {metadataMutation.isSuccess ? (
+            <FeedbackMessage variant="success" className="md:col-span-2">
+              Dados da cena salvos com sucesso.
+            </FeedbackMessage>
+          ) : null}
 
           {metadataMutation.isError ? (
             <FeedbackMessage variant="error" className="md:col-span-2">
@@ -204,7 +227,10 @@ export function SceneEditor({ bookId, sceneId }: SceneEditorProps) {
 
             <Textarea
               value={contentText}
-              onChange={(event) => setContentText(event.target.value)}
+              onChange={(event) => {
+                contentMutation.reset();
+                setContentText(event.target.value);
+              }}
               placeholder="Escreva a cena aqui..."
               className="min-h-[62vh] resize-y rounded-lg border-zinc-200 bg-[#fffefb] px-5 py-5 text-[17px] leading-8 text-zinc-900 shadow-inner shadow-zinc-100 focus:border-zinc-800 focus:ring-2 focus:ring-zinc-200 md:px-7 md:py-6"
             />

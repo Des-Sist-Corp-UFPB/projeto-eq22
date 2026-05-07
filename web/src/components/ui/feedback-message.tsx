@@ -11,5 +11,11 @@ export function FeedbackMessage({ className = "", variant = "info", ...props }: 
     error: "border-red-200 bg-red-50 text-red-700",
   };
 
-  return <p className={`rounded-md border px-3 py-2 text-sm ${variants[variant]} ${className}`} {...props} />;
+  return (
+    <p
+      role={variant === "error" ? "alert" : "status"}
+      className={`rounded-md border px-3 py-2 text-sm ${variants[variant]} ${className}`}
+      {...props}
+    />
+  );
 }

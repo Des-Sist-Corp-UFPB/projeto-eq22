@@ -2,11 +2,11 @@
 
 import { FormEvent, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { createBook } from "@/features/books/api/books-api";
-import { queryKeys } from "@/lib/query/keys";
 import { Button } from "@/components/ui/button";
 import { FeedbackMessage } from "@/components/ui/feedback-message";
 import { TextAreaField, TextField } from "@/components/ui/text-field";
+import { createBook } from "@/features/books/api/books-api";
+import { queryKeys } from "@/lib/query/keys";
 
 export function CreateBookForm() {
   const queryClient = useQueryClient();
@@ -17,6 +17,9 @@ export function CreateBookForm() {
 
   const mutation = useMutation({
     mutationFn: createBook,
+    onMutate: () => {
+      setSuccessMessage("");
+    },
     onSuccess: () => {
       setTitle("");
       setSubtitle("");
@@ -28,7 +31,6 @@ export function CreateBookForm() {
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setSuccessMessage("");
 
     if (!title.trim()) {
       return;
@@ -50,10 +52,7 @@ export function CreateBookForm() {
         label="Título do livro"
         value={title}
         placeholder="Ex.: A cidade de vidro"
-        onChange={(event) => {
-          setTitle(event.target.value);
-          setSuccessMessage("");
-        }}
+        onChange={(event) => setTitle(event.target.value)}
       />
       <TextField label="Subtítulo" value={subtitle} placeholder="Opcional" onChange={(event) => setSubtitle(event.target.value)} />
       <TextAreaField
