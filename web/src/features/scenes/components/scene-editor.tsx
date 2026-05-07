@@ -64,20 +64,6 @@ export function SceneEditor({ bookId, sceneId, onSceneDeleted }: SceneEditorProp
         contentText,
         contentJson,
       }),
-    onSuccess: (scene) => {
-      void queryClient.setQueryData(queryKeys.scene(scene.id), scene);
-      void queryClient.invalidateQueries({ queryKey: queryKeys.outline(bookId) });
-
-      if (activeSceneIdRef.current === scene.id) {
-        const savedContentJson = scene.contentJson ?? "";
-        const savedContentText = scene.contentText ?? "";
-
-        setContentJson(savedContentJson);
-        setContentText(savedContentText);
-        setLastSavedContentJson(savedContentJson);
-        setLastSavedContentText(savedContentText);
-      }
-    },
   });
 
   const deleteMutation = useMutation({
@@ -130,16 +116,39 @@ export function SceneEditor({ bookId, sceneId, onSceneDeleted }: SceneEditorProp
     metadataMutation.mutate();
   }
 
-  function handleSaveContent(targetSceneId: string) {
+  async function saveSceneContent(targetSceneId: string, nextContentJson: string, nextContentText: string) {
     if (!targetSceneId || targetSceneId !== activeSceneIdRef.current) {
       return;
     }
 
-    contentMutation.mutate({
-      targetSceneId,
-      contentJson,
-      contentText,
-    });
+    try {
+      const savedScene = await contentMutation.mutateAsync({
+        targetSceneId,
+        contentJson: nextContentJson,
+        contentText: nextContentText,
+      });
+
+      void queryClient.setQueryData(queryKeys.scene(savedScene.id), savedScene);
+      void queryClient.invalidateQueries({ queryKey: queryKeys.outline(bookId) });
+
+      if (activeSceneIdRef.current !== targetSceneId || savedScene.id !== targetSceneId) {
+        return;
+      }
+
+      const savedContentJson = savedScene.contentJson ?? "";
+      const savedContentText = savedScene.contentText ?? "";
+
+      setContentJson(savedContentJson);
+      setContentText(savedContentText);
+      setLastSavedContentJson(savedContentJson);
+      setLastSavedContentText(savedContentText);
+    } catch {
+      // A mutation mantém o estado de erro para a UI; o conteúdo local fica preservado.
+    }
+  }
+
+  function handleSaveContent(targetSceneId: string) {
+    void saveSceneContent(targetSceneId, contentJson, contentText);
   }
 
   function handleDeleteScene(sceneTitle: string) {
@@ -196,10 +205,11 @@ export function SceneEditor({ bookId, sceneId, onSceneDeleted }: SceneEditorProp
     );
   }
 
+  const activeContentMutationSceneId = contentMutation.variables?.targetSceneId;
   const hasUnsavedContent = contentJson !== lastSavedContentJson || contentText !== lastSavedContentText;
-  const contentSaveStatus: ContentSaveStatus = contentMutation.isPending
+  const contentSaveStatus: ContentSaveStatus = contentMutation.isPending && activeContentMutationSceneId === scene.id
     ? "saving"
-    : contentMutation.isError
+    : contentMutation.isError && activeContentMutationSceneId === scene.id
       ? "error"
       : hasUnsavedContent
         ? "dirty"
