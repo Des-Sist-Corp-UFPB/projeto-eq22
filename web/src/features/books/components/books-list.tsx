@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { listBooks } from "@/features/books/api/books-api";
 import { queryKeys } from "@/lib/query/keys";
+import { Badge } from "@/components/ui/badge";
+import { EmptyState } from "@/components/ui/empty-state";
 import { ErrorState, LoadingState } from "@/components/ui/feedback";
 import type { BookStatus } from "@/features/books/types";
 
@@ -33,13 +35,10 @@ export function BooksList() {
 
   if (!query.data?.length) {
     return (
-      <div className="rounded-lg border border-dashed border-zinc-300 bg-white/75 p-8 text-center shadow-sm">
-        <h2 className="text-lg font-semibold text-zinc-950">Sua biblioteca ainda está vazia</h2>
-        <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-zinc-600">
-          Crie seu primeiro livro pelo formulário ao lado. Ele aparecerá aqui como um card pronto para abrir o
-          workspace.
-        </p>
-      </div>
+      <EmptyState
+        title="Sua biblioteca ainda está vazia"
+        description="Crie seu primeiro livro pelo formulário ao lado. Ele aparecerá aqui como um card pronto para abrir o workspace."
+      />
     );
   }
 
@@ -57,9 +56,7 @@ export function BooksList() {
                 <h2 className="line-clamp-2 text-xl font-semibold leading-7 text-zinc-950">{book.title}</h2>
                 {book.subtitle ? <p className="mt-1 line-clamp-1 text-sm text-zinc-600">{book.subtitle}</p> : null}
               </div>
-              <span className="shrink-0 rounded-full bg-zinc-100 px-2.5 py-1 text-xs font-medium text-zinc-700">
-                {statusLabels[book.status]}
-              </span>
+              <Badge className="shrink-0">{statusLabels[book.status]}</Badge>
             </div>
 
             {book.description ? (

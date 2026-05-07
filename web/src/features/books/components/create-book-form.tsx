@@ -5,6 +5,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { createBook } from "@/features/books/api/books-api";
 import { queryKeys } from "@/lib/query/keys";
 import { Button } from "@/components/ui/button";
+import { FeedbackMessage } from "@/components/ui/feedback-message";
 import { TextAreaField, TextField } from "@/components/ui/text-field";
 
 export function CreateBookForm() {
@@ -54,12 +55,7 @@ export function CreateBookForm() {
           setSuccessMessage("");
         }}
       />
-      <TextField
-        label="Subtítulo"
-        value={subtitle}
-        placeholder="Opcional"
-        onChange={(event) => setSubtitle(event.target.value)}
-      />
+      <TextField label="Subtítulo" value={subtitle} placeholder="Opcional" onChange={(event) => setSubtitle(event.target.value)} />
       <TextAreaField
         label="Descrição"
         value={description}
@@ -68,24 +64,16 @@ export function CreateBookForm() {
         onChange={(event) => setDescription(event.target.value)}
       />
 
-      <Button
-        type="submit"
-        disabled={mutation.isPending || !title.trim()}
-        className="mt-1 min-h-11 w-full disabled:cursor-not-allowed disabled:opacity-70"
-      >
+      <Button type="submit" disabled={mutation.isPending || !title.trim()} className="mt-1 min-h-11 w-full">
         {mutation.isPending ? "Criando..." : "Criar livro"}
       </Button>
 
-      {successMessage ? (
-        <p className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
-          {successMessage}
-        </p>
-      ) : null}
+      {successMessage ? <FeedbackMessage variant="success">{successMessage}</FeedbackMessage> : null}
 
       {mutation.isError ? (
-        <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+        <FeedbackMessage variant="error">
           Não foi possível criar o livro agora. Verifique se o backend está rodando em localhost:8085.
-        </p>
+        </FeedbackMessage>
       ) : null}
     </form>
   );

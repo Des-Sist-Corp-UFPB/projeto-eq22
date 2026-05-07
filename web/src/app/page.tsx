@@ -1,3 +1,4 @@
+import { Badge } from "@/components/ui/badge";
 import { BooksList } from "@/features/books/components/books-list";
 import { CreateBookForm } from "@/features/books/components/create-book-form";
 
@@ -7,9 +8,7 @@ export default function HomePage() {
       <div className="mx-auto grid w-full max-w-6xl gap-8 lg:grid-cols-[1fr_360px]">
         <section className="grid content-start gap-6">
           <header className="grid gap-3">
-            <div className="inline-flex w-fit rounded-full border border-zinc-200 bg-white px-3 py-1 text-xs font-medium text-zinc-600 shadow-sm">
-              Biblioteca
-            </div>
+            <Badge variant="outline">Biblioteca</Badge>
             <div className="grid gap-2">
               <h1 className="text-4xl font-semibold tracking-normal text-zinc-950 md:text-5xl">IWrite</h1>
               <p className="max-w-2xl text-base leading-7 text-zinc-600">
