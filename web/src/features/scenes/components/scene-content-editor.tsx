@@ -36,7 +36,7 @@ export function SceneContentEditor({
           initialContentJson={contentJson}
           initialContentText={contentText}
           onChange={(nextContentJson, nextContentText) => onContentChange(JSON.stringify(nextContentJson), nextContentText)}
-          className="min-h-[62vh] bg-[#fffefb] px-5 py-5 text-[17px] leading-8 shadow-inner shadow-zinc-100 focus:ring-2 focus:ring-zinc-200 md:px-7 md:py-6"
+          className="min-h-[62vh] rounded-t-none bg-[#fffefb] px-5 py-5 text-[17px] leading-8 shadow-inner shadow-zinc-100 focus:ring-2 focus:ring-zinc-200 md:px-7 md:py-6"
         />
 
         <div className="min-h-10">
