@@ -6,7 +6,7 @@ import { Card } from "@/components/ui/card";
 import { ErrorState, LoadingState } from "@/components/ui/feedback";
 import { deleteScene, getScene, updateScene, updateSceneContent } from "@/features/scenes/api/scenes-api";
 import { SceneContentEditor } from "@/features/scenes/components/scene-content-editor";
-import { SceneEditorHeader } from "@/features/scenes/components/scene-editor-header";
+import { SceneEditorHeader, type ContentSaveStatus } from "@/features/scenes/components/scene-editor-header";
 import { SceneEmptyState } from "@/features/scenes/components/scene-empty-state";
 import { SceneMetadataForm } from "@/features/scenes/components/scene-metadata-form";
 import type { SceneStatus } from "@/features/scenes/types";
@@ -35,6 +35,8 @@ export function SceneEditor({ bookId, sceneId, onSceneDeleted }: SceneEditorProp
   const [status, setStatus] = useState<SceneStatus>("IDEA");
   const [contentJson, setContentJson] = useState("");
   const [contentText, setContentText] = useState("");
+  const [lastSavedContentJson, setLastSavedContentJson] = useState("");
+  const [lastSavedContentText, setLastSavedContentText] = useState("");
   const [loadedSceneId, setLoadedSceneId] = useState<string | null>(null);
 
   const sceneQuery = useQuery({
@@ -67,8 +69,13 @@ export function SceneEditor({ bookId, sceneId, onSceneDeleted }: SceneEditorProp
       void queryClient.invalidateQueries({ queryKey: queryKeys.outline(bookId) });
 
       if (activeSceneIdRef.current === scene.id) {
-        setContentJson(scene.contentJson ?? "");
-        setContentText(scene.contentText ?? "");
+        const savedContentJson = scene.contentJson ?? "";
+        const savedContentText = scene.contentText ?? "";
+
+        setContentJson(savedContentJson);
+        setContentText(savedContentText);
+        setLastSavedContentJson(savedContentJson);
+        setLastSavedContentText(savedContentText);
       }
     },
   });
@@ -93,6 +100,8 @@ export function SceneEditor({ bookId, sceneId, onSceneDeleted }: SceneEditorProp
     setStatus("IDEA");
     setContentJson("");
     setContentText("");
+    setLastSavedContentJson("");
+    setLastSavedContentText("");
     setLoadedSceneId(null);
   }, [sceneId]);
 
@@ -107,6 +116,8 @@ export function SceneEditor({ bookId, sceneId, onSceneDeleted }: SceneEditorProp
     setStatus(queriedScene.status);
     setContentJson(queriedScene.contentJson ?? "");
     setContentText(queriedScene.contentText ?? "");
+    setLastSavedContentJson(queriedScene.contentJson ?? "");
+    setLastSavedContentText(queriedScene.contentText ?? "");
     setLoadedSceneId(queriedScene.id);
   }, [sceneId, sceneQuery.data]);
 
@@ -185,6 +196,15 @@ export function SceneEditor({ bookId, sceneId, onSceneDeleted }: SceneEditorProp
     );
   }
 
+  const hasUnsavedContent = contentJson !== lastSavedContentJson || contentText !== lastSavedContentText;
+  const contentSaveStatus: ContentSaveStatus = contentMutation.isPending
+    ? "saving"
+    : contentMutation.isError
+      ? "error"
+      : hasUnsavedContent
+        ? "dirty"
+        : "saved";
+
   return (
     <section className="h-full overflow-y-auto bg-zinc-50 p-4 md:p-6">
       <Card className="mx-auto grid min-h-full max-w-6xl grid-rows-[auto_auto_minmax(0,1fr)] overflow-hidden">
@@ -230,6 +250,7 @@ export function SceneEditor({ bookId, sceneId, onSceneDeleted }: SceneEditorProp
           wordCount={scene.wordCount}
           isSuccess={contentMutation.isSuccess}
           isError={contentMutation.isError}
+          saveStatus={contentSaveStatus}
           onContentChange={(sourceSceneId, nextContentJson, nextContentText) => {
             if (sourceSceneId !== activeSceneIdRef.current) {
               return;

@@ -3,6 +3,8 @@ import { Button } from "@/components/ui/button";
 import { FeedbackMessage } from "@/components/ui/feedback-message";
 import type { Scene } from "@/features/scenes/types";
 
+export type ContentSaveStatus = "saved" | "dirty" | "saving" | "error";
+
 type SceneEditorHeaderProps = {
   scene: Scene;
   metadataFormId: string;
