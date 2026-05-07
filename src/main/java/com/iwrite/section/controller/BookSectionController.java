@@ -1,5 +1,6 @@
 package com.iwrite.section.controller;
 
+import com.iwrite.common.dto.ReorderRequest;
 import com.iwrite.section.dto.BookSectionRequest;
 import com.iwrite.section.dto.BookSectionResponse;
 import com.iwrite.section.dto.BookSectionUpdateRequest;
@@ -36,6 +37,12 @@ public class BookSectionController {
     @PatchMapping("/sections/{sectionId}")
     public BookSectionResponse update(@PathVariable UUID sectionId, @Valid @RequestBody BookSectionUpdateRequest request) {
         return sectionService.update(sectionId, request);
+    }
+
+    @PatchMapping("/books/{bookId}/sections/reorder")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void reorder(@PathVariable UUID bookId, @Valid @RequestBody ReorderRequest request) {
+        sectionService.reorder(bookId, request);
     }
 
     @DeleteMapping("/sections/{sectionId}")
