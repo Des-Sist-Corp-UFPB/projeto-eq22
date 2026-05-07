@@ -8,7 +8,7 @@ type SceneContentEditorProps = {
   wordCount: number;
   isSuccess: boolean;
   isError: boolean;
-  onContentChange: (contentJson: string, contentText: string) => void;
+  onContentChange: (sourceSceneId: string, contentJson: string, contentText: string) => void;
 };
 
 export function SceneContentEditor({
@@ -33,9 +33,12 @@ export function SceneContentEditor({
 
         <TiptapEditor
           key={editorKey}
+          contentKey={editorKey}
           initialContentJson={contentJson}
           initialContentText={contentText}
-          onChange={(nextContentJson, nextContentText) => onContentChange(JSON.stringify(nextContentJson), nextContentText)}
+          onChange={(nextContentJson, nextContentText) =>
+            onContentChange(editorKey, JSON.stringify(nextContentJson), nextContentText)
+          }
           className="min-h-[62vh] rounded-t-none bg-[#fffefb] px-5 py-5 text-[17px] leading-8 shadow-inner shadow-zinc-100 focus:ring-2 focus:ring-zinc-200 md:px-7 md:py-6"
         />
 
