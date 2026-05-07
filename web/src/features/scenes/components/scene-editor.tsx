@@ -1,6 +1,6 @@
 "use client";
 
-import { type FormEvent, useEffect, useState } from "react";
+import { type FormEvent, useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card } from "@/components/ui/card";
 import { ErrorState, LoadingState } from "@/components/ui/feedback";
@@ -21,31 +21,27 @@ type SceneEditorProps = {
   onSceneDeleted: () => void;
 };
 
+type SaveContentVariables = {
+  targetSceneId: string;
+  contentJson: string;
+  contentText: string;
+};
+
 export function SceneEditor({ bookId, sceneId, onSceneDeleted }: SceneEditorProps) {
   const queryClient = useQueryClient();
+  const activeSceneIdRef = useRef<string | null>(sceneId);
   const [title, setTitle] = useState("");
   const [summary, setSummary] = useState("");
   const [status, setStatus] = useState<SceneStatus>("IDEA");
   const [contentJson, setContentJson] = useState("");
   const [contentText, setContentText] = useState("");
+  const [loadedSceneId, setLoadedSceneId] = useState<string | null>(null);
 
   const sceneQuery = useQuery({
     queryKey: sceneId ? queryKeys.scene(sceneId) : ["scenes", "empty"],
     queryFn: () => getScene(sceneId as string),
     enabled: Boolean(sceneId),
   });
-
-  useEffect(() => {
-    if (!sceneQuery.data) {
-      return;
-    }
-
-    setTitle(sceneQuery.data.title);
-    setSummary(sceneQuery.data.summary ?? "");
-    setStatus(sceneQuery.data.status);
-    setContentJson(sceneQuery.data.contentJson ?? "");
-    setContentText(sceneQuery.data.contentText ?? "");
-  }, [sceneQuery.data]);
 
   const metadataMutation = useMutation({
     mutationFn: () =>
@@ -61,14 +57,19 @@ export function SceneEditor({ bookId, sceneId, onSceneDeleted }: SceneEditorProp
   });
 
   const contentMutation = useMutation({
-    mutationFn: () =>
-      updateSceneContent(sceneId as string, {
+    mutationFn: ({ targetSceneId, contentJson, contentText }: SaveContentVariables) =>
+      updateSceneContent(targetSceneId, {
         contentText,
         contentJson,
       }),
     onSuccess: (scene) => {
       void queryClient.setQueryData(queryKeys.scene(scene.id), scene);
       void queryClient.invalidateQueries({ queryKey: queryKeys.outline(bookId) });
+
+      if (activeSceneIdRef.current === scene.id) {
+        setContentJson(scene.contentJson ?? "");
+        setContentText(scene.contentText ?? "");
+      }
     },
   });
 
@@ -83,6 +84,32 @@ export function SceneEditor({ bookId, sceneId, onSceneDeleted }: SceneEditorProp
     },
   });
 
+  useEffect(() => {
+    activeSceneIdRef.current = sceneId;
+    metadataMutation.reset();
+    contentMutation.reset();
+    setTitle("");
+    setSummary("");
+    setStatus("IDEA");
+    setContentJson("");
+    setContentText("");
+    setLoadedSceneId(null);
+  }, [sceneId]);
+
+  useEffect(() => {
+    const queriedScene = sceneQuery.data;
+    if (!queriedScene || queriedScene.id !== sceneId) {
+      return;
+    }
+
+    setTitle(queriedScene.title);
+    setSummary(queriedScene.summary ?? "");
+    setStatus(queriedScene.status);
+    setContentJson(queriedScene.contentJson ?? "");
+    setContentText(queriedScene.contentText ?? "");
+    setLoadedSceneId(queriedScene.id);
+  }, [sceneId, sceneQuery.data]);
+
   function handleMetadataSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!sceneId || !title.trim()) {
@@ -90,6 +117,18 @@ export function SceneEditor({ bookId, sceneId, onSceneDeleted }: SceneEditorProp
     }
 
     metadataMutation.mutate();
+  }
+
+  function handleSaveContent(targetSceneId: string) {
+    if (!targetSceneId || targetSceneId !== activeSceneIdRef.current) {
+      return;
+    }
+
+    contentMutation.mutate({
+      targetSceneId,
+      contentJson,
+      contentText,
+    });
   }
 
   function handleDeleteScene(sceneTitle: string) {
@@ -128,14 +167,21 @@ export function SceneEditor({ bookId, sceneId, onSceneDeleted }: SceneEditorProp
     );
   }
 
-  const scene = sceneQuery.data;
+  const scene = sceneQuery.data?.id === sceneId ? sceneQuery.data : null;
 
   if (!scene) {
     return (
-      <SceneEmptyState
-        title="Cena indisponível"
-        description="Não recebemos dados para esta cena. Selecione outra cena ou tente novamente."
-      />
+      <section className="p-6">
+        <LoadingState label="Carregando cena..." />
+      </section>
+    );
+  }
+
+  if (loadedSceneId !== scene.id) {
+    return (
+      <section className="p-6">
+        <LoadingState label="Preparando editor..." />
+      </section>
     );
   }
 
@@ -150,7 +196,7 @@ export function SceneEditor({ bookId, sceneId, onSceneDeleted }: SceneEditorProp
           contentPending={contentMutation.isPending}
           deletePending={deleteMutation.isPending}
           deleteError={deleteMutation.isError}
-          onSaveContent={() => contentMutation.mutate()}
+          onSaveContent={() => handleSaveContent(scene.id)}
           onDeleteScene={handleDeleteScene}
         />
 
@@ -184,7 +230,11 @@ export function SceneEditor({ bookId, sceneId, onSceneDeleted }: SceneEditorProp
           wordCount={scene.wordCount}
           isSuccess={contentMutation.isSuccess}
           isError={contentMutation.isError}
-          onContentChange={(nextContentJson, nextContentText) => {
+          onContentChange={(sourceSceneId, nextContentJson, nextContentText) => {
+            if (sourceSceneId !== activeSceneIdRef.current) {
+              return;
+            }
+
             contentMutation.reset();
             setContentJson(nextContentJson);
             setContentText(nextContentText);

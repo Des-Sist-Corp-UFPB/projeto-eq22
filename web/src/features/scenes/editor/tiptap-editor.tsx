@@ -1,10 +1,12 @@
 "use client";
 
+import { useEffect, useMemo } from "react";
 import type { Editor } from "@tiptap/react";
 import { EditorContent, useEditor, type JSONContent } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 
 type TiptapEditorProps = {
+  contentKey: string;
   initialContentJson?: JSONContent | string | null;
   initialContentText?: string | null;
   onChange: (contentJson: JSONContent, contentText: string) => void;
@@ -87,8 +89,17 @@ function TiptapToolbar({ editor }: { editor: Editor | null }) {
   );
 }
 
-export function TiptapEditor({ initialContentJson, initialContentText, onChange, className = "" }: TiptapEditorProps) {
-  const initialContent = parseContentJson(initialContentJson) ?? plainTextToDocument(initialContentText ?? "");
+export function TiptapEditor({
+  contentKey,
+  initialContentJson,
+  initialContentText,
+  onChange,
+  className = "",
+}: TiptapEditorProps) {
+  const initialContent = useMemo(
+    () => parseContentJson(initialContentJson) ?? plainTextToDocument(initialContentText ?? ""),
+    [contentKey, initialContentJson, initialContentText]
+  );
 
   const editor = useEditor({
     extensions: [StarterKit],
@@ -103,6 +114,14 @@ export function TiptapEditor({ initialContentJson, initialContentText, onChange,
       onChange(updatedEditor.getJSON(), updatedEditor.getText());
     },
   });
+
+  useEffect(() => {
+    if (!editor) {
+      return;
+    }
+
+    editor.commands.setContent(initialContent, { emitUpdate: false });
+  }, [contentKey, editor]);
 
   return (
     <div>
