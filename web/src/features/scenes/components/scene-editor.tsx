@@ -4,11 +4,11 @@ import { type FormEvent, useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card } from "@/components/ui/card";
 import { ErrorState, LoadingState } from "@/components/ui/feedback";
+import { deleteScene, getScene, updateScene, updateSceneContent } from "@/features/scenes/api/scenes-api";
 import { SceneContentEditor } from "@/features/scenes/components/scene-content-editor";
 import { SceneEditorHeader } from "@/features/scenes/components/scene-editor-header";
 import { SceneEmptyState } from "@/features/scenes/components/scene-empty-state";
 import { SceneMetadataForm } from "@/features/scenes/components/scene-metadata-form";
-import { deleteScene, getScene, updateScene, updateSceneContent } from "@/features/scenes/api/scenes-api";
 import type { SceneStatus } from "@/features/scenes/types";
 import { queryKeys } from "@/lib/query/keys";
 
@@ -26,6 +26,7 @@ export function SceneEditor({ bookId, sceneId, onSceneDeleted }: SceneEditorProp
   const [title, setTitle] = useState("");
   const [summary, setSummary] = useState("");
   const [status, setStatus] = useState<SceneStatus>("IDEA");
+  const [contentJson, setContentJson] = useState("");
   const [contentText, setContentText] = useState("");
 
   const sceneQuery = useQuery({
@@ -42,6 +43,7 @@ export function SceneEditor({ bookId, sceneId, onSceneDeleted }: SceneEditorProp
     setTitle(sceneQuery.data.title);
     setSummary(sceneQuery.data.summary ?? "");
     setStatus(sceneQuery.data.status);
+    setContentJson(sceneQuery.data.contentJson ?? "");
     setContentText(sceneQuery.data.contentText ?? "");
   }, [sceneQuery.data]);
 
@@ -62,7 +64,7 @@ export function SceneEditor({ bookId, sceneId, onSceneDeleted }: SceneEditorProp
     mutationFn: () =>
       updateSceneContent(sceneId as string, {
         contentText,
-        contentJson: "",
+        contentJson,
       }),
     onSuccess: (scene) => {
       void queryClient.setQueryData(queryKeys.scene(scene.id), scene);
@@ -176,12 +178,15 @@ export function SceneEditor({ bookId, sceneId, onSceneDeleted }: SceneEditorProp
         />
 
         <SceneContentEditor
+          editorKey={scene.id}
+          contentJson={contentJson}
           contentText={contentText}
           wordCount={scene.wordCount}
           isSuccess={contentMutation.isSuccess}
           isError={contentMutation.isError}
-          onContentChange={(nextContentText) => {
+          onContentChange={(nextContentJson, nextContentText) => {
             contentMutation.reset();
+            setContentJson(nextContentJson);
             setContentText(nextContentText);
           }}
         />

@@ -7,6 +7,7 @@ type TiptapEditorProps = {
   initialContentJson?: JSONContent | string | null;
   initialContentText?: string | null;
   onChange: (contentJson: JSONContent, contentText: string) => void;
+  className?: string;
 };
 
 function plainTextToDocument(text: string): JSONContent {
@@ -38,7 +39,7 @@ function parseContentJson(contentJson: JSONContent | string | null | undefined):
   return contentJson.type === "doc" ? contentJson : null;
 }
 
-export function TiptapEditor({ initialContentJson, initialContentText, onChange }: TiptapEditorProps) {
+export function TiptapEditor({ initialContentJson, initialContentText, onChange, className = "" }: TiptapEditorProps) {
   const initialContent = parseContentJson(initialContentJson) ?? plainTextToDocument(initialContentText ?? "");
 
   const editor = useEditor({
@@ -47,8 +48,7 @@ export function TiptapEditor({ initialContentJson, initialContentText, onChange 
     immediatelyRender: false,
     editorProps: {
       attributes: {
-        class:
-          "min-h-[320px] rounded-lg border border-zinc-200 bg-white px-4 py-4 text-base leading-7 text-zinc-900 outline-none focus:border-zinc-800",
+        class: `min-h-[320px] rounded-lg border border-zinc-200 bg-white px-4 py-4 text-base leading-7 text-zinc-900 outline-none focus:border-zinc-800 ${className}`,
       },
     },
     onUpdate: ({ editor: updatedEditor }) => {
