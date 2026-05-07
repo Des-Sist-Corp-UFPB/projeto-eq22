@@ -1,4 +1,6 @@
 import type { InputHTMLAttributes, TextareaHTMLAttributes } from "react";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 
 type TextFieldProps = InputHTMLAttributes<HTMLInputElement> & {
   label: string;
@@ -8,10 +10,7 @@ export function TextField({ label, className = "", ...props }: TextFieldProps) {
   return (
     <label className="grid gap-1 text-sm">
       <span className="font-medium text-zinc-700">{label}</span>
-      <input
-        className={`min-h-10 rounded-md border border-zinc-300 bg-white px-3 py-2 outline-none focus:border-zinc-700 ${className}`}
-        {...props}
-      />
+      <Input className={className} {...props} />
     </label>
   );
 }
@@ -24,10 +23,7 @@ export function TextAreaField({ label, className = "", ...props }: TextAreaField
   return (
     <label className="grid gap-1 text-sm">
       <span className="font-medium text-zinc-700">{label}</span>
-      <textarea
-        className={`rounded-md border border-zinc-300 bg-white px-3 py-2 outline-none focus:border-zinc-700 ${className}`}
-        {...props}
-      />
+      <Textarea className={className} {...props} />
     </label>
   );
 }

@@ -1,15 +1,11 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  createChapter,
-  createScene,
-  createSection,
-  getOutline,
-} from "@/features/outline/api/outline-api";
-import { queryKeys } from "@/lib/query/keys";
+import { createChapter, createScene, createSection, getOutline } from "@/features/outline/api/outline-api";
+import { FeedbackMessage } from "@/components/ui/feedback-message";
 import { ErrorState, LoadingState } from "@/components/ui/feedback";
 import { InlineCreateForm } from "@/features/outline/components/inline-create-form";
+import { queryKeys } from "@/lib/query/keys";
 
 type OutlineSidebarProps = {
   bookId: string;
@@ -70,8 +66,8 @@ export function OutlineSidebar({ bookId, selectedSceneId, onSelectScene }: Outli
       </div>
 
       <InlineCreateForm
-        placeholder="Nova secao"
-        buttonLabel="Secao"
+        placeholder="Nova seção"
+        buttonLabel="Seção"
         disabled={sectionMutation.isPending}
         onCreate={(title) => sectionMutation.mutate(title)}
       />
@@ -88,7 +84,7 @@ export function OutlineSidebar({ bookId, selectedSceneId, onSelectScene }: Outli
 
             <div className="pl-3">
               <InlineCreateForm
-                placeholder="Novo capitulo"
+                placeholder="Novo capítulo"
                 buttonLabel="Cap."
                 disabled={chapterMutation.isPending}
                 onCreate={(title) => chapterMutation.mutate({ sectionId: section.id, title })}
@@ -137,7 +133,7 @@ export function OutlineSidebar({ bookId, selectedSceneId, onSelectScene }: Outli
       </div>
 
       {sectionMutation.isError || chapterMutation.isError || sceneMutation.isError ? (
-        <p className="text-sm text-red-700">Nao foi possivel criar o item.</p>
+        <FeedbackMessage variant="error">Não foi possível criar o item.</FeedbackMessage>
       ) : null}
     </aside>
   );
