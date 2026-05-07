@@ -1,12 +1,12 @@
 "use client";
 
-import { type FormEvent, useEffect, useRef, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card } from "@/components/ui/card";
 import { ErrorState, LoadingState } from "@/components/ui/feedback";
 import { deleteScene, getScene, updateScene, updateSceneContent } from "@/features/scenes/api/scenes-api";
 import { SceneContentEditor } from "@/features/scenes/components/scene-content-editor";
-import { SceneEditorHeader } from "@/features/scenes/components/scene-editor-header";
+import { SceneEditorHeader, type ContentSaveStatus } from "@/features/scenes/components/scene-editor-header";
 import { SceneEmptyState } from "@/features/scenes/components/scene-empty-state";
 import { SceneMetadataForm } from "@/features/scenes/components/scene-metadata-form";
 import type { SceneStatus } from "@/features/scenes/types";
@@ -14,6 +14,7 @@ import { queryKeys } from "@/lib/query/keys";
 
 const SCENE_STATUSES: SceneStatus[] = ["IDEA", "PLANNED", "DRAFT", "WRITTEN", "REVISED", "FINAL"];
 const METADATA_FORM_ID = "scene-metadata-form";
+const CONTENT_AUTOSAVE_DELAY_MS = 1200;
 
 type SceneEditorProps = {
   bookId: string;
@@ -30,11 +31,20 @@ type SaveContentVariables = {
 export function SceneEditor({ bookId, sceneId, onSceneDeleted }: SceneEditorProps) {
   const queryClient = useQueryClient();
   const activeSceneIdRef = useRef<string | null>(sceneId);
+  const loadedSceneIdRef = useRef<string | null>(null);
+  const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const contentSavePendingRef = useRef(false);
+  const currentContentJsonRef = useRef("");
+  const currentContentTextRef = useRef("");
+  const lastSavedContentJsonRef = useRef("");
+  const lastSavedContentTextRef = useRef("");
   const [title, setTitle] = useState("");
   const [summary, setSummary] = useState("");
   const [status, setStatus] = useState<SceneStatus>("IDEA");
   const [contentJson, setContentJson] = useState("");
   const [contentText, setContentText] = useState("");
+  const [lastSavedContentJson, setLastSavedContentJson] = useState("");
+  const [lastSavedContentText, setLastSavedContentText] = useState("");
   const [loadedSceneId, setLoadedSceneId] = useState<string | null>(null);
 
   const sceneQuery = useQuery({
@@ -62,15 +72,6 @@ export function SceneEditor({ bookId, sceneId, onSceneDeleted }: SceneEditorProp
         contentText,
         contentJson,
       }),
-    onSuccess: (scene) => {
-      void queryClient.setQueryData(queryKeys.scene(scene.id), scene);
-      void queryClient.invalidateQueries({ queryKey: queryKeys.outline(bookId) });
-
-      if (activeSceneIdRef.current === scene.id) {
-        setContentJson(scene.contentJson ?? "");
-        setContentText(scene.contentText ?? "");
-      }
-    },
   });
 
   const deleteMutation = useMutation({
@@ -84,8 +85,27 @@ export function SceneEditor({ bookId, sceneId, onSceneDeleted }: SceneEditorProp
     },
   });
 
+  const clearPendingAutosave = useCallback(() => {
+    if (autosaveTimerRef.current) {
+      clearTimeout(autosaveTimerRef.current);
+      autosaveTimerRef.current = null;
+    }
+  }, []);
+
   useEffect(() => {
+    contentSavePendingRef.current = contentMutation.isPending;
+  }, [contentMutation.isPending]);
+
+  useEffect(() => clearPendingAutosave, [clearPendingAutosave]);
+
+  useEffect(() => {
+    clearPendingAutosave();
     activeSceneIdRef.current = sceneId;
+    loadedSceneIdRef.current = null;
+    currentContentJsonRef.current = "";
+    currentContentTextRef.current = "";
+    lastSavedContentJsonRef.current = "";
+    lastSavedContentTextRef.current = "";
     metadataMutation.reset();
     contentMutation.reset();
     setTitle("");
@@ -93,8 +113,10 @@ export function SceneEditor({ bookId, sceneId, onSceneDeleted }: SceneEditorProp
     setStatus("IDEA");
     setContentJson("");
     setContentText("");
+    setLastSavedContentJson("");
+    setLastSavedContentText("");
     setLoadedSceneId(null);
-  }, [sceneId]);
+  }, [clearPendingAutosave, sceneId]);
 
   useEffect(() => {
     const queriedScene = sceneQuery.data;
@@ -107,6 +129,13 @@ export function SceneEditor({ bookId, sceneId, onSceneDeleted }: SceneEditorProp
     setStatus(queriedScene.status);
     setContentJson(queriedScene.contentJson ?? "");
     setContentText(queriedScene.contentText ?? "");
+    setLastSavedContentJson(queriedScene.contentJson ?? "");
+    setLastSavedContentText(queriedScene.contentText ?? "");
+    currentContentJsonRef.current = queriedScene.contentJson ?? "";
+    currentContentTextRef.current = queriedScene.contentText ?? "";
+    lastSavedContentJsonRef.current = queriedScene.contentJson ?? "";
+    lastSavedContentTextRef.current = queriedScene.contentText ?? "";
+    loadedSceneIdRef.current = queriedScene.id;
     setLoadedSceneId(queriedScene.id);
   }, [sceneId, sceneQuery.data]);
 
@@ -119,16 +148,80 @@ export function SceneEditor({ bookId, sceneId, onSceneDeleted }: SceneEditorProp
     metadataMutation.mutate();
   }
 
-  function handleSaveContent(targetSceneId: string) {
+  async function saveSceneContent(targetSceneId: string, nextContentJson: string, nextContentText: string) {
     if (!targetSceneId || targetSceneId !== activeSceneIdRef.current) {
       return;
     }
 
-    contentMutation.mutate({
-      targetSceneId,
-      contentJson,
-      contentText,
-    });
+    try {
+      const savedScene = await contentMutation.mutateAsync({
+        targetSceneId,
+        contentJson: nextContentJson,
+        contentText: nextContentText,
+      });
+
+      void queryClient.setQueryData(queryKeys.scene(savedScene.id), savedScene);
+      void queryClient.invalidateQueries({ queryKey: queryKeys.outline(bookId) });
+
+      if (activeSceneIdRef.current !== targetSceneId || savedScene.id !== targetSceneId) {
+        return;
+      }
+
+      const savedContentJson = savedScene.contentJson ?? "";
+      const savedContentText = savedScene.contentText ?? "";
+      const currentContentMatchesSavedRequest =
+        currentContentJsonRef.current === nextContentJson && currentContentTextRef.current === nextContentText;
+
+      if (currentContentMatchesSavedRequest) {
+        currentContentJsonRef.current = savedContentJson;
+        currentContentTextRef.current = savedContentText;
+        setContentJson(savedContentJson);
+        setContentText(savedContentText);
+      }
+
+      lastSavedContentJsonRef.current = savedContentJson;
+      lastSavedContentTextRef.current = savedContentText;
+      setLastSavedContentJson(savedContentJson);
+      setLastSavedContentText(savedContentText);
+    } catch {
+      // A mutation mantém o estado de erro para a UI; o conteúdo local fica preservado.
+    }
+  }
+
+  function handleSaveContent(targetSceneId: string) {
+    clearPendingAutosave();
+    void saveSceneContent(targetSceneId, currentContentJsonRef.current, currentContentTextRef.current);
+  }
+
+  function scheduleAutosave(targetSceneId: string, nextContentJson: string, nextContentText: string) {
+    if (!targetSceneId || targetSceneId !== activeSceneIdRef.current || loadedSceneIdRef.current !== targetSceneId) {
+      return;
+    }
+
+    clearPendingAutosave();
+
+    if (nextContentJson === lastSavedContentJsonRef.current && nextContentText === lastSavedContentTextRef.current) {
+      return;
+    }
+
+    autosaveTimerRef.current = setTimeout(() => {
+      autosaveTimerRef.current = null;
+
+      if (targetSceneId !== activeSceneIdRef.current || loadedSceneIdRef.current !== targetSceneId) {
+        return;
+      }
+
+      if (nextContentJson === lastSavedContentJsonRef.current && nextContentText === lastSavedContentTextRef.current) {
+        return;
+      }
+
+      if (contentSavePendingRef.current) {
+        scheduleAutosave(targetSceneId, nextContentJson, nextContentText);
+        return;
+      }
+
+      void saveSceneContent(targetSceneId, nextContentJson, nextContentText);
+    }, CONTENT_AUTOSAVE_DELAY_MS);
   }
 
   function handleDeleteScene(sceneTitle: string) {
@@ -185,6 +278,16 @@ export function SceneEditor({ bookId, sceneId, onSceneDeleted }: SceneEditorProp
     );
   }
 
+  const activeContentMutationSceneId = contentMutation.variables?.targetSceneId;
+  const hasUnsavedContent = contentJson !== lastSavedContentJson || contentText !== lastSavedContentText;
+  const contentSaveStatus: ContentSaveStatus = contentMutation.isPending && activeContentMutationSceneId === scene.id
+    ? "saving"
+    : contentMutation.isError && activeContentMutationSceneId === scene.id
+      ? "error"
+      : hasUnsavedContent
+        ? "editing"
+        : "saved";
+
   return (
     <section className="h-full overflow-y-auto bg-zinc-50 p-4 md:p-6">
       <Card className="mx-auto grid min-h-full max-w-6xl grid-rows-[auto_auto_minmax(0,1fr)] overflow-hidden">
@@ -230,14 +333,20 @@ export function SceneEditor({ bookId, sceneId, onSceneDeleted }: SceneEditorProp
           wordCount={scene.wordCount}
           isSuccess={contentMutation.isSuccess}
           isError={contentMutation.isError}
+          saveStatus={contentSaveStatus}
           onContentChange={(sourceSceneId, nextContentJson, nextContentText) => {
             if (sourceSceneId !== activeSceneIdRef.current) {
               return;
             }
 
-            contentMutation.reset();
+            if (!contentMutation.isPending) {
+              contentMutation.reset();
+            }
+            currentContentJsonRef.current = nextContentJson;
+            currentContentTextRef.current = nextContentText;
             setContentJson(nextContentJson);
             setContentText(nextContentText);
+            scheduleAutosave(sourceSceneId, nextContentJson, nextContentText);
           }}
         />
       </Card>

@@ -1,4 +1,5 @@
 import { FeedbackMessage } from "@/components/ui/feedback-message";
+import type { ContentSaveStatus } from "@/features/scenes/components/scene-editor-header";
 import { TiptapEditor } from "@/features/scenes/editor/tiptap-editor";
 
 type SceneContentEditorProps = {
@@ -8,7 +9,22 @@ type SceneContentEditorProps = {
   wordCount: number;
   isSuccess: boolean;
   isError: boolean;
+  saveStatus: ContentSaveStatus;
   onContentChange: (sourceSceneId: string, contentJson: string, contentText: string) => void;
+};
+
+const saveStatusLabels: Record<ContentSaveStatus, string> = {
+  saved: "Salvo",
+  editing: "Digitando...",
+  saving: "Salvando...",
+  error: "Erro ao salvar",
+};
+
+const saveStatusClasses: Record<ContentSaveStatus, string> = {
+  saved: "border-emerald-200 bg-emerald-50 text-emerald-700",
+  editing: "border-amber-200 bg-amber-50 text-amber-700",
+  saving: "border-zinc-200 bg-zinc-50 text-zinc-600",
+  error: "border-red-200 bg-red-50 text-red-700",
 };
 
 export function SceneContentEditor({
@@ -18,6 +34,7 @@ export function SceneContentEditor({
   wordCount,
   isSuccess,
   isError,
+  saveStatus,
   onContentChange,
 }: SceneContentEditorProps) {
   return (
@@ -28,7 +45,12 @@ export function SceneContentEditor({
             <h2 className="text-sm font-semibold text-zinc-950">Conteúdo textual</h2>
             <p className="text-xs text-zinc-500">Salvamento manual. O contador é atualizado com o retorno do backend.</p>
           </div>
-          <span className="text-sm text-zinc-600">Word count oficial: {wordCount}</span>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-sm text-zinc-600">Word count oficial: {wordCount}</span>
+            <span className={`rounded-full border px-2.5 py-1 text-xs font-medium ${saveStatusClasses[saveStatus]}`}>
+              {saveStatusLabels[saveStatus]}
+            </span>
+          </div>
         </div>
 
         <TiptapEditor
@@ -49,7 +71,7 @@ export function SceneContentEditor({
 
           {isError ? (
             <FeedbackMessage variant="error">
-              Não foi possível salvar o conteúdo agora. Verifique se o backend está rodando e tente novamente.
+              Não foi possível salvar o conteúdo agora. As alterações continuam no editor para nova tentativa.
             </FeedbackMessage>
           ) : null}
         </div>
