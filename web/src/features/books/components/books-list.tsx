@@ -5,6 +5,15 @@ import { useQuery } from "@tanstack/react-query";
 import { listBooks } from "@/features/books/api/books-api";
 import { queryKeys } from "@/lib/query/keys";
 import { ErrorState, LoadingState } from "@/components/ui/feedback";
+import type { BookStatus } from "@/features/books/types";
+
+const statusLabels: Record<BookStatus, string> = {
+  PLANNING: "Planejamento",
+  WRITING: "Escrita",
+  REVISING: "Revisão",
+  FINISHED: "Finalizado",
+  ARCHIVED: "Arquivado",
+};
 
 export function BooksList() {
   const query = useQuery({
@@ -17,29 +26,53 @@ export function BooksList() {
   }
 
   if (query.isError) {
-    return <ErrorState message={query.error.message} />;
+    return (
+      <ErrorState message="Não foi possível carregar seus livros. Verifique se o backend está rodando em localhost:8085 e tente novamente." />
+    );
   }
 
   if (!query.data?.length) {
-    return <div className="rounded-md border border-zinc-200 bg-white p-4 text-sm text-zinc-600">Nenhum livro criado.</div>;
+    return (
+      <div className="rounded-lg border border-dashed border-zinc-300 bg-white/75 p-8 text-center shadow-sm">
+        <h2 className="text-lg font-semibold text-zinc-950">Sua biblioteca ainda está vazia</h2>
+        <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-zinc-600">
+          Crie seu primeiro livro pelo formulário ao lado. Ele aparecerá aqui como um card pronto para abrir o
+          workspace.
+        </p>
+      </div>
+    );
   }
 
   return (
-    <div className="grid gap-3">
+    <div className="grid gap-4 sm:grid-cols-2">
       {query.data.map((book) => (
         <Link
           key={book.id}
           href={`/books/${book.id}`}
-          className="rounded-md border border-zinc-200 bg-white p-4 transition hover:border-zinc-400"
+          className="group grid min-h-48 content-between rounded-lg border border-zinc-200 bg-white p-5 shadow-sm shadow-zinc-200/60 transition hover:-translate-y-0.5 hover:border-zinc-300 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-zinc-800 focus:ring-offset-2"
         >
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <h2 className="text-lg font-semibold text-zinc-950">{book.title}</h2>
-              {book.subtitle ? <p className="text-sm text-zinc-600">{book.subtitle}</p> : null}
+          <div className="grid gap-4">
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <h2 className="line-clamp-2 text-xl font-semibold leading-7 text-zinc-950">{book.title}</h2>
+                {book.subtitle ? <p className="mt-1 line-clamp-1 text-sm text-zinc-600">{book.subtitle}</p> : null}
+              </div>
+              <span className="shrink-0 rounded-full bg-zinc-100 px-2.5 py-1 text-xs font-medium text-zinc-700">
+                {statusLabels[book.status]}
+              </span>
             </div>
-            <span className="rounded-md bg-zinc-100 px-2 py-1 text-xs font-medium text-zinc-700">{book.status}</span>
+
+            {book.description ? (
+              <p className="line-clamp-3 text-sm leading-6 text-zinc-600">{book.description}</p>
+            ) : (
+              <p className="text-sm leading-6 text-zinc-500">Sem descrição ainda.</p>
+            )}
           </div>
-          {book.description ? <p className="mt-3 line-clamp-2 text-sm text-zinc-600">{book.description}</p> : null}
+
+          <div className="mt-6 flex items-center justify-between border-t border-zinc-100 pt-4 text-sm">
+            <span className="text-zinc-500">Workspace</span>
+            <span className="font-medium text-zinc-900 transition group-hover:translate-x-1">Abrir</span>
+          </div>
         </Link>
       ))}
     </div>
