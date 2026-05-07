@@ -15,3 +15,10 @@ export type CreateBookRequest = {
   subtitle?: string;
   description?: string;
 };
+
+export type UpdateBookRequest = {
+  title?: string;
+  subtitle?: string;
+  description?: string;
+  status?: BookStatus;
+};

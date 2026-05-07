@@ -18,3 +18,9 @@ export function updateSceneContent(sceneId: string, request: UpdateSceneContentR
     body: request,
   });
 }
+
+export function deleteScene(sceneId: string) {
+  return apiRequest<void>(`/api/scenes/${sceneId}`, {
+    method: "DELETE",
+  });
+}
