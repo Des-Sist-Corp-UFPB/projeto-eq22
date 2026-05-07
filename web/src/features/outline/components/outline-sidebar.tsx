@@ -17,6 +17,11 @@ import {
   updateChapter,
   updateSection,
 } from "@/features/outline/api/outline-api";
+import {
+  useReorderChaptersMutation,
+  useReorderScenesMutation,
+  useReorderSectionsMutation,
+} from "@/features/outline/api/outline-reorder-mutations";
 import { InlineCreateForm } from "@/features/outline/components/inline-create-form";
 import { SectionItem } from "@/features/outline/components/section-item";
 import type { OutlineChapter, OutlineSection, SectionType } from "@/features/outline/types";
@@ -29,6 +34,21 @@ type OutlineSidebarProps = {
 };
 
 const sectionTypes: SectionType[] = ["PART", "PROLOGUE", "INTERLUDE", "EPILOGUE", "OTHER"];
+
+function moveItemId(items: { id: string }[], itemId: string, direction: -1 | 1) {
+  const currentIndex = items.findIndex((item) => item.id === itemId);
+  const nextIndex = currentIndex + direction;
+
+  if (currentIndex < 0 || nextIndex < 0 || nextIndex >= items.length) {
+    return null;
+  }
+
+  const orderedIds = items.map((item) => item.id);
+  const [movedId] = orderedIds.splice(currentIndex, 1);
+  orderedIds.splice(nextIndex, 0, movedId);
+
+  return orderedIds;
+}
 
 export function OutlineSidebar({ bookId, selectedSceneId, onSelectScene }: OutlineSidebarProps) {
   const queryClient = useQueryClient();
@@ -44,6 +64,9 @@ export function OutlineSidebar({ bookId, selectedSceneId, onSelectScene }: Outli
     queryKey: queryKeys.outline(bookId),
     queryFn: () => getOutline(bookId),
   });
+  const reorderSectionsMutation = useReorderSectionsMutation(bookId);
+  const reorderChaptersMutation = useReorderChaptersMutation(bookId);
+  const reorderScenesMutation = useReorderScenesMutation(bookId);
 
   function invalidateOutline() {
     void queryClient.invalidateQueries({ queryKey: queryKeys.outline(bookId) });
@@ -130,6 +153,55 @@ export function OutlineSidebar({ bookId, selectedSceneId, onSelectScene }: Outli
       invalidateOutline();
     },
   });
+
+  function handleMoveSection(sectionId: string, direction: -1 | 1) {
+    if (!outline) {
+      return;
+    }
+
+    const orderedIds = moveItemId(outline.sections, sectionId, direction);
+    if (!orderedIds) {
+      return;
+    }
+
+    setSuccessMessage("");
+    reorderSectionsMutation.mutate(
+      { orderedIds },
+      {
+        onSuccess: () => setSuccessMessage("Ordem das seções atualizada."),
+      }
+    );
+  }
+
+  function handleMoveChapter(section: OutlineSection, chapterId: string, direction: -1 | 1) {
+    const orderedIds = moveItemId(section.chapters, chapterId, direction);
+    if (!orderedIds) {
+      return;
+    }
+
+    setSuccessMessage("");
+    reorderChaptersMutation.mutate(
+      { sectionId: section.id, orderedIds },
+      {
+        onSuccess: () => setSuccessMessage("Ordem dos capítulos atualizada."),
+      }
+    );
+  }
+
+  function handleMoveScene(chapter: OutlineChapter, sceneId: string, direction: -1 | 1) {
+    const orderedIds = moveItemId(chapter.scenes, sceneId, direction);
+    if (!orderedIds) {
+      return;
+    }
+
+    setSuccessMessage("");
+    reorderScenesMutation.mutate(
+      { chapterId: chapter.id, orderedIds },
+      {
+        onSuccess: () => setSuccessMessage("Ordem das cenas atualizada."),
+      }
+    );
+  }
 
   function startEditingSection(section: OutlineSection) {
     setEditingSectionId(section.id);
@@ -229,7 +301,10 @@ export function OutlineSidebar({ bookId, selectedSceneId, onSelectScene }: Outli
     updateChapterMutation.isError ||
     deleteChapterMutation.isError ||
     sceneMutation.isError ||
-    deleteSceneMutation.isError;
+    deleteSceneMutation.isError ||
+    reorderSectionsMutation.isError ||
+    reorderChaptersMutation.isError ||
+    reorderScenesMutation.isError;
 
   return (
     <aside className="flex h-full min-h-0 flex-col border-r border-zinc-200 bg-white">
@@ -263,10 +338,12 @@ export function OutlineSidebar({ bookId, selectedSceneId, onSelectScene }: Outli
           />
         ) : (
           <div className="grid gap-3">
-            {outline.sections.map((section) => (
+            {outline.sections.map((section, sectionIndex) => (
               <SectionItem
                 key={section.id}
                 section={section}
+                canMoveUp={sectionIndex > 0}
+                canMoveDown={sectionIndex < outline.sections.length - 1}
                 sectionTypes={sectionTypes}
                 selectedSceneId={selectedSceneId}
                 editingSectionId={editingSectionId}
@@ -282,12 +359,17 @@ export function OutlineSidebar({ bookId, selectedSceneId, onSelectScene }: Outli
                 deleteChapterPending={deleteChapterMutation.isPending}
                 createScenePending={sceneMutation.isPending}
                 deleteScenePending={deleteSceneMutation.isPending}
+                reorderSectionPending={reorderSectionsMutation.isPending}
+                reorderChapterPending={reorderChaptersMutation.isPending}
+                reorderScenePending={reorderScenesMutation.isPending}
                 onSectionTitleChange={setSectionTitle}
                 onSectionTypeChange={setSectionType}
                 onStartEditSection={startEditingSection}
                 onCancelEditSection={() => setEditingSectionId(null)}
                 onSubmitSection={handleSectionSubmit}
                 onDeleteSection={handleDeleteSection}
+                onMoveSectionUp={(sectionId) => handleMoveSection(sectionId, -1)}
+                onMoveSectionDown={(sectionId) => handleMoveSection(sectionId, 1)}
                 onCreateChapter={(sectionId, title) => chapterMutation.mutate({ sectionId, title })}
                 onChapterTitleChange={setChapterTitle}
                 onChapterSummaryChange={setChapterSummary}
@@ -295,9 +377,13 @@ export function OutlineSidebar({ bookId, selectedSceneId, onSelectScene }: Outli
                 onCancelEditChapter={() => setEditingChapterId(null)}
                 onSubmitChapter={handleChapterSubmit}
                 onDeleteChapter={handleDeleteChapter}
+                onMoveChapterUp={(section, chapterId) => handleMoveChapter(section, chapterId, -1)}
+                onMoveChapterDown={(section, chapterId) => handleMoveChapter(section, chapterId, 1)}
                 onCreateScene={(chapterId, title) => sceneMutation.mutate({ chapterId, title })}
                 onSelectScene={(sceneId) => onSelectScene(sceneId)}
                 onDeleteScene={handleDeleteScene}
+                onMoveSceneUp={(chapter, sceneId) => handleMoveScene(chapter, sceneId, -1)}
+                onMoveSceneDown={(chapter, sceneId) => handleMoveScene(chapter, sceneId, 1)}
               />
             ))}
           </div>
