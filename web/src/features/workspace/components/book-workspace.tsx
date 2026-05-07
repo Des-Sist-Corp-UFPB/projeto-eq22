@@ -51,7 +51,7 @@ export function BookWorkspace({ bookId }: { bookId: string }) {
         </div>
 
         <div className="min-h-0 overflow-hidden bg-zinc-50">
-          <SceneEditor bookId={bookId} sceneId={selectedSceneId} />
+          <SceneEditor bookId={bookId} sceneId={selectedSceneId} onSceneDeleted={() => setSelectedSceneId(null)} />
         </div>
       </div>
     </main>

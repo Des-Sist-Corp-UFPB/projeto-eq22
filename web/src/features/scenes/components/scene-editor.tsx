@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import { type FormEvent, useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -9,7 +9,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { ErrorState, LoadingState } from "@/components/ui/feedback";
 import { FeedbackMessage } from "@/components/ui/feedback-message";
 import { Textarea } from "@/components/ui/textarea";
-import { getScene, updateScene, updateSceneContent } from "@/features/scenes/api/scenes-api";
+import { deleteScene, getScene, updateScene, updateSceneContent } from "@/features/scenes/api/scenes-api";
 import type { SceneStatus } from "@/features/scenes/types";
 import { queryKeys } from "@/lib/query/keys";
 
@@ -19,9 +19,10 @@ const METADATA_FORM_ID = "scene-metadata-form";
 type SceneEditorProps = {
   bookId: string;
   sceneId: string | null;
+  onSceneDeleted: () => void;
 };
 
-export function SceneEditor({ bookId, sceneId }: SceneEditorProps) {
+export function SceneEditor({ bookId, sceneId, onSceneDeleted }: SceneEditorProps) {
   const queryClient = useQueryClient();
   const [title, setTitle] = useState("");
   const [summary, setSummary] = useState("");
@@ -70,6 +71,17 @@ export function SceneEditor({ bookId, sceneId }: SceneEditorProps) {
     },
   });
 
+  const deleteMutation = useMutation({
+    mutationFn: () => deleteScene(sceneId as string),
+    onSuccess: () => {
+      if (sceneId) {
+        queryClient.removeQueries({ queryKey: queryKeys.scene(sceneId) });
+      }
+      void queryClient.invalidateQueries({ queryKey: queryKeys.outline(bookId) });
+      onSceneDeleted();
+    },
+  });
+
   function handleMetadataSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!sceneId || !title.trim()) {
@@ -77,6 +89,17 @@ export function SceneEditor({ bookId, sceneId }: SceneEditorProps) {
     }
 
     metadataMutation.mutate();
+  }
+
+  function handleDeleteScene(sceneTitle: string) {
+    if (!sceneId) {
+      return;
+    }
+
+    const confirmed = window.confirm(`Excluir a cena "${sceneTitle}"? Esta ação não pode ser desfeita nesta etapa.`);
+    if (confirmed) {
+      deleteMutation.mutate();
+    }
   }
 
   if (!sceneId) {
@@ -147,8 +170,16 @@ export function SceneEditor({ bookId, sceneId }: SceneEditorProps) {
               <Button type="button" onClick={() => contentMutation.mutate()} disabled={contentMutation.isPending}>
                 {contentMutation.isPending ? "Salvando..." : "Salvar conteúdo"}
               </Button>
+              <Button type="button" variant="ghost" onClick={() => handleDeleteScene(scene.title)} disabled={deleteMutation.isPending}>
+                {deleteMutation.isPending ? "Excluindo..." : "Excluir cena"}
+              </Button>
             </div>
           </div>
+          {deleteMutation.isError ? (
+            <FeedbackMessage variant="error" className="mt-4">
+              Não foi possível excluir a cena. Verifique a API e tente novamente.
+            </FeedbackMessage>
+          ) : null}
         </header>
 
         <form

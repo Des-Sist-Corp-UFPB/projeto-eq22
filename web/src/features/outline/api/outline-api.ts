@@ -23,6 +23,18 @@ export type CreateSceneRequest = {
   contentJson?: string;
 };
 
+export type UpdateSectionRequest = {
+  title?: string;
+  type?: SectionType;
+  sortOrder?: number;
+};
+
+export type UpdateChapterRequest = {
+  title?: string;
+  summary?: string;
+  sortOrder?: number;
+};
+
 export function getOutline(bookId: string) {
   return apiRequest<BookOutline>(`/api/books/${bookId}/outline`);
 }
@@ -34,6 +46,19 @@ export function createSection(bookId: string, request: CreateSectionRequest) {
   });
 }
 
+export function updateSection(sectionId: string, request: UpdateSectionRequest) {
+  return apiRequest(`/api/sections/${sectionId}`, {
+    method: "PATCH",
+    body: request,
+  });
+}
+
+export function deleteSection(sectionId: string) {
+  return apiRequest<void>(`/api/sections/${sectionId}`, {
+    method: "DELETE",
+  });
+}
+
 export function createChapter(sectionId: string, request: CreateChapterRequest) {
   return apiRequest(`/api/sections/${sectionId}/chapters`, {
     method: "POST",
@@ -41,9 +66,28 @@ export function createChapter(sectionId: string, request: CreateChapterRequest) 
   });
 }
 
+export function updateChapter(chapterId: string, request: UpdateChapterRequest) {
+  return apiRequest(`/api/chapters/${chapterId}`, {
+    method: "PATCH",
+    body: request,
+  });
+}
+
+export function deleteChapter(chapterId: string) {
+  return apiRequest<void>(`/api/chapters/${chapterId}`, {
+    method: "DELETE",
+  });
+}
+
 export function createScene(chapterId: string, request: CreateSceneRequest) {
   return apiRequest<Scene>(`/api/chapters/${chapterId}/scenes`, {
     method: "POST",
     body: request,
+  });
+}
+
+export function deleteScene(sceneId: string) {
+  return apiRequest<void>(`/api/scenes/${sceneId}`, {
+    method: "DELETE",
   });
 }
