@@ -1,6 +1,6 @@
 "use client";
 
-import { type FormEvent, useEffect, useRef, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card } from "@/components/ui/card";
 import { ErrorState, LoadingState } from "@/components/ui/feedback";
@@ -14,6 +14,7 @@ import { queryKeys } from "@/lib/query/keys";
 
 const SCENE_STATUSES: SceneStatus[] = ["IDEA", "PLANNED", "DRAFT", "WRITTEN", "REVISED", "FINAL"];
 const METADATA_FORM_ID = "scene-metadata-form";
+const CONTENT_AUTOSAVE_DELAY_MS = 1800;
 
 type SceneEditorProps = {
   bookId: string;
@@ -30,6 +31,13 @@ type SaveContentVariables = {
 export function SceneEditor({ bookId, sceneId, onSceneDeleted }: SceneEditorProps) {
   const queryClient = useQueryClient();
   const activeSceneIdRef = useRef<string | null>(sceneId);
+  const loadedSceneIdRef = useRef<string | null>(null);
+  const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const contentSavePendingRef = useRef(false);
+  const currentContentJsonRef = useRef("");
+  const currentContentTextRef = useRef("");
+  const lastSavedContentJsonRef = useRef("");
+  const lastSavedContentTextRef = useRef("");
   const [title, setTitle] = useState("");
   const [summary, setSummary] = useState("");
   const [status, setStatus] = useState<SceneStatus>("IDEA");
@@ -77,8 +85,27 @@ export function SceneEditor({ bookId, sceneId, onSceneDeleted }: SceneEditorProp
     },
   });
 
+  const clearPendingAutosave = useCallback(() => {
+    if (autosaveTimerRef.current) {
+      clearTimeout(autosaveTimerRef.current);
+      autosaveTimerRef.current = null;
+    }
+  }, []);
+
   useEffect(() => {
+    contentSavePendingRef.current = contentMutation.isPending;
+  }, [contentMutation.isPending]);
+
+  useEffect(() => clearPendingAutosave, [clearPendingAutosave]);
+
+  useEffect(() => {
+    clearPendingAutosave();
     activeSceneIdRef.current = sceneId;
+    loadedSceneIdRef.current = null;
+    currentContentJsonRef.current = "";
+    currentContentTextRef.current = "";
+    lastSavedContentJsonRef.current = "";
+    lastSavedContentTextRef.current = "";
     metadataMutation.reset();
     contentMutation.reset();
     setTitle("");
@@ -89,7 +116,7 @@ export function SceneEditor({ bookId, sceneId, onSceneDeleted }: SceneEditorProp
     setLastSavedContentJson("");
     setLastSavedContentText("");
     setLoadedSceneId(null);
-  }, [sceneId]);
+  }, [clearPendingAutosave, sceneId]);
 
   useEffect(() => {
     const queriedScene = sceneQuery.data;
@@ -104,6 +131,11 @@ export function SceneEditor({ bookId, sceneId, onSceneDeleted }: SceneEditorProp
     setContentText(queriedScene.contentText ?? "");
     setLastSavedContentJson(queriedScene.contentJson ?? "");
     setLastSavedContentText(queriedScene.contentText ?? "");
+    currentContentJsonRef.current = queriedScene.contentJson ?? "";
+    currentContentTextRef.current = queriedScene.contentText ?? "";
+    lastSavedContentJsonRef.current = queriedScene.contentJson ?? "";
+    lastSavedContentTextRef.current = queriedScene.contentText ?? "";
+    loadedSceneIdRef.current = queriedScene.id;
     setLoadedSceneId(queriedScene.id);
   }, [sceneId, sceneQuery.data]);
 
@@ -137,9 +169,18 @@ export function SceneEditor({ bookId, sceneId, onSceneDeleted }: SceneEditorProp
 
       const savedContentJson = savedScene.contentJson ?? "";
       const savedContentText = savedScene.contentText ?? "";
+      const currentContentMatchesSavedRequest =
+        currentContentJsonRef.current === nextContentJson && currentContentTextRef.current === nextContentText;
 
-      setContentJson(savedContentJson);
-      setContentText(savedContentText);
+      if (currentContentMatchesSavedRequest) {
+        currentContentJsonRef.current = savedContentJson;
+        currentContentTextRef.current = savedContentText;
+        setContentJson(savedContentJson);
+        setContentText(savedContentText);
+      }
+
+      lastSavedContentJsonRef.current = savedContentJson;
+      lastSavedContentTextRef.current = savedContentText;
       setLastSavedContentJson(savedContentJson);
       setLastSavedContentText(savedContentText);
     } catch {
@@ -148,7 +189,39 @@ export function SceneEditor({ bookId, sceneId, onSceneDeleted }: SceneEditorProp
   }
 
   function handleSaveContent(targetSceneId: string) {
+    clearPendingAutosave();
     void saveSceneContent(targetSceneId, contentJson, contentText);
+  }
+
+  function scheduleAutosave(targetSceneId: string, nextContentJson: string, nextContentText: string) {
+    if (!targetSceneId || targetSceneId !== activeSceneIdRef.current || loadedSceneIdRef.current !== targetSceneId) {
+      return;
+    }
+
+    clearPendingAutosave();
+
+    if (nextContentJson === lastSavedContentJsonRef.current && nextContentText === lastSavedContentTextRef.current) {
+      return;
+    }
+
+    autosaveTimerRef.current = setTimeout(() => {
+      autosaveTimerRef.current = null;
+
+      if (targetSceneId !== activeSceneIdRef.current || loadedSceneIdRef.current !== targetSceneId) {
+        return;
+      }
+
+      if (nextContentJson === lastSavedContentJsonRef.current && nextContentText === lastSavedContentTextRef.current) {
+        return;
+      }
+
+      if (contentSavePendingRef.current) {
+        scheduleAutosave(targetSceneId, nextContentJson, nextContentText);
+        return;
+      }
+
+      void saveSceneContent(targetSceneId, nextContentJson, nextContentText);
+    }, CONTENT_AUTOSAVE_DELAY_MS);
   }
 
   function handleDeleteScene(sceneTitle: string) {
@@ -266,9 +339,14 @@ export function SceneEditor({ bookId, sceneId, onSceneDeleted }: SceneEditorProp
               return;
             }
 
-            contentMutation.reset();
+            if (!contentMutation.isPending) {
+              contentMutation.reset();
+            }
+            currentContentJsonRef.current = nextContentJson;
+            currentContentTextRef.current = nextContentText;
             setContentJson(nextContentJson);
             setContentText(nextContentText);
+            scheduleAutosave(sourceSceneId, nextContentJson, nextContentText);
           }}
         />
       </Card>
