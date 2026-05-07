@@ -35,6 +35,10 @@ export type UpdateChapterRequest = {
   sortOrder?: number;
 };
 
+export type ReorderRequest = {
+  orderedIds: string[];
+};
+
 export function getOutline(bookId: string) {
   return apiRequest<BookOutline>(`/api/books/${bookId}/outline`);
 }
@@ -59,6 +63,13 @@ export function deleteSection(sectionId: string) {
   });
 }
 
+export function reorderSections(bookId: string, orderedIds: string[]) {
+  return apiRequest<void>(`/api/books/${bookId}/sections/reorder`, {
+    method: "PATCH",
+    body: { orderedIds } satisfies ReorderRequest,
+  });
+}
+
 export function createChapter(sectionId: string, request: CreateChapterRequest) {
   return apiRequest(`/api/sections/${sectionId}/chapters`, {
     method: "POST",
@@ -79,6 +90,13 @@ export function deleteChapter(chapterId: string) {
   });
 }
 
+export function reorderChapters(sectionId: string, orderedIds: string[]) {
+  return apiRequest<void>(`/api/sections/${sectionId}/chapters/reorder`, {
+    method: "PATCH",
+    body: { orderedIds } satisfies ReorderRequest,
+  });
+}
+
 export function createScene(chapterId: string, request: CreateSceneRequest) {
   return apiRequest<Scene>(`/api/chapters/${chapterId}/scenes`, {
     method: "POST",
@@ -89,5 +107,12 @@ export function createScene(chapterId: string, request: CreateSceneRequest) {
 export function deleteScene(sceneId: string) {
   return apiRequest<void>(`/api/scenes/${sceneId}`, {
     method: "DELETE",
+  });
+}
+
+export function reorderScenes(chapterId: string, orderedIds: string[]) {
+  return apiRequest<void>(`/api/chapters/${chapterId}/scenes/reorder`, {
+    method: "PATCH",
+    body: { orderedIds } satisfies ReorderRequest,
   });
 }
