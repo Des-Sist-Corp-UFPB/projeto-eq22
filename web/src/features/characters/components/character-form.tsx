@@ -102,108 +102,131 @@ export function CharacterForm({
 
   return (
     <form onSubmit={handleSubmit} className="grid gap-4 rounded-md border border-zinc-200 bg-white p-4 shadow-sm">
-      <div className="flex flex-wrap items-center justify-between gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-200 pb-4">
         <div>
           <h2 className="text-base font-semibold text-zinc-950">{title}</h2>
-          <p className="text-sm text-zinc-500">Cadastre os dados narrativos essenciais.</p>
+          <p className="text-sm text-zinc-500">Edite a ficha narrativa completa do personagem.</p>
         </div>
 
-        {isEditing ? (
-          <Button type="button" variant="ghost" onClick={onCancelEdit}>
-            Cancelar
-          </Button>
-        ) : null}
+        <Button type="button" variant="ghost" onClick={onCancelEdit}>
+          Cancelar
+        </Button>
       </div>
 
-      <div className="grid gap-3 md:grid-cols-2">
-        <Field label="Nome" className="md:col-span-2">
-          <Input
-            value={form.name}
-            onChange={(event) => updateField("name", event.target.value)}
-            disabled={isPending}
-            placeholder="Nome do personagem"
-          />
-        </Field>
+      <FormSection title="Dados básicos">
+        <div className="grid gap-3 md:grid-cols-2">
+          <Field label="Nome" className="md:col-span-2">
+            <Input
+              value={form.name}
+              onChange={(event) => updateField("name", event.target.value)}
+              disabled={isPending}
+              placeholder="Nome do personagem"
+            />
+          </Field>
 
-        <Field label="Apelido">
-          <Input
-            value={form.nickname}
-            onChange={(event) => updateField("nickname", event.target.value)}
-            disabled={isPending}
-          />
-        </Field>
+          <Field label="Apelido">
+            <Input
+              value={form.nickname}
+              onChange={(event) => updateField("nickname", event.target.value)}
+              disabled={isPending}
+            />
+          </Field>
 
-        <Field label="Idade">
-          <Input
-            type="number"
-            min={0}
-            value={form.age}
-            onChange={(event) => updateField("age", event.target.value)}
-            disabled={isPending}
-          />
-        </Field>
+          <Field label="Idade">
+            <Input
+              type="number"
+              min={0}
+              value={form.age}
+              onChange={(event) => updateField("age", event.target.value)}
+              disabled={isPending}
+            />
+          </Field>
 
-        <Field label="Sexo">
-          <Input value={form.sex} onChange={(event) => updateField("sex", event.target.value)} disabled={isPending} />
-        </Field>
+          <Field label="Sexo">
+            <Input value={form.sex} onChange={(event) => updateField("sex", event.target.value)} disabled={isPending} />
+          </Field>
 
-        <Field label="Função narrativa">
-          <Input
-            value={form.narrativeFunction}
-            onChange={(event) => updateField("narrativeFunction", event.target.value)}
-            disabled={isPending}
-          />
-        </Field>
-      </div>
+          <Field label="Função narrativa">
+            <Input
+              value={form.narrativeFunction}
+              onChange={(event) => updateField("narrativeFunction", event.target.value)}
+              disabled={isPending}
+            />
+          </Field>
+        </div>
+      </FormSection>
 
-      <TextAreaField
-        label="Objetivo"
-        value={form.goal}
-        onChange={(value) => updateField("goal", value)}
-        disabled={isPending}
-      />
-      <TextAreaField
-        label="Conflito"
-        value={form.conflict}
-        onChange={(value) => updateField("conflict", value)}
-        disabled={isPending}
-      />
-      <TextAreaField label="Arco" value={form.arc} onChange={(value) => updateField("arc", value)} disabled={isPending} />
-      <TextAreaField
-        label="Descrição física"
-        value={form.physicalDescription}
-        onChange={(value) => updateField("physicalDescription", value)}
-        disabled={isPending}
-      />
-      <TextAreaField
-        label="Personalidade"
-        value={form.personality}
-        onChange={(value) => updateField("personality", value)}
-        disabled={isPending}
-      />
-      <TextAreaField
-        label="Biografia"
-        value={form.biography}
-        onChange={(value) => updateField("biography", value)}
-        disabled={isPending}
-      />
-      <TextAreaField
-        label="Notas"
-        value={form.notes}
-        onChange={(value) => updateField("notes", value)}
-        disabled={isPending}
-      />
+      <FormSection title="Motivação narrativa">
+        <TextAreaField
+          label="Objetivo"
+          value={form.goal}
+          onChange={(value) => updateField("goal", value)}
+          disabled={isPending}
+        />
+        <TextAreaField
+          label="Conflito"
+          value={form.conflict}
+          onChange={(value) => updateField("conflict", value)}
+          disabled={isPending}
+        />
+        <TextAreaField
+          label="Arco"
+          value={form.arc}
+          onChange={(value) => updateField("arc", value)}
+          disabled={isPending}
+        />
+      </FormSection>
+
+      <FormSection title="Descrição">
+        <TextAreaField
+          label="Descrição física"
+          value={form.physicalDescription}
+          onChange={(value) => updateField("physicalDescription", value)}
+          disabled={isPending}
+        />
+        <TextAreaField
+          label="Personalidade"
+          value={form.personality}
+          onChange={(value) => updateField("personality", value)}
+          disabled={isPending}
+        />
+        <TextAreaField
+          label="Biografia"
+          value={form.biography}
+          onChange={(value) => updateField("biography", value)}
+          disabled={isPending}
+        />
+      </FormSection>
+
+      <FormSection title="Notas">
+        <TextAreaField
+          label="Notas"
+          value={form.notes}
+          onChange={(value) => updateField("notes", value)}
+          disabled={isPending}
+          rows={4}
+        />
+      </FormSection>
 
       {validationMessage ? <FeedbackMessage variant="error">{validationMessage}</FeedbackMessage> : null}
       {errorMessage ? <FeedbackMessage variant="error">{errorMessage}</FeedbackMessage> : null}
       {successMessage ? <FeedbackMessage variant="success">{successMessage}</FeedbackMessage> : null}
 
-      <div>
+      <div className="border-t border-zinc-200 pt-4">
         <Button type="submit" disabled={isPending}>
           {isPending ? "Salvando..." : isEditing ? "Salvar personagem" : "Criar personagem"}
         </Button>
       </div>
     </form>
+  );
+}
+
+function FormSection({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <section className="grid gap-3 rounded-md border border-zinc-200 bg-zinc-50/70 p-4">
+      <h3 className="text-sm font-semibold text-zinc-950">{title}</h3>
+      <div className="grid gap-3">{children}</div>
+    </section>
   );
 }
 
@@ -220,18 +243,20 @@ function TextAreaField({
   label,
   value,
   disabled,
+  rows = 3,
   onChange,
 }: {
   label: string;
   value: string;
   disabled: boolean;
+  rows?: number;
   onChange: (value: string) => void;
 }) {
   return (
     <Field label={label}>
       <Textarea
         value={value}
-        rows={3}
+        rows={rows}
         onChange={(event) => onChange(event.target.value)}
         disabled={disabled}
         className="resize-y"
