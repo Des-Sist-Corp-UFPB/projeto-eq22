@@ -134,7 +134,7 @@ export function CharactersPanel({ bookId }: CharactersPanelProps) {
 
         {charactersQuery.data ? (
           <div className="grid min-h-[calc(100vh-180px)] gap-4 lg:grid-cols-[340px_minmax(0,1fr)]">
-            <aside className="min-w-0 lg:max-w-[340px]">
+            <aside className="min-h-0 min-w-0 lg:max-w-[340px]">
               <CharactersList
                 characters={charactersQuery.data}
                 selectedCharacterId={detailMode === "edit" ? selectedCharacter?.id ?? null : null}
