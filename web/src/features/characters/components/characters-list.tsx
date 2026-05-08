@@ -5,10 +5,18 @@ import type { CharacterResponse } from "@/features/characters/types";
 type CharactersListProps = {
   characters: CharacterResponse[];
   selectedCharacterId: string | null;
+  deletePendingCharacterId: string | null;
   onEditCharacter: (character: CharacterResponse) => void;
+  onDeleteCharacter: (character: CharacterResponse) => void;
 };
 
-export function CharactersList({ characters, selectedCharacterId, onEditCharacter }: CharactersListProps) {
+export function CharactersList({
+  characters,
+  selectedCharacterId,
+  deletePendingCharacterId,
+  onEditCharacter,
+  onDeleteCharacter,
+}: CharactersListProps) {
   if (characters.length === 0) {
     return (
       <EmptyState
@@ -33,9 +41,21 @@ export function CharactersList({ characters, selectedCharacterId, onEditCharacte
               {character.nickname ? <p className="mt-1 text-sm text-zinc-500">{character.nickname}</p> : null}
             </div>
 
-            <Button type="button" variant="secondary" size="sm" onClick={() => onEditCharacter(character)}>
-              Editar
-            </Button>
+            <div className="flex shrink-0 items-center gap-2">
+              <Button type="button" variant="secondary" size="sm" onClick={() => onEditCharacter(character)}>
+                Editar
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                className="border-red-200 text-red-700 hover:bg-red-50"
+                disabled={deletePendingCharacterId === character.id}
+                onClick={() => onDeleteCharacter(character)}
+              >
+                {deletePendingCharacterId === character.id ? "Excluindo..." : "Excluir"}
+              </Button>
+            </div>
           </div>
 
           <div className="mt-3 grid gap-2 text-sm text-zinc-600">
