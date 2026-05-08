@@ -2,7 +2,9 @@
 
 import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { EmptyState } from "@/components/ui/empty-state";
 import { ErrorState, LoadingState } from "@/components/ui/feedback";
+import { FeedbackMessage } from "@/components/ui/feedback-message";
 import { CharacterForm } from "@/features/characters/components/character-form";
 import { CharactersList } from "@/features/characters/components/characters-list";
 import {
@@ -18,20 +20,24 @@ type CharactersPanelProps = {
   bookId: string;
 };
 
+type DetailMode = "empty" | "create" | "edit";
+
 export function CharactersPanel({ bookId }: CharactersPanelProps) {
   const charactersQuery = useCharacters(bookId);
   const createMutation = useCreateCharacter(bookId);
   const updateMutation = useUpdateCharacter(bookId);
   const deleteMutation = useDeleteCharacter(bookId);
   const [selectedCharacter, setSelectedCharacter] = useState<CharacterResponse | null>(null);
+  const [detailMode, setDetailMode] = useState<DetailMode>("empty");
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
-  const activeMutation = selectedCharacter ? updateMutation : createMutation;
+  const activeMutation = detailMode === "edit" ? updateMutation : createMutation;
   const errorMessage = useMemo(() => getCharacterErrorMessage(activeMutation.error), [activeMutation.error]);
   const deleteErrorMessage = useMemo(() => getCharacterErrorMessage(deleteMutation.error), [deleteMutation.error]);
 
   function startCreate() {
     setSelectedCharacter(null);
+    setDetailMode("create");
     setSuccessMessage(null);
     createMutation.reset();
     updateMutation.reset();
@@ -40,6 +46,16 @@ export function CharactersPanel({ bookId }: CharactersPanelProps) {
 
   function startEdit(character: CharacterResponse) {
     setSelectedCharacter(character);
+    setDetailMode("edit");
+    setSuccessMessage(null);
+    createMutation.reset();
+    updateMutation.reset();
+    deleteMutation.reset();
+  }
+
+  function clearDetail() {
+    setSelectedCharacter(null);
+    setDetailMode("empty");
     setSuccessMessage(null);
     createMutation.reset();
     updateMutation.reset();
@@ -49,7 +65,7 @@ export function CharactersPanel({ bookId }: CharactersPanelProps) {
   function handleSubmit(payload: CharacterRequest) {
     setSuccessMessage(null);
 
-    if (selectedCharacter) {
+    if (detailMode === "edit" && selectedCharacter) {
       updateMutation.mutate(
         { characterId: selectedCharacter.id, payload },
         {
@@ -65,6 +81,7 @@ export function CharactersPanel({ bookId }: CharactersPanelProps) {
     createMutation.mutate(payload, {
       onSuccess: (character) => {
         setSelectedCharacter(character);
+        setDetailMode("edit");
         setSuccessMessage("Personagem criado com sucesso.");
       },
     });
@@ -85,6 +102,7 @@ export function CharactersPanel({ bookId }: CharactersPanelProps) {
       onSuccess: () => {
         if (selectedCharacter?.id === character.id) {
           setSelectedCharacter(null);
+          setDetailMode("empty");
         }
         setSuccessMessage("Personagem excluído com sucesso.");
       },
@@ -96,8 +114,8 @@ export function CharactersPanel({ bookId }: CharactersPanelProps) {
       <div className="mx-auto grid max-w-6xl gap-4">
         <header className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <p className="text-xs font-medium uppercase text-zinc-500">Planejamento</p>
             <h1 className="text-xl font-semibold text-zinc-950">Personagens</h1>
+            <p className="mt-1 text-sm text-zinc-500">Organize o elenco narrativo deste livro.</p>
           </div>
 
           <Button type="button" variant="secondary" onClick={startCreate}>
@@ -112,25 +130,34 @@ export function CharactersPanel({ bookId }: CharactersPanelProps) {
         ) : null}
 
         {deleteErrorMessage ? <ErrorState message={deleteErrorMessage} /> : null}
+        {successMessage ? <FeedbackMessage variant="success">{successMessage}</FeedbackMessage> : null}
 
         {charactersQuery.data ? (
-          <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_420px]">
-            <CharactersList
-              characters={charactersQuery.data}
-              selectedCharacterId={selectedCharacter?.id ?? null}
-              deletePendingCharacterId={deleteMutation.variables ?? null}
-              onEditCharacter={startEdit}
-              onDeleteCharacter={handleDeleteCharacter}
-            />
+          <div className="grid min-h-[calc(100vh-180px)] gap-4 lg:grid-cols-[340px_minmax(0,1fr)]">
+            <aside className="min-w-0 lg:max-w-[340px]">
+              <CharactersList
+                characters={charactersQuery.data}
+                selectedCharacterId={detailMode === "edit" ? selectedCharacter?.id ?? null : null}
+                deletePendingCharacterId={deleteMutation.variables ?? null}
+                onEditCharacter={startEdit}
+                onDeleteCharacter={handleDeleteCharacter}
+              />
+            </aside>
 
-            <CharacterForm
-              character={selectedCharacter}
-              isPending={activeMutation.isPending}
-              errorMessage={errorMessage}
-              successMessage={successMessage}
-              onCancelEdit={startCreate}
-              onSubmit={handleSubmit}
-            />
+            <div className="min-w-0">
+              {detailMode === "empty" ? (
+                <EmptyState title="Selecione um personagem para visualizar ou editar." className="h-full" />
+              ) : (
+                <CharacterForm
+                  character={detailMode === "edit" ? selectedCharacter : null}
+                  isPending={activeMutation.isPending}
+                  errorMessage={errorMessage}
+                  successMessage={null}
+                  onCancelEdit={clearDetail}
+                  onSubmit={handleSubmit}
+                />
+              )}
+            </div>
           </div>
         ) : null}
       </div>
