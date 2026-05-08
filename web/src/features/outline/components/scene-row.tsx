@@ -27,24 +27,28 @@ export function SceneRow({
 }: SceneRowProps) {
   return (
     <div
-      className={`grid grid-cols-[minmax(0,1fr)_auto] items-stretch rounded-md border transition ${
+      className={`group/scene grid grid-cols-[minmax(0,1fr)_auto] items-stretch rounded-md border transition ${
         isSelected
-          ? "border-emerald-700 bg-emerald-50 text-zinc-950 shadow-sm"
-          : "border-transparent bg-white text-zinc-700 hover:border-zinc-200 hover:bg-zinc-50"
+          ? "border-emerald-700 bg-emerald-50 text-zinc-950 shadow-sm ring-1 ring-emerald-100"
+          : "border-transparent bg-white/80 text-zinc-700 hover:border-zinc-200 hover:bg-white"
       }`}
     >
       <button
         type="button"
         onClick={() => onSelect(scene.id)}
-        className="min-w-0 px-2.5 py-2 text-left text-sm focus:outline-none focus:ring-2 focus:ring-zinc-800 focus:ring-offset-1"
+        className="min-w-0 px-2.5 py-1.5 text-left text-sm focus:outline-none focus:ring-2 focus:ring-zinc-800 focus:ring-offset-1"
       >
         <span className="block truncate font-medium">{scene.title}</span>
-        <span className={`mt-0.5 flex items-center justify-between gap-2 text-xs ${isSelected ? "text-emerald-800" : "text-zinc-500"}`}>
+        <span className={`mt-0.5 flex items-center justify-between gap-2 text-[11px] ${isSelected ? "text-emerald-800" : "text-zinc-500"}`}>
           <span>{scene.status}</span>
           <span className="tabular-nums">{scene.wordCount} palavras</span>
         </span>
       </button>
-      <div className="flex items-stretch">
+      <div
+        className={`flex items-stretch transition ${
+          isSelected ? "opacity-100" : "opacity-0 group-hover/scene:opacity-100 group-focus-within/scene:opacity-100"
+        }`}
+      >
         <button
           type="button"
           aria-label={`Mover cena ${scene.title} para cima`}

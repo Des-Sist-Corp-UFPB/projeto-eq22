@@ -98,7 +98,7 @@ export function SectionItem({
   onMoveSceneDown,
 }: SectionItemProps) {
   return (
-    <section className="rounded-md border border-zinc-200 bg-white shadow-sm shadow-zinc-200/50">
+    <section className="group/section rounded-md border border-zinc-200 bg-white shadow-sm shadow-zinc-200/50">
       <div className="border-b border-zinc-100 bg-white px-3 py-3">
         {editingSectionId === section.id ? (
           <form onSubmit={(event) => onSubmitSection(event, section.id)} className="grid gap-2">
@@ -140,7 +140,7 @@ export function SectionItem({
               </div>
               <WordCount count={section.wordCount} />
             </div>
-            <div className="flex flex-wrap gap-1.5">
+            <div className="flex flex-wrap gap-1.5 opacity-70 transition group-hover/section:opacity-100 focus-within:opacity-100">
               <Button
                 type="button"
                 variant="ghost"
@@ -163,7 +163,7 @@ export function SectionItem({
               >
                 ↓
               </Button>
-              <Button type="button" variant="secondary" size="sm" onClick={() => onStartEditSection(section)}>
+              <Button type="button" variant="ghost" size="sm" onClick={() => onStartEditSection(section)}>
                 Editar
               </Button>
               <Button type="button" variant="ghost" size="sm" disabled={deleteSectionPending} onClick={() => onDeleteSection(section)}>
@@ -174,7 +174,7 @@ export function SectionItem({
         )}
       </div>
 
-      <div className="grid gap-3 bg-white p-3">
+      <div className="grid gap-3 bg-zinc-50/40 p-3">
         <InlineCreateForm
           compact
           ariaLabel={`Novo capítulo em ${section.title}`}

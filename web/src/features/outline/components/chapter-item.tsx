@@ -64,7 +64,7 @@ export function ChapterItem({
   onMoveSceneDown,
 }: ChapterItemProps) {
   return (
-    <article className="grid gap-2 border-l-2 border-zinc-300 pl-3">
+    <article className="group/chapter grid gap-2 border-l-2 border-zinc-300 pl-3">
       {isEditing ? (
         <form onSubmit={(event) => onSubmit(event, chapter.id)} className="grid gap-2">
           <Field label="Título do capítulo">
@@ -93,7 +93,7 @@ export function ChapterItem({
         </form>
       ) : (
         <>
-          <div className="flex items-start justify-between gap-3">
+          <div className="flex items-start justify-between gap-3 rounded-md bg-white px-2 py-2">
             <div className="min-w-0">
               <p className="text-[11px] font-medium uppercase text-zinc-500">Capítulo</p>
               <h3 className="truncate text-sm font-medium text-zinc-800">{chapter.title}</h3>
@@ -101,7 +101,7 @@ export function ChapterItem({
             </div>
             <WordCount count={chapter.wordCount} />
           </div>
-          <div className="flex flex-wrap gap-1.5">
+          <div className="flex flex-wrap gap-1.5 opacity-60 transition group-hover/chapter:opacity-100 focus-within:opacity-100">
             <Button
               type="button"
               variant="ghost"
@@ -124,7 +124,7 @@ export function ChapterItem({
             >
               ↓
             </Button>
-            <Button type="button" variant="secondary" size="sm" onClick={() => onStartEdit(chapter)}>
+            <Button type="button" variant="ghost" size="sm" onClick={() => onStartEdit(chapter)}>
               Editar
             </Button>
             <Button type="button" variant="ghost" size="sm" disabled={deletePending} onClick={() => onDeleteChapter(chapter)}>
