@@ -1,5 +1,6 @@
 package com.iwrite.scene.controller;
 
+import com.iwrite.common.dto.ReorderRequest;
 import com.iwrite.scene.dto.SceneContentRequest;
 import com.iwrite.scene.dto.SceneRequest;
 import com.iwrite.scene.dto.SceneResponse;
@@ -48,6 +49,12 @@ public class SceneController {
     @PatchMapping("/scenes/{sceneId}/content")
     public SceneResponse updateContent(@PathVariable UUID sceneId, @RequestBody SceneContentRequest request) {
         return sceneService.updateContent(sceneId, request);
+    }
+
+    @PatchMapping("/chapters/{chapterId}/scenes/reorder")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void reorder(@PathVariable UUID chapterId, @Valid @RequestBody ReorderRequest request) {
+        sceneService.reorder(chapterId, request);
     }
 
     @DeleteMapping("/scenes/{sceneId}")

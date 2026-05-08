@@ -5,6 +5,8 @@ import com.iwrite.chapter.dto.ChapterResponse;
 import com.iwrite.chapter.dto.ChapterUpdateRequest;
 import com.iwrite.chapter.entity.Chapter;
 import com.iwrite.chapter.repository.ChapterRepository;
+import com.iwrite.common.dto.ReorderRequest;
+import com.iwrite.common.exception.BadRequestException;
 import com.iwrite.common.exception.ResourceNotFoundException;
 import com.iwrite.common.validation.RequestValidation;
 import com.iwrite.section.entity.BookSection;
@@ -12,7 +14,12 @@ import com.iwrite.section.service.BookSectionService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
 import java.util.UUID;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 @Service
 public class ChapterService {
@@ -63,9 +70,48 @@ public class ChapterService {
         chapterRepository.delete(chapter);
     }
 
+    @Transactional
+    public void reorder(UUID sectionId, ReorderRequest request) {
+        sectionService.getSection(sectionId);
+        List<Chapter> chapters = chapterRepository.findBySectionIdOrderBySortOrderAsc(sectionId);
+        applyReorder(chapters, request.orderedIds(), Chapter::getId, Chapter::setSortOrder, "chapters");
+    }
+
     @Transactional(readOnly = true)
     public Chapter getChapter(UUID chapterId) {
         return chapterRepository.findById(chapterId)
                 .orElseThrow(() -> new ResourceNotFoundException("Chapter not found: " + chapterId));
+    }
+
+    private <T> void applyReorder(
+            List<T> children,
+            List<UUID> orderedIds,
+            Function<T, UUID> idGetter,
+            OrderSetter<T> orderSetter,
+            String childName
+    ) {
+        if (orderedIds.size() != new HashSet<>(orderedIds).size()) {
+            throw new BadRequestException("Duplicate IDs are not allowed");
+        }
+        if (orderedIds.size() != children.size()) {
+            throw new BadRequestException("Reorder list must include all " + childName + " for the parent");
+        }
+
+        Map<UUID, T> childrenById = children.stream()
+                .collect(Collectors.toMap(idGetter, Function.identity()));
+
+        for (int index = 0; index < orderedIds.size(); index++) {
+            T child = childrenById.get(orderedIds.get(index));
+            if (child == null) {
+                throw new BadRequestException("All IDs must exist and belong to the parent");
+            }
+
+            orderSetter.setSortOrder(child, index);
+        }
+    }
+
+    @FunctionalInterface
+    private interface OrderSetter<T> {
+        void setSortOrder(T child, int sortOrder);
     }
 }

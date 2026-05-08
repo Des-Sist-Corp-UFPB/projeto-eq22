@@ -8,6 +8,8 @@ import type { OutlineChapter } from "@/features/outline/types";
 
 type ChapterItemProps = {
   chapter: OutlineChapter;
+  canMoveUp: boolean;
+  canMoveDown: boolean;
   isEditing: boolean;
   chapterTitle: string;
   chapterSummary: string;
@@ -16,19 +18,27 @@ type ChapterItemProps = {
   deletePending: boolean;
   createScenePending: boolean;
   deleteScenePending: boolean;
+  reorderPending: boolean;
+  reorderScenePending: boolean;
   onTitleChange: (title: string) => void;
   onSummaryChange: (summary: string) => void;
   onStartEdit: (chapter: OutlineChapter) => void;
   onCancelEdit: () => void;
   onSubmit: (event: FormEvent<HTMLFormElement>, chapterId: string) => void;
   onDeleteChapter: (chapter: OutlineChapter) => void;
+  onMoveChapterUp: (chapterId: string) => void;
+  onMoveChapterDown: (chapterId: string) => void;
   onCreateScene: (chapterId: string, title: string) => void;
   onSelectScene: (sceneId: string) => void;
   onDeleteScene: (sceneId: string, sceneTitle: string) => void;
+  onMoveSceneUp: (chapter: OutlineChapter, sceneId: string) => void;
+  onMoveSceneDown: (chapter: OutlineChapter, sceneId: string) => void;
 };
 
 export function ChapterItem({
   chapter,
+  canMoveUp,
+  canMoveDown,
   isEditing,
   chapterTitle,
   chapterSummary,
@@ -37,15 +47,21 @@ export function ChapterItem({
   deletePending,
   createScenePending,
   deleteScenePending,
+  reorderPending,
+  reorderScenePending,
   onTitleChange,
   onSummaryChange,
   onStartEdit,
   onCancelEdit,
   onSubmit,
   onDeleteChapter,
+  onMoveChapterUp,
+  onMoveChapterDown,
   onCreateScene,
   onSelectScene,
   onDeleteScene,
+  onMoveSceneUp,
+  onMoveSceneDown,
 }: ChapterItemProps) {
   return (
     <article className="grid gap-2 border-l-2 border-zinc-200 pl-3">
@@ -85,7 +101,29 @@ export function ChapterItem({
             </div>
             <WordCount count={chapter.wordCount} />
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              aria-label={`Mover capítulo ${chapter.title} para cima`}
+              title="Mover para cima"
+              disabled={!canMoveUp || reorderPending}
+              onClick={() => onMoveChapterUp(chapter.id)}
+            >
+              ↑
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              aria-label={`Mover capítulo ${chapter.title} para baixo`}
+              title="Mover para baixo"
+              disabled={!canMoveDown || reorderPending}
+              onClick={() => onMoveChapterDown(chapter.id)}
+            >
+              ↓
+            </Button>
             <Button type="button" variant="secondary" size="sm" onClick={() => onStartEdit(chapter)}>
               Editar
             </Button>
@@ -109,14 +147,19 @@ export function ChapterItem({
         <EmptyState size="sm" title="Nenhuma cena" description="Este capítulo ainda não tem cenas." />
       ) : (
         <div className="grid gap-1">
-          {chapter.scenes.map((scene) => (
+          {chapter.scenes.map((scene, sceneIndex) => (
             <SceneRow
               key={scene.id}
               scene={scene}
               isSelected={selectedSceneId === scene.id}
               deletePending={deleteScenePending}
+              reorderPending={reorderScenePending}
+              canMoveUp={sceneIndex > 0}
+              canMoveDown={sceneIndex < chapter.scenes.length - 1}
               onSelect={onSelectScene}
               onDelete={onDeleteScene}
+              onMoveUp={(sceneId) => onMoveSceneUp(chapter, sceneId)}
+              onMoveDown={(sceneId) => onMoveSceneDown(chapter, sceneId)}
             />
           ))}
         </div>

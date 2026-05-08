@@ -23,12 +23,19 @@ type SectionItemProps = {
   deleteChapterPending: boolean;
   createScenePending: boolean;
   deleteScenePending: boolean;
+  reorderSectionPending: boolean;
+  reorderChapterPending: boolean;
+  reorderScenePending: boolean;
+  canMoveUp: boolean;
+  canMoveDown: boolean;
   onSectionTitleChange: (title: string) => void;
   onSectionTypeChange: (type: SectionType) => void;
   onStartEditSection: (section: OutlineSection) => void;
   onCancelEditSection: () => void;
   onSubmitSection: (event: FormEvent<HTMLFormElement>, sectionId: string) => void;
   onDeleteSection: (section: OutlineSection) => void;
+  onMoveSectionUp: (sectionId: string) => void;
+  onMoveSectionDown: (sectionId: string) => void;
   onCreateChapter: (sectionId: string, title: string) => void;
   onChapterTitleChange: (title: string) => void;
   onChapterSummaryChange: (summary: string) => void;
@@ -36,9 +43,13 @@ type SectionItemProps = {
   onCancelEditChapter: () => void;
   onSubmitChapter: (event: FormEvent<HTMLFormElement>, chapterId: string) => void;
   onDeleteChapter: (chapter: OutlineChapter) => void;
+  onMoveChapterUp: (section: OutlineSection, chapterId: string) => void;
+  onMoveChapterDown: (section: OutlineSection, chapterId: string) => void;
   onCreateScene: (chapterId: string, title: string) => void;
   onSelectScene: (sceneId: string) => void;
   onDeleteScene: (sceneId: string, sceneTitle: string) => void;
+  onMoveSceneUp: (chapter: OutlineChapter, sceneId: string) => void;
+  onMoveSceneDown: (chapter: OutlineChapter, sceneId: string) => void;
 };
 
 export function SectionItem({
@@ -58,12 +69,19 @@ export function SectionItem({
   deleteChapterPending,
   createScenePending,
   deleteScenePending,
+  reorderSectionPending,
+  reorderChapterPending,
+  reorderScenePending,
+  canMoveUp,
+  canMoveDown,
   onSectionTitleChange,
   onSectionTypeChange,
   onStartEditSection,
   onCancelEditSection,
   onSubmitSection,
   onDeleteSection,
+  onMoveSectionUp,
+  onMoveSectionDown,
   onCreateChapter,
   onChapterTitleChange,
   onChapterSummaryChange,
@@ -71,9 +89,13 @@ export function SectionItem({
   onCancelEditChapter,
   onSubmitChapter,
   onDeleteChapter,
+  onMoveChapterUp,
+  onMoveChapterDown,
   onCreateScene,
   onSelectScene,
   onDeleteScene,
+  onMoveSceneUp,
+  onMoveSceneDown,
 }: SectionItemProps) {
   return (
     <section className="rounded-lg border border-zinc-200 bg-white shadow-sm">
@@ -118,7 +140,29 @@ export function SectionItem({
               </div>
               <WordCount count={section.wordCount} />
             </div>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                aria-label={`Mover seção ${section.title} para cima`}
+                title="Mover para cima"
+                disabled={!canMoveUp || reorderSectionPending}
+                onClick={() => onMoveSectionUp(section.id)}
+              >
+                ↑
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                aria-label={`Mover seção ${section.title} para baixo`}
+                title="Mover para baixo"
+                disabled={!canMoveDown || reorderSectionPending}
+                onClick={() => onMoveSectionDown(section.id)}
+              >
+                ↓
+              </Button>
               <Button type="button" variant="secondary" size="sm" onClick={() => onStartEditSection(section)}>
                 Editar
               </Button>
@@ -144,10 +188,12 @@ export function SectionItem({
           <EmptyState size="sm" title="Nenhum capítulo" description="Esta seção ainda não tem capítulos." />
         ) : (
           <div className="grid gap-3">
-            {section.chapters.map((chapter) => (
+            {section.chapters.map((chapter, chapterIndex) => (
               <ChapterItem
                 key={chapter.id}
                 chapter={chapter}
+                canMoveUp={chapterIndex > 0}
+                canMoveDown={chapterIndex < section.chapters.length - 1}
                 isEditing={editingChapterId === chapter.id}
                 chapterTitle={chapterTitle}
                 chapterSummary={chapterSummary}
@@ -156,15 +202,21 @@ export function SectionItem({
                 deletePending={deleteChapterPending}
                 createScenePending={createScenePending}
                 deleteScenePending={deleteScenePending}
+                reorderPending={reorderChapterPending}
+                reorderScenePending={reorderScenePending}
                 onTitleChange={onChapterTitleChange}
                 onSummaryChange={onChapterSummaryChange}
                 onStartEdit={onStartEditChapter}
                 onCancelEdit={onCancelEditChapter}
                 onSubmit={onSubmitChapter}
                 onDeleteChapter={onDeleteChapter}
+                onMoveChapterUp={(chapterId) => onMoveChapterUp(section, chapterId)}
+                onMoveChapterDown={(chapterId) => onMoveChapterDown(section, chapterId)}
                 onCreateScene={onCreateScene}
                 onSelectScene={onSelectScene}
                 onDeleteScene={onDeleteScene}
+                onMoveSceneUp={onMoveSceneUp}
+                onMoveSceneDown={onMoveSceneDown}
               />
             ))}
           </div>
