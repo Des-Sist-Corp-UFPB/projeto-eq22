@@ -24,8 +24,8 @@ export function BookWorkspace({ bookId }: { bookId: string }) {
   const outline = outlineQuery.data;
 
   return (
-    <main className="grid h-screen grid-rows-[64px_1fr] overflow-hidden bg-zinc-100 text-zinc-950">
-      <header className="flex min-w-0 items-center justify-between gap-4 border-b border-zinc-200 bg-white px-4 shadow-sm shadow-zinc-200/50 md:px-6">
+    <main className="grid h-screen grid-rows-[64px_1fr] overflow-hidden bg-zinc-50 text-zinc-950">
+      <header className="flex min-w-0 items-center justify-between gap-4 border-b border-zinc-200 bg-white px-4 shadow-sm shadow-zinc-200/60 md:px-6">
         <div className="flex min-w-0 items-center gap-4">
           <Link
             href="/"
@@ -68,14 +68,14 @@ export function BookWorkspace({ bookId }: { bookId: string }) {
         </div>
       </header>
 
-      <div className="grid min-h-0 grid-cols-1 overflow-hidden md:grid-cols-[360px_minmax(0,1fr)]">
+      <div className="grid min-h-0 grid-cols-1 overflow-hidden md:grid-cols-[340px_minmax(0,1fr)]">
         {mode === "scenes" ? (
-          <div className="min-h-0 overflow-hidden bg-white">
+          <div className="min-h-0 overflow-hidden border-r border-zinc-200 bg-white">
             <OutlineSidebar bookId={bookId} selectedSceneId={selectedSceneId} onSelectScene={setSelectedSceneId} />
           </div>
         ) : null}
 
-        <div className={`min-h-0 overflow-hidden bg-zinc-50 ${mode === "characters" ? "md:col-span-2" : ""}`}>
+        <div className={`min-h-0 overflow-hidden bg-zinc-100/70 ${mode === "characters" ? "md:col-span-2" : ""}`}>
           {mode === "scenes" ? (
             <SceneEditor bookId={bookId} sceneId={selectedSceneId} onSceneDeleted={() => setSelectedSceneId(null)} />
           ) : (

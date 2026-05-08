@@ -64,7 +64,7 @@ export function ChapterItem({
   onMoveSceneDown,
 }: ChapterItemProps) {
   return (
-    <article className="grid gap-2 border-l-2 border-zinc-200 pl-3">
+    <article className="grid gap-2 border-l-2 border-zinc-300 pl-3">
       {isEditing ? (
         <form onSubmit={(event) => onSubmit(event, chapter.id)} className="grid gap-2">
           <Field label="Título do capítulo">
@@ -101,7 +101,7 @@ export function ChapterItem({
             </div>
             <WordCount count={chapter.wordCount} />
           </div>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap gap-1.5">
             <Button
               type="button"
               variant="ghost"
@@ -146,7 +146,7 @@ export function ChapterItem({
       {chapter.scenes.length === 0 ? (
         <EmptyState size="sm" title="Nenhuma cena" description="Este capítulo ainda não tem cenas." />
       ) : (
-        <div className="grid gap-1">
+        <div className="grid gap-1.5">
           {chapter.scenes.map((scene, sceneIndex) => (
             <SceneRow
               key={scene.id}

@@ -34,7 +34,7 @@ export function SceneMetadataForm({
     <form
       id={formId}
       onSubmit={onSubmit}
-      className="grid gap-4 border-b border-zinc-200 bg-zinc-50/80 px-4 py-4 md:grid-cols-[minmax(0,1fr)_180px] md:px-6"
+      className="grid gap-4 border-b border-zinc-200 bg-white px-4 py-4 md:grid-cols-[minmax(0,1fr)_180px] md:px-7"
     >
       <label className="grid gap-1 text-sm">
         <span className="font-medium text-zinc-700">Título</span>

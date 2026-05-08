@@ -38,8 +38,8 @@ export function SceneContentEditor({
   onContentChange,
 }: SceneContentEditorProps) {
   return (
-    <div className="grid min-h-0 gap-4 bg-white px-4 py-5 md:px-6">
-      <div className="mx-auto grid w-full max-w-4xl gap-3">
+    <div className="grid min-h-0 gap-4 bg-white px-4 py-6 md:px-7">
+      <div className="mx-auto grid w-full max-w-5xl gap-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h2 className="text-sm font-semibold text-zinc-950">Conteúdo textual</h2>
@@ -61,7 +61,7 @@ export function SceneContentEditor({
           onChange={(nextContentJson, nextContentText) =>
             onContentChange(editorKey, JSON.stringify(nextContentJson), nextContentText)
           }
-          className="min-h-[62vh] rounded-t-none bg-[#fffefb] px-5 py-5 text-[17px] leading-8 shadow-inner shadow-zinc-100 focus:ring-2 focus:ring-zinc-200 md:px-7 md:py-6"
+          className="min-h-[66vh] rounded-md border border-zinc-200 bg-white px-5 py-5 text-[17px] leading-8 shadow-sm shadow-zinc-100 focus:ring-2 focus:ring-zinc-200 md:px-8 md:py-7"
         />
 
         <div className="min-h-10">

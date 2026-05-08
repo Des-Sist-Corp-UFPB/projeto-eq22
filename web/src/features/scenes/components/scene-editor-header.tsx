@@ -29,7 +29,7 @@ export function SceneEditorHeader({
   onDeleteScene,
 }: SceneEditorHeaderProps) {
   return (
-    <header className="border-b border-zinc-200 bg-white px-4 py-4 md:px-6">
+    <header className="border-b border-zinc-200 bg-white px-4 py-5 md:px-7">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0">
           <p className="text-xs font-medium uppercase text-zinc-500">Cena</p>

@@ -98,8 +98,8 @@ export function SectionItem({
   onMoveSceneDown,
 }: SectionItemProps) {
   return (
-    <section className="rounded-lg border border-zinc-200 bg-white shadow-sm">
-      <div className="border-b border-zinc-100 bg-zinc-50 px-3 py-2">
+    <section className="rounded-md border border-zinc-200 bg-white shadow-sm shadow-zinc-200/50">
+      <div className="border-b border-zinc-100 bg-white px-3 py-3">
         {editingSectionId === section.id ? (
           <form onSubmit={(event) => onSubmitSection(event, section.id)} className="grid gap-2">
             <Field label="Nome da seção">
@@ -140,7 +140,7 @@ export function SectionItem({
               </div>
               <WordCount count={section.wordCount} />
             </div>
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap gap-1.5">
               <Button
                 type="button"
                 variant="ghost"
@@ -174,7 +174,7 @@ export function SectionItem({
         )}
       </div>
 
-      <div className="grid gap-3 p-3">
+      <div className="grid gap-3 bg-white p-3">
         <InlineCreateForm
           compact
           ariaLabel={`Novo capítulo em ${section.title}`}
@@ -187,7 +187,7 @@ export function SectionItem({
         {section.chapters.length === 0 ? (
           <EmptyState size="sm" title="Nenhum capítulo" description="Esta seção ainda não tem capítulos." />
         ) : (
-          <div className="grid gap-3">
+          <div className="grid gap-4">
             {section.chapters.map((chapter, chapterIndex) => (
               <ChapterItem
                 key={chapter.id}
