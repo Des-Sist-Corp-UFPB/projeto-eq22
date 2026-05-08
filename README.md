@@ -42,16 +42,28 @@ Configuracao padrao:
 - User: `postgres`
 - Password: `postgres`
 
-Compile o backend:
+Compile o backend no Windows:
 
-```bash
-mvn -s .mvn/local-settings.xml -DskipTests package
+```powershell
+mvnw.cmd -DskipTests compile
 ```
 
-Execute:
+Execute o backend no Windows:
+
+```powershell
+mvnw.cmd spring-boot:run
+```
+
+Compile o backend no Linux/macOS:
 
 ```bash
-java -jar target/iwrite-backend-0.0.1-SNAPSHOT.jar
+./mvnw -DskipTests compile
+```
+
+Execute o backend no Linux/macOS:
+
+```bash
+./mvnw spring-boot:run
 ```
 
 ## Frontend local
