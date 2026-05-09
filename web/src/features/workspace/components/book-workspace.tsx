@@ -6,13 +6,14 @@ import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { CharactersPanel } from "@/features/characters/components/characters-panel";
+import { ItemsPanel } from "@/features/items/components/items-panel";
 import { LocationsPanel } from "@/features/locations/components/locations-panel";
 import { getOutline } from "@/features/outline/api/outline-api";
 import { OutlineSidebar } from "@/features/outline/components/outline-sidebar";
 import { SceneEditor } from "@/features/scenes/components/scene-editor";
 import { queryKeys } from "@/lib/query/keys";
 
-type WorkspaceMode = "scenes" | "characters" | "locations";
+type WorkspaceMode = "scenes" | "characters" | "locations" | "items";
 
 export function BookWorkspace({ bookId }: { bookId: string }) {
   const [selectedSceneId, setSelectedSceneId] = useState<string | null>(null);
@@ -69,6 +70,14 @@ export function BookWorkspace({ bookId }: { bookId: string }) {
             >
               Localizações
             </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant={mode === "items" ? "primary" : "ghost"}
+              onClick={() => setMode("items")}
+            >
+              Itens
+            </Button>
           </div>
           {typeof outline?.wordCount === "number" ? <Badge>{outline.wordCount} palavras</Badge> : null}
           <Badge variant="outline" className="hidden sm:inline-flex">
@@ -89,8 +98,10 @@ export function BookWorkspace({ bookId }: { bookId: string }) {
             <SceneEditor bookId={bookId} sceneId={selectedSceneId} onSceneDeleted={() => setSelectedSceneId(null)} />
           ) : mode === "characters" ? (
             <CharactersPanel bookId={bookId} />
-          ) : (
+          ) : mode === "locations" ? (
             <LocationsPanel bookId={bookId} />
+          ) : (
+            <ItemsPanel bookId={bookId} />
           )}
         </div>
       </div>
