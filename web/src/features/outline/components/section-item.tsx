@@ -1,6 +1,7 @@
 import type { FormEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
+import { CollapseChevronButton } from "@/features/outline/components/collapse-chevron-button";
 import { InlineCreateForm } from "@/features/outline/components/inline-create-form";
 import { ChapterItem } from "@/features/outline/components/chapter-item";
 import { Field, WordCount } from "@/features/outline/components/outline-sidebar-parts";
@@ -28,6 +29,8 @@ type SectionItemProps = {
   reorderScenePending: boolean;
   canMoveUp: boolean;
   canMoveDown: boolean;
+  isCollapsed: boolean;
+  collapsedChapterIds: Set<string>;
   onSectionTitleChange: (title: string) => void;
   onSectionTypeChange: (type: SectionType) => void;
   onStartEditSection: (section: OutlineSection) => void;
@@ -36,6 +39,8 @@ type SectionItemProps = {
   onDeleteSection: (section: OutlineSection) => void;
   onMoveSectionUp: (sectionId: string) => void;
   onMoveSectionDown: (sectionId: string) => void;
+  onToggleSection: (sectionId: string) => void;
+  onToggleChapter: (chapterId: string) => void;
   onCreateChapter: (sectionId: string, title: string) => void;
   onChapterTitleChange: (title: string) => void;
   onChapterSummaryChange: (summary: string) => void;
@@ -74,6 +79,8 @@ export function SectionItem({
   reorderScenePending,
   canMoveUp,
   canMoveDown,
+  isCollapsed,
+  collapsedChapterIds,
   onSectionTitleChange,
   onSectionTypeChange,
   onStartEditSection,
@@ -82,6 +89,8 @@ export function SectionItem({
   onDeleteSection,
   onMoveSectionUp,
   onMoveSectionDown,
+  onToggleSection,
+  onToggleChapter,
   onCreateChapter,
   onChapterTitleChange,
   onChapterSummaryChange,
@@ -98,11 +107,11 @@ export function SectionItem({
   onMoveSceneDown,
 }: SectionItemProps) {
   return (
-    <section className="rounded-lg border border-zinc-200 bg-white shadow-sm">
-      <div className="border-b border-zinc-100 bg-zinc-50 px-3 py-2">
+    <section className="group/section rounded-md border border-zinc-200 bg-white shadow-sm shadow-zinc-200/50">
+      <div className="border-b border-zinc-100 bg-white px-3 py-3">
         {editingSectionId === section.id ? (
           <form onSubmit={(event) => onSubmitSection(event, section.id)} className="grid gap-2">
-            <Field label="Nome da seção">
+            <Field label="Nome da secao">
               <input
                 value={sectionTitle}
                 onChange={(event) => onSectionTitleChange(event.target.value)}
@@ -134,18 +143,31 @@ export function SectionItem({
         ) : (
           <div className="grid gap-2">
             <div className="flex items-center justify-between gap-3">
-              <div className="min-w-0">
-                <p className="text-[11px] font-medium uppercase text-zinc-500">Seção · {section.type}</p>
-                <h2 className="truncate text-sm font-semibold text-zinc-900">{section.title}</h2>
+              <div className="flex min-w-0 flex-1 items-center gap-2.5">
+                <CollapseChevronButton
+                  isExpanded={!isCollapsed}
+                  label={`${isCollapsed ? "Expandir" : "Recolher"} secao ${section.title}`}
+                  onClick={() => onToggleSection(section.id)}
+                />
+                <button
+                  type="button"
+                  className="min-w-0 flex-1 text-left focus:outline-none focus:ring-2 focus:ring-zinc-800 focus:ring-offset-2"
+                  aria-expanded={!isCollapsed}
+                  aria-label={`${isCollapsed ? "Expandir" : "Recolher"} secao ${section.title}`}
+                  onClick={() => onToggleSection(section.id)}
+                >
+                  <p className="text-[11px] font-medium uppercase text-zinc-500">Secao · {section.type}</p>
+                  <h2 className="truncate text-sm font-semibold text-zinc-900">{section.title}</h2>
+                </button>
               </div>
               <WordCount count={section.wordCount} />
             </div>
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap gap-1.5 opacity-70 transition group-hover/section:opacity-100 focus-within:opacity-100">
               <Button
                 type="button"
                 variant="ghost"
                 size="sm"
-                aria-label={`Mover seção ${section.title} para cima`}
+                aria-label={`Mover secao ${section.title} para cima`}
                 title="Mover para cima"
                 disabled={!canMoveUp || reorderSectionPending}
                 onClick={() => onMoveSectionUp(section.id)}
@@ -156,14 +178,14 @@ export function SectionItem({
                 type="button"
                 variant="ghost"
                 size="sm"
-                aria-label={`Mover seção ${section.title} para baixo`}
+                aria-label={`Mover secao ${section.title} para baixo`}
                 title="Mover para baixo"
                 disabled={!canMoveDown || reorderSectionPending}
                 onClick={() => onMoveSectionDown(section.id)}
               >
                 ↓
               </Button>
-              <Button type="button" variant="secondary" size="sm" onClick={() => onStartEditSection(section)}>
+              <Button type="button" variant="ghost" size="sm" onClick={() => onStartEditSection(section)}>
                 Editar
               </Button>
               <Button type="button" variant="ghost" size="sm" disabled={deleteSectionPending} onClick={() => onDeleteSection(section)}>
@@ -174,54 +196,58 @@ export function SectionItem({
         )}
       </div>
 
-      <div className="grid gap-3 p-3">
-        <InlineCreateForm
-          compact
-          ariaLabel={`Novo capítulo em ${section.title}`}
-          placeholder="Novo capítulo"
-          buttonLabel="Cap."
-          disabled={createChapterPending}
-          onCreate={(title) => onCreateChapter(section.id, title)}
-        />
+      {!isCollapsed ? (
+        <div className="grid gap-3 bg-zinc-50/40 p-3">
+          <InlineCreateForm
+            compact
+            ariaLabel={`Novo capitulo em ${section.title}`}
+            placeholder="Novo capitulo"
+            buttonLabel="Cap."
+            disabled={createChapterPending}
+            onCreate={(title) => onCreateChapter(section.id, title)}
+          />
 
-        {section.chapters.length === 0 ? (
-          <EmptyState size="sm" title="Nenhum capítulo" description="Esta seção ainda não tem capítulos." />
-        ) : (
-          <div className="grid gap-3">
-            {section.chapters.map((chapter, chapterIndex) => (
-              <ChapterItem
-                key={chapter.id}
-                chapter={chapter}
-                canMoveUp={chapterIndex > 0}
-                canMoveDown={chapterIndex < section.chapters.length - 1}
-                isEditing={editingChapterId === chapter.id}
-                chapterTitle={chapterTitle}
-                chapterSummary={chapterSummary}
-                selectedSceneId={selectedSceneId}
-                updatePending={updateChapterPending}
-                deletePending={deleteChapterPending}
-                createScenePending={createScenePending}
-                deleteScenePending={deleteScenePending}
-                reorderPending={reorderChapterPending}
-                reorderScenePending={reorderScenePending}
-                onTitleChange={onChapterTitleChange}
-                onSummaryChange={onChapterSummaryChange}
-                onStartEdit={onStartEditChapter}
-                onCancelEdit={onCancelEditChapter}
-                onSubmit={onSubmitChapter}
-                onDeleteChapter={onDeleteChapter}
-                onMoveChapterUp={(chapterId) => onMoveChapterUp(section, chapterId)}
-                onMoveChapterDown={(chapterId) => onMoveChapterDown(section, chapterId)}
-                onCreateScene={onCreateScene}
-                onSelectScene={onSelectScene}
-                onDeleteScene={onDeleteScene}
-                onMoveSceneUp={onMoveSceneUp}
-                onMoveSceneDown={onMoveSceneDown}
-              />
-            ))}
-          </div>
-        )}
-      </div>
+          {section.chapters.length === 0 ? (
+            <EmptyState size="sm" title="Nenhum capitulo" description="Esta secao ainda nao tem capitulos." />
+          ) : (
+            <div className="grid gap-4">
+              {section.chapters.map((chapter, chapterIndex) => (
+                <ChapterItem
+                  key={chapter.id}
+                  chapter={chapter}
+                  canMoveUp={chapterIndex > 0}
+                  canMoveDown={chapterIndex < section.chapters.length - 1}
+                  isCollapsed={collapsedChapterIds.has(chapter.id)}
+                  isEditing={editingChapterId === chapter.id}
+                  chapterTitle={chapterTitle}
+                  chapterSummary={chapterSummary}
+                  selectedSceneId={selectedSceneId}
+                  updatePending={updateChapterPending}
+                  deletePending={deleteChapterPending}
+                  createScenePending={createScenePending}
+                  deleteScenePending={deleteScenePending}
+                  reorderPending={reorderChapterPending}
+                  reorderScenePending={reorderScenePending}
+                  onTitleChange={onChapterTitleChange}
+                  onSummaryChange={onChapterSummaryChange}
+                  onStartEdit={onStartEditChapter}
+                  onCancelEdit={onCancelEditChapter}
+                  onSubmit={onSubmitChapter}
+                  onDeleteChapter={onDeleteChapter}
+                  onMoveChapterUp={(chapterId) => onMoveChapterUp(section, chapterId)}
+                  onMoveChapterDown={(chapterId) => onMoveChapterDown(section, chapterId)}
+                  onToggleChapter={onToggleChapter}
+                  onCreateScene={onCreateScene}
+                  onSelectScene={onSelectScene}
+                  onDeleteScene={onDeleteScene}
+                  onMoveSceneUp={onMoveSceneUp}
+                  onMoveSceneDown={onMoveSceneDown}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      ) : null}
     </section>
   );
 }

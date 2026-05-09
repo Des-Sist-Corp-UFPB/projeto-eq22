@@ -1,6 +1,6 @@
 "use client";
 
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -59,6 +59,8 @@ export function OutlineSidebar({ bookId, selectedSceneId, onSelectScene }: Outli
   const [editingChapterId, setEditingChapterId] = useState<string | null>(null);
   const [chapterTitle, setChapterTitle] = useState("");
   const [chapterSummary, setChapterSummary] = useState("");
+  const [collapsedSectionIds, setCollapsedSectionIds] = useState<Set<string>>(() => new Set());
+  const [collapsedChapterIds, setCollapsedChapterIds] = useState<Set<string>>(() => new Set());
 
   const outlineQuery = useQuery({
     queryKey: queryKeys.outline(bookId),
@@ -68,8 +70,45 @@ export function OutlineSidebar({ bookId, selectedSceneId, onSelectScene }: Outli
   const reorderChaptersMutation = useReorderChaptersMutation(bookId);
   const reorderScenesMutation = useReorderScenesMutation(bookId);
 
+  useEffect(() => {
+    const outline = outlineQuery.data;
+    if (!outline || !selectedSceneId) {
+      return;
+    }
+
+    const selectedSection = outline.sections.find((section) =>
+      section.chapters.some((chapter) => chapter.scenes.some((scene) => scene.id === selectedSceneId))
+    );
+    const selectedChapter = selectedSection?.chapters.find((chapter) =>
+      chapter.scenes.some((scene) => scene.id === selectedSceneId)
+    );
+
+    if (selectedSection) {
+      setCollapsedSectionIds((current) => {
+        const next = new Set(current);
+        next.delete(selectedSection.id);
+        return next;
+      });
+    }
+    if (selectedChapter) {
+      setCollapsedChapterIds((current) => {
+        const next = new Set(current);
+        next.delete(selectedChapter.id);
+        return next;
+      });
+    }
+  }, [outlineQuery.data, selectedSceneId]);
+
   function invalidateOutline() {
     void queryClient.invalidateQueries({ queryKey: queryKeys.outline(bookId) });
+  }
+
+  function toggleSection(sectionId: string) {
+    setCollapsedSectionIds((current) => toggleSetId(current, sectionId));
+  }
+
+  function toggleChapter(chapterId: string) {
+    setCollapsedChapterIds((current) => toggleSetId(current, chapterId));
   }
 
   const sectionMutation = useMutation({
@@ -270,7 +309,7 @@ export function OutlineSidebar({ bookId, selectedSceneId, onSelectScene }: Outli
 
   if (outlineQuery.isError) {
     return (
-      <aside className="flex h-full min-h-0 flex-col border-r border-zinc-200 bg-white p-3">
+      <aside className="flex h-full min-h-0 flex-col bg-white p-3">
         <EmptyState
           size="sm"
           title="Não foi possível carregar o outline"
@@ -287,7 +326,7 @@ export function OutlineSidebar({ bookId, selectedSceneId, onSelectScene }: Outli
 
   if (!outline) {
     return (
-      <aside className="flex h-full min-h-0 flex-col border-r border-zinc-200 bg-white p-3">
+      <aside className="flex h-full min-h-0 flex-col bg-white p-3">
         <EmptyState size="sm" title="Outline indisponível" description="Não recebemos dados deste livro." />
       </aside>
     );
@@ -307,8 +346,8 @@ export function OutlineSidebar({ bookId, selectedSceneId, onSelectScene }: Outli
     reorderScenesMutation.isError;
 
   return (
-    <aside className="flex h-full min-h-0 flex-col border-r border-zinc-200 bg-white">
-      <div className="border-b border-zinc-200 p-4">
+    <aside className="flex h-full min-h-0 flex-col bg-white">
+      <div className="border-b border-zinc-200 bg-white px-4 py-5">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <p className="text-xs font-medium uppercase text-zinc-500">Livro</p>
@@ -318,7 +357,7 @@ export function OutlineSidebar({ bookId, selectedSceneId, onSelectScene }: Outli
         </div>
       </div>
 
-      <div className="grid gap-2 border-b border-zinc-200 bg-zinc-50/70 p-3">
+      <div className="grid gap-2 border-b border-zinc-200 bg-white px-4 py-3">
         <InlineCreateForm
           ariaLabel="Nova seção"
           placeholder="Nova seção"
@@ -329,7 +368,7 @@ export function OutlineSidebar({ bookId, selectedSceneId, onSelectScene }: Outli
         {successMessage ? <FeedbackMessage variant="success">{successMessage}</FeedbackMessage> : null}
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto p-3">
+      <div className="min-h-0 flex-1 overflow-y-auto bg-zinc-50/70 px-3 py-4">
         {outline.sections.length === 0 ? (
           <EmptyState
             size="sm"
@@ -337,13 +376,15 @@ export function OutlineSidebar({ bookId, selectedSceneId, onSelectScene }: Outli
             description="Crie uma seção para começar a organizar o esboço do livro."
           />
         ) : (
-          <div className="grid gap-3">
+          <div className="grid gap-4">
             {outline.sections.map((section, sectionIndex) => (
               <SectionItem
                 key={section.id}
                 section={section}
                 canMoveUp={sectionIndex > 0}
                 canMoveDown={sectionIndex < outline.sections.length - 1}
+                isCollapsed={collapsedSectionIds.has(section.id)}
+                collapsedChapterIds={collapsedChapterIds}
                 sectionTypes={sectionTypes}
                 selectedSceneId={selectedSceneId}
                 editingSectionId={editingSectionId}
@@ -370,6 +411,8 @@ export function OutlineSidebar({ bookId, selectedSceneId, onSelectScene }: Outli
                 onDeleteSection={handleDeleteSection}
                 onMoveSectionUp={(sectionId) => handleMoveSection(sectionId, -1)}
                 onMoveSectionDown={(sectionId) => handleMoveSection(sectionId, 1)}
+                onToggleSection={toggleSection}
+                onToggleChapter={toggleChapter}
                 onCreateChapter={(sectionId, title) => chapterMutation.mutate({ sectionId, title })}
                 onChapterTitleChange={setChapterTitle}
                 onChapterSummaryChange={setChapterSummary}
@@ -399,4 +442,14 @@ export function OutlineSidebar({ bookId, selectedSceneId, onSelectScene }: Outli
       ) : null}
     </aside>
   );
+}
+
+function toggleSetId(current: Set<string>, id: string) {
+  const next = new Set(current);
+  if (next.has(id)) {
+    next.delete(id);
+  } else {
+    next.add(id);
+  }
+  return next;
 }
