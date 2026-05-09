@@ -7,6 +7,7 @@ import { ErrorState, LoadingState } from "@/components/ui/feedback";
 import { FeedbackMessage } from "@/components/ui/feedback-message";
 import {
   useCreateLocation,
+  useDeleteLocation,
   useLocations,
   useUpdateLocation,
 } from "@/features/locations/api/locations-hooks";
@@ -25,12 +26,14 @@ export function LocationsPanel({ bookId }: LocationsPanelProps) {
   const locationsQuery = useLocations(bookId);
   const createMutation = useCreateLocation(bookId);
   const updateMutation = useUpdateLocation(bookId);
+  const deleteMutation = useDeleteLocation(bookId);
   const [selectedLocation, setSelectedLocation] = useState<LocationResponse | null>(null);
   const [detailMode, setDetailMode] = useState<DetailMode>("empty");
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   const activeMutation = detailMode === "edit" ? updateMutation : createMutation;
   const errorMessage = useMemo(() => getLocationErrorMessage(activeMutation.error), [activeMutation.error]);
+  const deleteErrorMessage = useMemo(() => getLocationErrorMessage(deleteMutation.error), [deleteMutation.error]);
 
   function startCreate() {
     setSelectedLocation(null);
@@ -38,6 +41,7 @@ export function LocationsPanel({ bookId }: LocationsPanelProps) {
     setSuccessMessage(null);
     createMutation.reset();
     updateMutation.reset();
+    deleteMutation.reset();
   }
 
   function startEdit(location: LocationResponse) {
@@ -46,6 +50,7 @@ export function LocationsPanel({ bookId }: LocationsPanelProps) {
     setSuccessMessage(null);
     createMutation.reset();
     updateMutation.reset();
+    deleteMutation.reset();
   }
 
   function clearDetail() {
@@ -54,6 +59,7 @@ export function LocationsPanel({ bookId }: LocationsPanelProps) {
     setSuccessMessage(null);
     createMutation.reset();
     updateMutation.reset();
+    deleteMutation.reset();
   }
 
   function handleSubmit(payload: LocationRequest) {
@@ -81,6 +87,28 @@ export function LocationsPanel({ bookId }: LocationsPanelProps) {
     });
   }
 
+  function handleDeleteLocation(location: LocationResponse) {
+    const confirmed = window.confirm(`Excluir a localização "${location.name}"? Esta ação não pode ser desfeita.`);
+    if (!confirmed) {
+      return;
+    }
+
+    setSuccessMessage(null);
+    createMutation.reset();
+    updateMutation.reset();
+    deleteMutation.reset();
+
+    deleteMutation.mutate(location.id, {
+      onSuccess: () => {
+        if (selectedLocation?.id === location.id) {
+          setSelectedLocation(null);
+          setDetailMode("empty");
+        }
+        setSuccessMessage("Localização excluída com sucesso.");
+      },
+    });
+  }
+
   return (
     <section className="h-full overflow-y-auto bg-zinc-50 p-4 md:p-6">
       <div className="mx-auto grid max-w-6xl gap-4">
@@ -102,6 +130,7 @@ export function LocationsPanel({ bookId }: LocationsPanelProps) {
         ) : null}
 
         {successMessage ? <FeedbackMessage variant="success">{successMessage}</FeedbackMessage> : null}
+        {deleteErrorMessage ? <ErrorState message={deleteErrorMessage} /> : null}
 
         {locationsQuery.data ? (
           <div className="grid min-h-[calc(100vh-180px)] gap-4 lg:grid-cols-[340px_minmax(0,1fr)]">
@@ -109,7 +138,9 @@ export function LocationsPanel({ bookId }: LocationsPanelProps) {
               <LocationsList
                 locations={locationsQuery.data}
                 selectedLocationId={detailMode === "edit" ? selectedLocation?.id ?? null : null}
+                deletePendingLocationId={deleteMutation.variables ?? null}
                 onEditLocation={startEdit}
+                onDeleteLocation={handleDeleteLocation}
               />
             </aside>
 
