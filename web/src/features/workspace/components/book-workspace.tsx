@@ -12,7 +12,7 @@ import { OutlineSidebar } from "@/features/outline/components/outline-sidebar";
 import { SceneEditor } from "@/features/scenes/components/scene-editor";
 import { queryKeys } from "@/lib/query/keys";
 
-type WorkspaceMode = "scenes" | "characters" | "locations";
+type WorkspaceMode = "scenes" | "characters" | "locations" | "items";
 
 export function BookWorkspace({ bookId }: { bookId: string }) {
   const [selectedSceneId, setSelectedSceneId] = useState<string | null>(null);
@@ -69,6 +69,14 @@ export function BookWorkspace({ bookId }: { bookId: string }) {
             >
               Localizações
             </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant={mode === "items" ? "primary" : "ghost"}
+              onClick={() => setMode("items")}
+            >
+              Itens
+            </Button>
           </div>
           {typeof outline?.wordCount === "number" ? <Badge>{outline.wordCount} palavras</Badge> : null}
           <Badge variant="outline" className="hidden sm:inline-flex">
@@ -89,8 +97,15 @@ export function BookWorkspace({ bookId }: { bookId: string }) {
             <SceneEditor bookId={bookId} sceneId={selectedSceneId} onSceneDeleted={() => setSelectedSceneId(null)} />
           ) : mode === "characters" ? (
             <CharactersPanel bookId={bookId} />
-          ) : (
+          ) : mode === "locations" ? (
             <LocationsPanel bookId={bookId} />
+          ) : (
+            <section className="flex h-full items-center justify-center p-6">
+              <div className="w-full max-w-xl rounded-lg border border-zinc-200 bg-white p-8 text-center shadow-sm">
+                <h2 className="text-xl font-semibold text-zinc-950">Itens do livro</h2>
+                <p className="mt-2 text-sm text-zinc-600">A interface de itens será adicionada nesta área.</p>
+              </div>
+            </section>
           )}
         </div>
       </div>
