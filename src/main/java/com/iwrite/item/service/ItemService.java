@@ -79,7 +79,7 @@ public class ItemService {
         if (request.origin() != null) {
             item.setOrigin(request.origin());
         }
-        if (request.currentOwnerCharacterId() != null) {
+        if (request.isCurrentOwnerCharacterIdPresent()) {
             item.setCurrentOwnerCharacter(findOwnerForBook(item.getBook().getId(), request.currentOwnerCharacterId()));
         }
         if (request.narrativeImportance() != null) {
