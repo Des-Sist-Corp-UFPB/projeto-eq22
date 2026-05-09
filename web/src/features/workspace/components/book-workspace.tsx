@@ -6,6 +6,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { CharactersPanel } from "@/features/characters/components/characters-panel";
+import { ItemsPanel } from "@/features/items/components/items-panel";
 import { LocationsPanel } from "@/features/locations/components/locations-panel";
 import { getOutline } from "@/features/outline/api/outline-api";
 import { OutlineSidebar } from "@/features/outline/components/outline-sidebar";
@@ -100,12 +101,7 @@ export function BookWorkspace({ bookId }: { bookId: string }) {
           ) : mode === "locations" ? (
             <LocationsPanel bookId={bookId} />
           ) : (
-            <section className="flex h-full items-center justify-center p-6">
-              <div className="w-full max-w-xl rounded-lg border border-zinc-200 bg-white p-8 text-center shadow-sm">
-                <h2 className="text-xl font-semibold text-zinc-950">Itens do livro</h2>
-                <p className="mt-2 text-sm text-zinc-600">A interface de itens será adicionada nesta área.</p>
-              </div>
-            </section>
+            <ItemsPanel bookId={bookId} />
           )}
         </div>
       </div>
