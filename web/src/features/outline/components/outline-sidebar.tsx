@@ -1,6 +1,6 @@
 "use client";
 
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -59,6 +59,8 @@ export function OutlineSidebar({ bookId, selectedSceneId, onSelectScene }: Outli
   const [editingChapterId, setEditingChapterId] = useState<string | null>(null);
   const [chapterTitle, setChapterTitle] = useState("");
   const [chapterSummary, setChapterSummary] = useState("");
+  const [collapsedSectionIds, setCollapsedSectionIds] = useState<Set<string>>(() => new Set());
+  const [collapsedChapterIds, setCollapsedChapterIds] = useState<Set<string>>(() => new Set());
 
   const outlineQuery = useQuery({
     queryKey: queryKeys.outline(bookId),
@@ -68,8 +70,45 @@ export function OutlineSidebar({ bookId, selectedSceneId, onSelectScene }: Outli
   const reorderChaptersMutation = useReorderChaptersMutation(bookId);
   const reorderScenesMutation = useReorderScenesMutation(bookId);
 
+  useEffect(() => {
+    const outline = outlineQuery.data;
+    if (!outline || !selectedSceneId) {
+      return;
+    }
+
+    const selectedSection = outline.sections.find((section) =>
+      section.chapters.some((chapter) => chapter.scenes.some((scene) => scene.id === selectedSceneId))
+    );
+    const selectedChapter = selectedSection?.chapters.find((chapter) =>
+      chapter.scenes.some((scene) => scene.id === selectedSceneId)
+    );
+
+    if (selectedSection) {
+      setCollapsedSectionIds((current) => {
+        const next = new Set(current);
+        next.delete(selectedSection.id);
+        return next;
+      });
+    }
+    if (selectedChapter) {
+      setCollapsedChapterIds((current) => {
+        const next = new Set(current);
+        next.delete(selectedChapter.id);
+        return next;
+      });
+    }
+  }, [outlineQuery.data, selectedSceneId]);
+
   function invalidateOutline() {
     void queryClient.invalidateQueries({ queryKey: queryKeys.outline(bookId) });
+  }
+
+  function toggleSection(sectionId: string) {
+    setCollapsedSectionIds((current) => toggleSetId(current, sectionId));
+  }
+
+  function toggleChapter(chapterId: string) {
+    setCollapsedChapterIds((current) => toggleSetId(current, chapterId));
   }
 
   const sectionMutation = useMutation({
@@ -344,6 +383,8 @@ export function OutlineSidebar({ bookId, selectedSceneId, onSelectScene }: Outli
                 section={section}
                 canMoveUp={sectionIndex > 0}
                 canMoveDown={sectionIndex < outline.sections.length - 1}
+                isCollapsed={collapsedSectionIds.has(section.id)}
+                collapsedChapterIds={collapsedChapterIds}
                 sectionTypes={sectionTypes}
                 selectedSceneId={selectedSceneId}
                 editingSectionId={editingSectionId}
@@ -370,6 +411,8 @@ export function OutlineSidebar({ bookId, selectedSceneId, onSelectScene }: Outli
                 onDeleteSection={handleDeleteSection}
                 onMoveSectionUp={(sectionId) => handleMoveSection(sectionId, -1)}
                 onMoveSectionDown={(sectionId) => handleMoveSection(sectionId, 1)}
+                onToggleSection={toggleSection}
+                onToggleChapter={toggleChapter}
                 onCreateChapter={(sectionId, title) => chapterMutation.mutate({ sectionId, title })}
                 onChapterTitleChange={setChapterTitle}
                 onChapterSummaryChange={setChapterSummary}
@@ -399,4 +442,14 @@ export function OutlineSidebar({ bookId, selectedSceneId, onSelectScene }: Outli
       ) : null}
     </aside>
   );
+}
+
+function toggleSetId(current: Set<string>, id: string) {
+  const next = new Set(current);
+  if (next.has(id)) {
+    next.delete(id);
+  } else {
+    next.add(id);
+  }
+  return next;
 }

@@ -10,6 +10,7 @@ type ChapterItemProps = {
   chapter: OutlineChapter;
   canMoveUp: boolean;
   canMoveDown: boolean;
+  isCollapsed: boolean;
   isEditing: boolean;
   chapterTitle: string;
   chapterSummary: string;
@@ -28,6 +29,7 @@ type ChapterItemProps = {
   onDeleteChapter: (chapter: OutlineChapter) => void;
   onMoveChapterUp: (chapterId: string) => void;
   onMoveChapterDown: (chapterId: string) => void;
+  onToggleChapter: (chapterId: string) => void;
   onCreateScene: (chapterId: string, title: string) => void;
   onSelectScene: (sceneId: string) => void;
   onDeleteScene: (sceneId: string, sceneTitle: string) => void;
@@ -39,6 +41,7 @@ export function ChapterItem({
   chapter,
   canMoveUp,
   canMoveDown,
+  isCollapsed,
   isEditing,
   chapterTitle,
   chapterSummary,
@@ -57,6 +60,7 @@ export function ChapterItem({
   onDeleteChapter,
   onMoveChapterUp,
   onMoveChapterDown,
+  onToggleChapter,
   onCreateScene,
   onSelectScene,
   onDeleteScene,
@@ -67,7 +71,7 @@ export function ChapterItem({
     <article className="group/chapter grid gap-2 border-l-2 border-zinc-300 pl-3">
       {isEditing ? (
         <form onSubmit={(event) => onSubmit(event, chapter.id)} className="grid gap-2">
-          <Field label="Título do capítulo">
+          <Field label="Titulo do capitulo">
             <input
               value={chapterTitle}
               onChange={(event) => onTitleChange(event.target.value)}
@@ -94,11 +98,21 @@ export function ChapterItem({
       ) : (
         <>
           <div className="flex items-start justify-between gap-3 rounded-md bg-white px-2 py-2">
-            <div className="min-w-0">
-              <p className="text-[11px] font-medium uppercase text-zinc-500">Capítulo</p>
-              <h3 className="truncate text-sm font-medium text-zinc-800">{chapter.title}</h3>
+            <button
+              type="button"
+              className="min-w-0 flex-1 text-left focus:outline-none focus:ring-2 focus:ring-zinc-800 focus:ring-offset-2"
+              aria-expanded={!isCollapsed}
+              onClick={() => onToggleChapter(chapter.id)}
+            >
+              <p className="text-[11px] font-medium uppercase text-zinc-500">Capitulo</p>
+              <h3 className="truncate text-sm font-medium text-zinc-800">
+                <span className="mr-1 text-xs text-zinc-500" aria-hidden="true">
+                  {isCollapsed ? ">" : "v"}
+                </span>
+                {chapter.title}
+              </h3>
               {chapter.summary ? <p className="mt-1 line-clamp-2 text-xs leading-5 text-zinc-500">{chapter.summary}</p> : null}
-            </div>
+            </button>
             <WordCount count={chapter.wordCount} />
           </div>
           <div className="flex flex-wrap gap-1.5 opacity-60 transition group-hover/chapter:opacity-100 focus-within:opacity-100">
@@ -106,7 +120,7 @@ export function ChapterItem({
               type="button"
               variant="ghost"
               size="sm"
-              aria-label={`Mover capítulo ${chapter.title} para cima`}
+              aria-label={`Mover capitulo ${chapter.title} para cima`}
               title="Mover para cima"
               disabled={!canMoveUp || reorderPending}
               onClick={() => onMoveChapterUp(chapter.id)}
@@ -117,7 +131,7 @@ export function ChapterItem({
               type="button"
               variant="ghost"
               size="sm"
-              aria-label={`Mover capítulo ${chapter.title} para baixo`}
+              aria-label={`Mover capitulo ${chapter.title} para baixo`}
               title="Mover para baixo"
               disabled={!canMoveDown || reorderPending}
               onClick={() => onMoveChapterDown(chapter.id)}
@@ -134,36 +148,40 @@ export function ChapterItem({
         </>
       )}
 
-      <InlineCreateForm
-        compact
-        ariaLabel={`Nova cena em ${chapter.title}`}
-        placeholder="Nova cena"
-        buttonLabel="Cena"
-        disabled={createScenePending}
-        onCreate={(title) => onCreateScene(chapter.id, title)}
-      />
+      {!isCollapsed ? (
+        <>
+          <InlineCreateForm
+            compact
+            ariaLabel={`Nova cena em ${chapter.title}`}
+            placeholder="Nova cena"
+            buttonLabel="Cena"
+            disabled={createScenePending}
+            onCreate={(title) => onCreateScene(chapter.id, title)}
+          />
 
-      {chapter.scenes.length === 0 ? (
-        <EmptyState size="sm" title="Nenhuma cena" description="Este capítulo ainda não tem cenas." />
-      ) : (
-        <div className="grid gap-1.5">
-          {chapter.scenes.map((scene, sceneIndex) => (
-            <SceneRow
-              key={scene.id}
-              scene={scene}
-              isSelected={selectedSceneId === scene.id}
-              deletePending={deleteScenePending}
-              reorderPending={reorderScenePending}
-              canMoveUp={sceneIndex > 0}
-              canMoveDown={sceneIndex < chapter.scenes.length - 1}
-              onSelect={onSelectScene}
-              onDelete={onDeleteScene}
-              onMoveUp={(sceneId) => onMoveSceneUp(chapter, sceneId)}
-              onMoveDown={(sceneId) => onMoveSceneDown(chapter, sceneId)}
-            />
-          ))}
-        </div>
-      )}
+          {chapter.scenes.length === 0 ? (
+            <EmptyState size="sm" title="Nenhuma cena" description="Este capitulo ainda nao tem cenas." />
+          ) : (
+            <div className="grid gap-1.5">
+              {chapter.scenes.map((scene, sceneIndex) => (
+                <SceneRow
+                  key={scene.id}
+                  scene={scene}
+                  isSelected={selectedSceneId === scene.id}
+                  deletePending={deleteScenePending}
+                  reorderPending={reorderScenePending}
+                  canMoveUp={sceneIndex > 0}
+                  canMoveDown={sceneIndex < chapter.scenes.length - 1}
+                  onSelect={onSelectScene}
+                  onDelete={onDeleteScene}
+                  onMoveUp={(sceneId) => onMoveSceneUp(chapter, sceneId)}
+                  onMoveDown={(sceneId) => onMoveSceneDown(chapter, sceneId)}
+                />
+              ))}
+            </div>
+          )}
+        </>
+      ) : null}
     </article>
   );
 }
