@@ -34,23 +34,23 @@ export function SceneMetadataForm({
     <form
       id={formId}
       onSubmit={onSubmit}
-      className="grid gap-4 border-b border-zinc-200 bg-white px-4 py-4 md:grid-cols-[minmax(0,1fr)_180px] md:px-7"
+      className="grid gap-3 border-b border-zinc-200 bg-zinc-50/50 px-4 py-3 md:grid-cols-[minmax(0,1fr)_160px] md:px-7"
     >
-      <label className="grid gap-1 text-sm">
-        <span className="font-medium text-zinc-700">Título</span>
+      <label className="grid gap-1 text-xs">
+        <span className="font-medium text-zinc-600">Título</span>
         <input
           value={title}
           onChange={(event) => onTitleChange(event.target.value)}
-          className="min-h-10 rounded-md border border-zinc-300 bg-white px-3 py-2 outline-none transition focus:border-zinc-800 focus:ring-2 focus:ring-zinc-200"
+          className="min-h-9 rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-sm outline-none transition focus:border-zinc-800 focus:ring-2 focus:ring-zinc-200"
         />
       </label>
 
-      <label className="grid gap-1 text-sm">
-        <span className="font-medium text-zinc-700">Status</span>
+      <label className="grid gap-1 text-xs">
+        <span className="font-medium text-zinc-600">Status</span>
         <select
           value={status}
           onChange={(event) => onStatusChange(event.target.value as SceneStatus)}
-          className="min-h-10 rounded-md border border-zinc-300 bg-white px-3 py-2 outline-none transition focus:border-zinc-800 focus:ring-2 focus:ring-zinc-200"
+          className="min-h-9 rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-sm outline-none transition focus:border-zinc-800 focus:ring-2 focus:ring-zinc-200"
         >
           {statuses.map((sceneStatus) => (
             <option key={sceneStatus} value={sceneStatus}>
@@ -60,13 +60,13 @@ export function SceneMetadataForm({
         </select>
       </label>
 
-      <label className="grid gap-1 text-sm md:col-span-2">
-        <span className="font-medium text-zinc-700">Resumo</span>
+      <label className="grid gap-1 text-xs md:col-span-2">
+        <span className="font-medium text-zinc-600">Resumo</span>
         <Textarea
           value={summary}
-          rows={3}
+          rows={2}
           onChange={(event) => onSummaryChange(event.target.value)}
-          className="resize-y focus:ring-2 focus:ring-zinc-200"
+          className="resize-y bg-white text-sm focus:ring-2 focus:ring-zinc-200"
           placeholder="Resumo breve da função dramática desta cena."
         />
       </label>

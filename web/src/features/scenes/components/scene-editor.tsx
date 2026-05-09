@@ -295,6 +295,7 @@ export function SceneEditor({ bookId, sceneId, onSceneDeleted }: SceneEditorProp
           scene={scene}
           metadataFormId={METADATA_FORM_ID}
           title={title}
+          contentSaveStatus={contentSaveStatus}
           metadataPending={metadataMutation.isPending}
           contentPending={contentMutation.isPending}
           deletePending={deleteMutation.isPending}
