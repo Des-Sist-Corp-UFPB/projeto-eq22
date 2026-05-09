@@ -1,6 +1,7 @@
 import type { FormEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
+import { CollapseChevronButton } from "@/features/outline/components/collapse-chevron-button";
 import { InlineCreateForm } from "@/features/outline/components/inline-create-form";
 import { ChapterItem } from "@/features/outline/components/chapter-item";
 import { Field, WordCount } from "@/features/outline/components/outline-sidebar-parts";
@@ -142,20 +143,23 @@ export function SectionItem({
         ) : (
           <div className="grid gap-2">
             <div className="flex items-center justify-between gap-3">
-              <button
-                type="button"
-                className="min-w-0 flex-1 text-left focus:outline-none focus:ring-2 focus:ring-zinc-800 focus:ring-offset-2"
-                aria-expanded={!isCollapsed}
-                onClick={() => onToggleSection(section.id)}
-              >
-                <p className="text-[11px] font-medium uppercase text-zinc-500">Secao · {section.type}</p>
-                <h2 className="truncate text-sm font-semibold text-zinc-900">
-                  <span className="mr-1 text-xs text-zinc-500" aria-hidden="true">
-                    {isCollapsed ? ">" : "v"}
-                  </span>
-                  {section.title}
-                </h2>
-              </button>
+              <div className="flex min-w-0 flex-1 items-center gap-2.5">
+                <CollapseChevronButton
+                  isExpanded={!isCollapsed}
+                  label={`${isCollapsed ? "Expandir" : "Recolher"} secao ${section.title}`}
+                  onClick={() => onToggleSection(section.id)}
+                />
+                <button
+                  type="button"
+                  className="min-w-0 flex-1 text-left focus:outline-none focus:ring-2 focus:ring-zinc-800 focus:ring-offset-2"
+                  aria-expanded={!isCollapsed}
+                  aria-label={`${isCollapsed ? "Expandir" : "Recolher"} secao ${section.title}`}
+                  onClick={() => onToggleSection(section.id)}
+                >
+                  <p className="text-[11px] font-medium uppercase text-zinc-500">Secao · {section.type}</p>
+                  <h2 className="truncate text-sm font-semibold text-zinc-900">{section.title}</h2>
+                </button>
+              </div>
               <WordCount count={section.wordCount} />
             </div>
             <div className="flex flex-wrap gap-1.5 opacity-70 transition group-hover/section:opacity-100 focus-within:opacity-100">

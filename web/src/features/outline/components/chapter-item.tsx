@@ -1,6 +1,7 @@
 import type { FormEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
+import { CollapseChevronButton } from "@/features/outline/components/collapse-chevron-button";
 import { InlineCreateForm } from "@/features/outline/components/inline-create-form";
 import { Field, WordCount } from "@/features/outline/components/outline-sidebar-parts";
 import { SceneRow } from "@/features/outline/components/scene-row";
@@ -98,21 +99,24 @@ export function ChapterItem({
       ) : (
         <>
           <div className="flex items-start justify-between gap-3 rounded-md bg-white px-2 py-2">
-            <button
-              type="button"
-              className="min-w-0 flex-1 text-left focus:outline-none focus:ring-2 focus:ring-zinc-800 focus:ring-offset-2"
-              aria-expanded={!isCollapsed}
-              onClick={() => onToggleChapter(chapter.id)}
-            >
-              <p className="text-[11px] font-medium uppercase text-zinc-500">Capitulo</p>
-              <h3 className="truncate text-sm font-medium text-zinc-800">
-                <span className="mr-1 text-xs text-zinc-500" aria-hidden="true">
-                  {isCollapsed ? ">" : "v"}
-                </span>
-                {chapter.title}
-              </h3>
-              {chapter.summary ? <p className="mt-1 line-clamp-2 text-xs leading-5 text-zinc-500">{chapter.summary}</p> : null}
-            </button>
+            <div className="flex min-w-0 flex-1 items-start gap-2.5">
+              <CollapseChevronButton
+                isExpanded={!isCollapsed}
+                label={`${isCollapsed ? "Expandir" : "Recolher"} capitulo ${chapter.title}`}
+                onClick={() => onToggleChapter(chapter.id)}
+              />
+              <button
+                type="button"
+                className="min-w-0 flex-1 text-left focus:outline-none focus:ring-2 focus:ring-zinc-800 focus:ring-offset-2"
+                aria-expanded={!isCollapsed}
+                aria-label={`${isCollapsed ? "Expandir" : "Recolher"} capitulo ${chapter.title}`}
+                onClick={() => onToggleChapter(chapter.id)}
+              >
+                <p className="text-[11px] font-medium uppercase text-zinc-500">Capitulo</p>
+                <h3 className="truncate text-sm font-medium text-zinc-800">{chapter.title}</h3>
+                {chapter.summary ? <p className="mt-1 line-clamp-2 text-xs leading-5 text-zinc-500">{chapter.summary}</p> : null}
+              </button>
+            </div>
             <WordCount count={chapter.wordCount} />
           </div>
           <div className="flex flex-wrap gap-1.5 opacity-60 transition group-hover/chapter:opacity-100 focus-within:opacity-100">
