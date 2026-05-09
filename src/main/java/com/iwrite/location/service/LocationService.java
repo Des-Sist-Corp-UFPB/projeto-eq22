@@ -80,7 +80,7 @@ public class LocationService {
             location.setNotes(request.notes());
         }
 
-        return LocationResponse.fromEntity(location);
+        return LocationResponse.fromEntity(locationRepository.saveAndFlush(location));
     }
 
     @Transactional

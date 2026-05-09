@@ -6,12 +6,13 @@ import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { CharactersPanel } from "@/features/characters/components/characters-panel";
+import { LocationsPanel } from "@/features/locations/components/locations-panel";
 import { getOutline } from "@/features/outline/api/outline-api";
 import { OutlineSidebar } from "@/features/outline/components/outline-sidebar";
 import { SceneEditor } from "@/features/scenes/components/scene-editor";
 import { queryKeys } from "@/lib/query/keys";
 
-type WorkspaceMode = "scenes" | "characters";
+type WorkspaceMode = "scenes" | "characters" | "locations";
 
 export function BookWorkspace({ bookId }: { bookId: string }) {
   const [selectedSceneId, setSelectedSceneId] = useState<string | null>(null);
@@ -60,6 +61,14 @@ export function BookWorkspace({ bookId }: { bookId: string }) {
             >
               Personagens
             </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant={mode === "locations" ? "primary" : "ghost"}
+              onClick={() => setMode("locations")}
+            >
+              Localizações
+            </Button>
           </div>
           {typeof outline?.wordCount === "number" ? <Badge>{outline.wordCount} palavras</Badge> : null}
           <Badge variant="outline" className="hidden sm:inline-flex">
@@ -75,11 +84,13 @@ export function BookWorkspace({ bookId }: { bookId: string }) {
           </div>
         ) : null}
 
-        <div className={`min-h-0 overflow-hidden bg-zinc-100/70 ${mode === "characters" ? "md:col-span-2" : ""}`}>
+        <div className={`min-h-0 overflow-hidden bg-zinc-100/70 ${mode !== "scenes" ? "md:col-span-2" : ""}`}>
           {mode === "scenes" ? (
             <SceneEditor bookId={bookId} sceneId={selectedSceneId} onSceneDeleted={() => setSelectedSceneId(null)} />
-          ) : (
+          ) : mode === "characters" ? (
             <CharactersPanel bookId={bookId} />
+          ) : (
+            <LocationsPanel bookId={bookId} />
           )}
         </div>
       </div>
