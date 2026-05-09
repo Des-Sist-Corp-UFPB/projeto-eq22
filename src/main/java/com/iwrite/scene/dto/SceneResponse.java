@@ -4,6 +4,8 @@ import com.iwrite.scene.entity.Scene;
 import com.iwrite.scene.entity.SceneStatus;
 
 import java.time.OffsetDateTime;
+import java.util.Comparator;
+import java.util.List;
 import java.util.UUID;
 
 public record SceneResponse(
@@ -17,6 +19,13 @@ public record SceneResponse(
         SceneStatus status,
         Integer sortOrder,
         Integer wordCount,
+        String goal,
+        String conflict,
+        String outcome,
+        CharacterSummaryResponse povCharacter,
+        LocationSummaryResponse mainLocation,
+        List<CharacterSummaryResponse> participantCharacters,
+        List<ItemSummaryResponse> items,
         OffsetDateTime createdAt,
         OffsetDateTime updatedAt
 ) {
@@ -33,6 +42,21 @@ public record SceneResponse(
                 scene.getStatus(),
                 scene.getSortOrder(),
                 scene.getWordCount(),
+                scene.getGoal(),
+                scene.getConflict(),
+                scene.getOutcome(),
+                CharacterSummaryResponse.fromEntity(scene.getPovCharacter()),
+                LocationSummaryResponse.fromEntity(scene.getMainLocation()),
+                scene.getParticipantCharacters()
+                        .stream()
+                        .map(CharacterSummaryResponse::fromEntity)
+                        .sorted(Comparator.comparing(CharacterSummaryResponse::name).thenComparing(CharacterSummaryResponse::id))
+                        .toList(),
+                scene.getItems()
+                        .stream()
+                        .map(ItemSummaryResponse::fromEntity)
+                        .sorted(Comparator.comparing(ItemSummaryResponse::name).thenComparing(ItemSummaryResponse::id))
+                        .toList(),
                 scene.getCreatedAt(),
                 scene.getUpdatedAt()
         );
