@@ -6,7 +6,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { ErrorState, LoadingState } from "@/components/ui/feedback";
 import { FeedbackMessage } from "@/components/ui/feedback-message";
 import { useCharacters } from "@/features/characters/api/characters-hooks";
-import { useCreateItem, useItems, useUpdateItem } from "@/features/items/api/items-hooks";
+import { useCreateItem, useDeleteItem, useItems, useUpdateItem } from "@/features/items/api/items-hooks";
 import { ItemForm } from "@/features/items/components/item-form";
 import { ItemsList } from "@/features/items/components/items-list";
 import type { ItemRequest, ItemResponse } from "@/features/items/types";
@@ -23,12 +23,14 @@ export function ItemsPanel({ bookId }: ItemsPanelProps) {
   const charactersQuery = useCharacters(bookId);
   const createMutation = useCreateItem(bookId);
   const updateMutation = useUpdateItem(bookId);
+  const deleteMutation = useDeleteItem(bookId);
   const [selectedItem, setSelectedItem] = useState<ItemResponse | null>(null);
   const [detailMode, setDetailMode] = useState<DetailMode>("empty");
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   const activeMutation = detailMode === "edit" ? updateMutation : createMutation;
   const errorMessage = useMemo(() => getItemErrorMessage(activeMutation.error), [activeMutation.error]);
+  const deleteErrorMessage = useMemo(() => getItemErrorMessage(deleteMutation.error), [deleteMutation.error]);
   const charactersErrorMessage = charactersQuery.isError
     ? "Não foi possível carregar os personagens para selecionar o dono atual."
     : null;
@@ -39,6 +41,7 @@ export function ItemsPanel({ bookId }: ItemsPanelProps) {
     setSuccessMessage(null);
     createMutation.reset();
     updateMutation.reset();
+    deleteMutation.reset();
   }
 
   function startEdit(item: ItemResponse) {
@@ -47,6 +50,7 @@ export function ItemsPanel({ bookId }: ItemsPanelProps) {
     setSuccessMessage(null);
     createMutation.reset();
     updateMutation.reset();
+    deleteMutation.reset();
   }
 
   function clearDetail() {
@@ -55,6 +59,7 @@ export function ItemsPanel({ bookId }: ItemsPanelProps) {
     setSuccessMessage(null);
     createMutation.reset();
     updateMutation.reset();
+    deleteMutation.reset();
   }
 
   function handleSubmit(payload: ItemRequest) {
@@ -82,6 +87,28 @@ export function ItemsPanel({ bookId }: ItemsPanelProps) {
     });
   }
 
+  function handleDeleteItem(item: ItemResponse) {
+    const confirmed = window.confirm(`Excluir o item "${item.name}"? Esta ação não pode ser desfeita.`);
+    if (!confirmed) {
+      return;
+    }
+
+    setSuccessMessage(null);
+    createMutation.reset();
+    updateMutation.reset();
+    deleteMutation.reset();
+
+    deleteMutation.mutate(item.id, {
+      onSuccess: () => {
+        if (selectedItem?.id === item.id) {
+          setSelectedItem(null);
+          setDetailMode("empty");
+        }
+        setSuccessMessage("Item excluído com sucesso.");
+      },
+    });
+  }
+
   return (
     <section className="h-full overflow-y-auto bg-zinc-50 p-4 md:p-6">
       <div className="mx-auto grid max-w-6xl gap-4">
@@ -103,6 +130,7 @@ export function ItemsPanel({ bookId }: ItemsPanelProps) {
         ) : null}
 
         {charactersErrorMessage ? <ErrorState message={charactersErrorMessage} /> : null}
+        {deleteErrorMessage ? <ErrorState message={deleteErrorMessage} /> : null}
         {successMessage ? <FeedbackMessage variant="success">{successMessage}</FeedbackMessage> : null}
 
         {itemsQuery.data ? (
@@ -112,7 +140,9 @@ export function ItemsPanel({ bookId }: ItemsPanelProps) {
                 items={itemsQuery.data}
                 characters={charactersQuery.data ?? []}
                 selectedItemId={detailMode === "edit" ? selectedItem?.id ?? null : null}
+                deletePendingItemId={deleteMutation.variables ?? null}
                 onEditItem={startEdit}
+                onDeleteItem={handleDeleteItem}
               />
             </aside>
 

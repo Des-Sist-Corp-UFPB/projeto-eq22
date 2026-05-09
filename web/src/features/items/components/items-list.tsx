@@ -1,3 +1,4 @@
+import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import type { CharacterResponse } from "@/features/characters/types";
 import type { ItemResponse } from "@/features/items/types";
@@ -6,10 +7,19 @@ type ItemsListProps = {
   items: ItemResponse[];
   characters: CharacterResponse[];
   selectedItemId: string | null;
+  deletePendingItemId: string | null;
   onEditItem: (item: ItemResponse) => void;
+  onDeleteItem: (item: ItemResponse) => void;
 };
 
-export function ItemsList({ items, characters, selectedItemId, onEditItem }: ItemsListProps) {
+export function ItemsList({
+  items,
+  characters,
+  selectedItemId,
+  deletePendingItemId,
+  onEditItem,
+  onDeleteItem,
+}: ItemsListProps) {
   if (items.length === 0) {
     return (
       <EmptyState
@@ -45,13 +55,27 @@ export function ItemsList({ items, characters, selectedItemId, onEditItem }: Ite
                 </div>
               </button>
 
-              <button
-                type="button"
-                className="min-h-7 rounded-md px-2 text-xs font-medium text-zinc-600 transition hover:bg-zinc-100 hover:text-zinc-950"
-                onClick={() => onEditItem(item)}
-              >
-                Editar
-              </button>
+              <div className="flex shrink-0 items-center gap-1">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="min-h-7 px-2 text-xs"
+                  onClick={() => onEditItem(item)}
+                >
+                  Editar
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="min-h-7 px-2 text-xs text-red-700 hover:bg-red-50"
+                  disabled={deletePendingItemId === item.id}
+                  onClick={() => onDeleteItem(item)}
+                >
+                  {deletePendingItemId === item.id ? "..." : "Excluir"}
+                </Button>
+              </div>
             </div>
 
             <SummaryLine label="Importância" value={item.narrativeImportance} />
