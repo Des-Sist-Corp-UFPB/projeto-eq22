@@ -9,6 +9,7 @@ import { SceneContentEditor } from "@/features/scenes/components/scene-content-e
 import { SceneEditorHeader, type ContentSaveStatus } from "@/features/scenes/components/scene-editor-header";
 import { SceneEmptyState } from "@/features/scenes/components/scene-empty-state";
 import { SceneMetadataForm } from "@/features/scenes/components/scene-metadata-form";
+import { ScenePlanningPanel } from "@/features/scenes/components/scene-planning-panel";
 import type { SceneStatus } from "@/features/scenes/types";
 import { queryKeys } from "@/lib/query/keys";
 
@@ -290,7 +291,7 @@ export function SceneEditor({ bookId, sceneId, onSceneDeleted }: SceneEditorProp
 
   return (
     <section className="h-full overflow-y-auto bg-zinc-100/70 p-4 md:p-6 lg:p-8">
-      <Card className="mx-auto grid min-h-full max-w-7xl grid-rows-[auto_auto_minmax(0,1fr)] overflow-hidden border-zinc-200 bg-white shadow-xl shadow-zinc-200/70">
+      <Card className="mx-auto grid min-h-full max-w-7xl grid-rows-[auto_auto_auto_minmax(0,1fr)] overflow-hidden border-zinc-200 bg-white shadow-xl shadow-zinc-200/70">
         <SceneEditorHeader
           scene={scene}
           metadataFormId={METADATA_FORM_ID}
@@ -326,6 +327,8 @@ export function SceneEditor({ bookId, sceneId, onSceneDeleted }: SceneEditorProp
             setStatus(nextStatus);
           }}
         />
+
+        <ScenePlanningPanel bookId={bookId} scene={scene} />
 
         <SceneContentEditor
           editorKey={scene.id}
