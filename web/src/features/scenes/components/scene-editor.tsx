@@ -9,6 +9,7 @@ import { SceneContentEditor } from "@/features/scenes/components/scene-content-e
 import { SceneEditorHeader, type ContentSaveStatus } from "@/features/scenes/components/scene-editor-header";
 import { SceneEmptyState } from "@/features/scenes/components/scene-empty-state";
 import { SceneMetadataForm } from "@/features/scenes/components/scene-metadata-form";
+import { ScenePlanningPanel } from "@/features/scenes/components/scene-planning-panel";
 import type { SceneStatus } from "@/features/scenes/types";
 import { queryKeys } from "@/lib/query/keys";
 
@@ -327,29 +328,33 @@ export function SceneEditor({ bookId, sceneId, onSceneDeleted }: SceneEditorProp
           }}
         />
 
-        <SceneContentEditor
-          editorKey={scene.id}
-          contentJson={contentJson}
-          contentText={contentText}
-          wordCount={scene.wordCount}
-          isSuccess={contentMutation.isSuccess}
-          isError={contentMutation.isError}
-          saveStatus={contentSaveStatus}
-          onContentChange={(sourceSceneId, nextContentJson, nextContentText) => {
-            if (sourceSceneId !== activeSceneIdRef.current) {
-              return;
-            }
+        <div className="grid min-h-0 bg-white lg:grid-cols-[minmax(0,1fr)_380px] xl:grid-cols-[minmax(0,1fr)_400px]">
+          <SceneContentEditor
+            editorKey={scene.id}
+            contentJson={contentJson}
+            contentText={contentText}
+            wordCount={scene.wordCount}
+            isSuccess={contentMutation.isSuccess}
+            isError={contentMutation.isError}
+            saveStatus={contentSaveStatus}
+            onContentChange={(sourceSceneId, nextContentJson, nextContentText) => {
+              if (sourceSceneId !== activeSceneIdRef.current) {
+                return;
+              }
 
-            if (!contentMutation.isPending) {
-              contentMutation.reset();
-            }
-            currentContentJsonRef.current = nextContentJson;
-            currentContentTextRef.current = nextContentText;
-            setContentJson(nextContentJson);
-            setContentText(nextContentText);
-            scheduleAutosave(sourceSceneId, nextContentJson, nextContentText);
-          }}
-        />
+              if (!contentMutation.isPending) {
+                contentMutation.reset();
+              }
+              currentContentJsonRef.current = nextContentJson;
+              currentContentTextRef.current = nextContentText;
+              setContentJson(nextContentJson);
+              setContentText(nextContentText);
+              scheduleAutosave(sourceSceneId, nextContentJson, nextContentText);
+            }}
+          />
+
+          <ScenePlanningPanel bookId={bookId} scene={scene} />
+        </div>
       </Card>
     </section>
   );
