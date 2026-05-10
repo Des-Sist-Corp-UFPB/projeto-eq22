@@ -1,5 +1,20 @@
 export type SceneStatus = "IDEA" | "PLANNED" | "DRAFT" | "WRITTEN" | "REVISED" | "FINAL";
 
+export type SceneCharacterSummary = {
+  id: string;
+  name: string;
+};
+
+export type SceneLocationSummary = {
+  id: string;
+  name: string;
+};
+
+export type SceneItemSummary = {
+  id: string;
+  name: string;
+};
+
 export type Scene = {
   id: string;
   bookId: string;
@@ -11,6 +26,13 @@ export type Scene = {
   status: SceneStatus;
   sortOrder: number;
   wordCount: number;
+  goal: string | null;
+  conflict: string | null;
+  outcome: string | null;
+  povCharacter: SceneCharacterSummary | null;
+  mainLocation: SceneLocationSummary | null;
+  participantCharacters: SceneCharacterSummary[];
+  items: SceneItemSummary[];
   createdAt: string;
   updatedAt: string;
 };
