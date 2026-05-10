@@ -81,8 +81,11 @@ export function ScenePlanningPanel({ bookId, scene }: ScenePlanningPanelProps) {
   const selectedItemIds = new Set(itemIds);
 
   return (
-    <form onSubmit={handleSubmit} className="border-b border-zinc-200 bg-white px-4 py-4 md:px-7">
-      <div className="mx-auto grid w-full max-w-5xl gap-4">
+    <form
+      onSubmit={handleSubmit}
+      className="min-h-0 overflow-y-auto border-t border-zinc-200 bg-zinc-50/80 px-4 py-4 lg:border-l lg:border-t-0"
+    >
+      <div className="grid w-full gap-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <h2 className="text-sm font-semibold text-zinc-950">Planejamento da cena</h2>
@@ -93,7 +96,7 @@ export function ScenePlanningPanel({ bookId, scene }: ScenePlanningPanelProps) {
           </Button>
         </div>
 
-        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
+        <div className="grid gap-4">
           <div className="grid gap-3">
             <PlanningTextarea
               label="Objetivo"
@@ -177,7 +180,7 @@ export function ScenePlanningPanel({ bookId, scene }: ScenePlanningPanelProps) {
           </div>
         </div>
 
-        <div className="grid gap-4 lg:grid-cols-2">
+        <div className="grid gap-4">
           <PlanningChecklist
             title="Personagens participantes"
             items={charactersQuery.data?.map((character) => ({
