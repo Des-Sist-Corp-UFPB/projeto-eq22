@@ -9,6 +9,7 @@ import { useItems } from "@/features/items/api/items-hooks";
 import { useLocations } from "@/features/locations/api/locations-hooks";
 import { useUpdateScenePlanning } from "@/features/scene-planning/hooks/use-scene-planning";
 import type { CharacterResponse } from "@/features/characters/types";
+import type { ItemResponse } from "@/features/items/types";
 import type { Scene } from "@/features/scenes/types";
 
 type ScenePlanningPanelProps = {
@@ -31,6 +32,8 @@ export function ScenePlanningPanel({ bookId, scene }: ScenePlanningPanelProps) {
   const [participantSearch, setParticipantSearch] = useState("");
   const [participantsExpanded, setParticipantsExpanded] = useState(false);
   const [itemIds, setItemIds] = useState<string[]>([]);
+  const [itemSearch, setItemSearch] = useState("");
+  const [itemsExpanded, setItemsExpanded] = useState(false);
   const sceneParticipantIdsKey = scene.participantCharacters.map((character) => character.id).join("|");
   const sceneItemIdsKey = scene.items.map((item) => item.id).join("|");
 
@@ -49,6 +52,8 @@ export function ScenePlanningPanel({ bookId, scene }: ScenePlanningPanelProps) {
     setParticipantSearch("");
     setParticipantsExpanded(false);
     setItemIds(scene.items.map((item) => item.id));
+    setItemSearch("");
+    setItemsExpanded(false);
   }, [
     scene.id,
     scene.goal,
@@ -212,16 +217,15 @@ export function ScenePlanningPanel({ bookId, scene }: ScenePlanningPanelProps) {
             onToggle={toggleParticipant}
           />
 
-          <PlanningChecklist
-            title="Itens"
-            items={itemsQuery.data?.map((item) => ({
-              id: item.id,
-              label: item.name,
-              checked: selectedItemIds.has(item.id),
-            }))}
+          <ItemSelector
+            items={itemsQuery.data}
+            selectedIds={selectedItemIds}
+            search={itemSearch}
+            expanded={itemsExpanded}
             isLoading={itemsQuery.isLoading}
             isError={itemsQuery.isError}
-            emptyMessage="Nenhum item cadastrado."
+            onSearchChange={setItemSearch}
+            onExpandedChange={setItemsExpanded}
             onToggle={toggleItem}
           />
         </div>
@@ -394,6 +398,149 @@ function ParticipantRow({ character, checked, highlighted = false, onToggle }: P
   );
 }
 
+type ItemSelectorProps = {
+  items: ItemResponse[] | undefined;
+  selectedIds: Set<string>;
+  search: string;
+  expanded: boolean;
+  isLoading: boolean;
+  isError: boolean;
+  onSearchChange: (search: string) => void;
+  onExpandedChange: (expanded: boolean) => void;
+  onToggle: (id: string) => void;
+};
+
+function ItemSelector({
+  items,
+  selectedIds,
+  search,
+  expanded,
+  isLoading,
+  isError,
+  onSearchChange,
+  onExpandedChange,
+  onToggle,
+}: ItemSelectorProps) {
+  const selectedItems = items?.filter((item) => selectedIds.has(item.id)) ?? [];
+  const normalizedSearch = normalizeSearch(search);
+  const otherItems = items?.filter((item) => {
+    if (selectedIds.has(item.id)) {
+      return false;
+    }
+
+    if (!normalizedSearch) {
+      return true;
+    }
+
+    return itemMatchesSearch(item, normalizedSearch);
+  }) ?? [];
+  const selectedCount = selectedIds.size;
+  const selectedSummary = selectedItems.map((item) => item.name).join(", ");
+
+  return (
+    <div className="rounded-md border border-zinc-200 bg-zinc-50/60 p-3">
+      <div className="grid gap-2">
+        <div>
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Itens</h3>
+          <p className="mt-1 text-xs text-zinc-500">{selectedCount} {selectedCount === 1 ? "selecionado" : "selecionados"}</p>
+        </div>
+
+        {selectedSummary ? <p className="line-clamp-2 text-sm text-zinc-700">{selectedSummary}</p> : null}
+      </div>
+
+      <button
+        type="button"
+        aria-expanded={expanded}
+        aria-label={expanded ? "Recolher lista de itens da cena" : "Expandir lista de itens da cena"}
+        onClick={() => onExpandedChange(!expanded)}
+        className="mt-3 flex min-h-9 w-full items-center justify-between gap-3 rounded-md border border-zinc-200 bg-white px-3 py-2 text-left text-sm font-medium text-zinc-800 transition hover:border-zinc-300 hover:bg-zinc-50 focus:outline-none focus:ring-2 focus:ring-zinc-800 focus:ring-offset-2"
+      >
+        <span>Gerenciar itens</span>
+        <span
+          aria-hidden="true"
+          className={`h-2.5 w-2.5 shrink-0 rotate-45 border-b-2 border-r-2 border-zinc-500 transition-transform ${
+            expanded ? "rotate-45" : "-rotate-45"
+          }`}
+        />
+      </button>
+
+      {expanded ? (
+        <div className="mt-3 grid gap-3">
+          <label className="block text-xs">
+            <span className="sr-only">Buscar item da cena</span>
+            <input
+              value={search}
+              onChange={(event) => onSearchChange(event.target.value)}
+              placeholder="Buscar item..."
+              className="min-h-9 w-full rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-sm text-zinc-900 outline-none transition focus:border-zinc-800 focus:ring-2 focus:ring-zinc-200"
+            />
+          </label>
+
+          <div className="grid max-h-72 gap-3 overflow-y-auto pr-1">
+            {isLoading ? <p className="text-xs text-zinc-500">Carregando lista...</p> : null}
+            {isError ? <FeedbackMessage variant="error">Nao foi possivel carregar esta lista.</FeedbackMessage> : null}
+            {!isLoading && !isError && items?.length === 0 ? <p className="text-xs text-zinc-500">Nenhum item cadastrado.</p> : null}
+
+            {!isLoading && !isError && selectedItems.length > 0 ? (
+              <div className="grid gap-1.5">
+                <h4 className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Selecionados</h4>
+                {selectedItems.map((item) => (
+                  <ItemRow key={item.id} item={item} checked onToggle={onToggle} highlighted />
+                ))}
+              </div>
+            ) : null}
+
+            {!isLoading && !isError && items && items.length > 0 ? (
+              <div className="grid gap-1.5">
+                <h4 className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">
+                  {selectedItems.length > 0 ? "Outros itens" : "Todos os itens"}
+                </h4>
+                {otherItems.length > 0 ? (
+                  otherItems.map((item) => (
+                    <ItemRow key={item.id} item={item} checked={selectedIds.has(item.id)} onToggle={onToggle} />
+                  ))
+                ) : (
+                  <p className="text-xs text-zinc-500">Nenhum item encontrado.</p>
+                )}
+              </div>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+type ItemRowProps = {
+  item: ItemResponse;
+  checked: boolean;
+  highlighted?: boolean;
+  onToggle: (id: string) => void;
+};
+
+function ItemRow({ item, checked, highlighted = false, onToggle }: ItemRowProps) {
+  const details = [item.type, item.origin, item.narrativeImportance].filter(Boolean).join(" · ");
+
+  return (
+    <label
+      className={`flex cursor-pointer items-start gap-2 rounded-md border px-2.5 py-2 text-sm transition ${
+        highlighted ? "border-zinc-300 bg-white shadow-sm" : "border-zinc-200 bg-white/70 hover:border-zinc-300 hover:bg-white"
+      }`}
+    >
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={() => onToggle(item.id)}
+        className="mt-0.5 h-4 w-4 shrink-0 rounded border-zinc-300 text-zinc-900"
+      />
+      <span className="min-w-0">
+        <span className="block truncate font-medium text-zinc-900">{item.name}</span>
+        {details ? <span className="mt-0.5 block truncate text-xs text-zinc-500">{details}</span> : null}
+      </span>
+    </label>
+  );
+}
+
 type PlanningTextareaProps = {
   label: string;
   value: string;
@@ -500,6 +647,12 @@ function normalizeSearch(value: string) {
 
 function characterMatchesSearch(character: CharacterResponse, normalizedSearch: string) {
   return [character.name, character.nickname, character.narrativeFunction]
+    .filter(Boolean)
+    .some((value) => value?.toLocaleLowerCase().includes(normalizedSearch));
+}
+
+function itemMatchesSearch(item: ItemResponse, normalizedSearch: string) {
+  return [item.name, item.type, item.origin, item.narrativeImportance, item.currentOwnerCharacterId]
     .filter(Boolean)
     .some((value) => value?.toLocaleLowerCase().includes(normalizedSearch));
 }
