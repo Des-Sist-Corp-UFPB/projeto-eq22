@@ -2,6 +2,7 @@ package com.iwrite.scene.controller;
 
 import com.iwrite.common.dto.ReorderRequest;
 import com.iwrite.scene.dto.SceneContentRequest;
+import com.iwrite.scene.dto.ScenePlanningRequest;
 import com.iwrite.scene.dto.SceneRequest;
 import com.iwrite.scene.dto.SceneResponse;
 import com.iwrite.scene.dto.SceneUpdateRequest;
@@ -49,6 +50,11 @@ public class SceneController {
     @PatchMapping("/scenes/{sceneId}/content")
     public SceneResponse updateContent(@PathVariable UUID sceneId, @RequestBody SceneContentRequest request) {
         return sceneService.updateContent(sceneId, request);
+    }
+
+    @PatchMapping("/scenes/{sceneId}/planning")
+    public SceneResponse updatePlanning(@PathVariable UUID sceneId, @Valid @RequestBody ScenePlanningRequest request) {
+        return sceneService.updatePlanning(sceneId, request);
     }
 
     @PatchMapping("/chapters/{chapterId}/scenes/reorder")
