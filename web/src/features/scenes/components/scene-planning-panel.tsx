@@ -29,6 +29,7 @@ export function ScenePlanningPanel({ bookId, scene }: ScenePlanningPanelProps) {
   const [mainLocationId, setMainLocationId] = useState("");
   const [participantCharacterIds, setParticipantCharacterIds] = useState<string[]>([]);
   const [participantSearch, setParticipantSearch] = useState("");
+  const [participantsExpanded, setParticipantsExpanded] = useState(false);
   const [itemIds, setItemIds] = useState<string[]>([]);
   const sceneParticipantIdsKey = scene.participantCharacters.map((character) => character.id).join("|");
   const sceneItemIdsKey = scene.items.map((item) => item.id).join("|");
@@ -46,6 +47,7 @@ export function ScenePlanningPanel({ bookId, scene }: ScenePlanningPanelProps) {
     setMainLocationId(scene.mainLocation?.id ?? "");
     setParticipantCharacterIds(scene.participantCharacters.map((character) => character.id));
     setParticipantSearch("");
+    setParticipantsExpanded(false);
     setItemIds(scene.items.map((item) => item.id));
   }, [
     scene.id,
@@ -202,9 +204,11 @@ export function ScenePlanningPanel({ bookId, scene }: ScenePlanningPanelProps) {
             characters={charactersQuery.data}
             selectedIds={selectedParticipantIds}
             search={participantSearch}
+            expanded={participantsExpanded}
             isLoading={charactersQuery.isLoading}
             isError={charactersQuery.isError}
             onSearchChange={setParticipantSearch}
+            onExpandedChange={setParticipantsExpanded}
             onToggle={toggleParticipant}
           />
 
@@ -242,9 +246,11 @@ type ParticipantSelectorProps = {
   characters: CharacterResponse[] | undefined;
   selectedIds: Set<string>;
   search: string;
+  expanded: boolean;
   isLoading: boolean;
   isError: boolean;
   onSearchChange: (search: string) => void;
+  onExpandedChange: (expanded: boolean) => void;
   onToggle: (id: string) => void;
 };
 
@@ -252,9 +258,11 @@ function ParticipantSelector({
   characters,
   selectedIds,
   search,
+  expanded,
   isLoading,
   isError,
   onSearchChange,
+  onExpandedChange,
   onToggle,
 }: ParticipantSelectorProps) {
   const selectedCharacters = characters?.filter((character) => selectedIds.has(character.id)) ?? [];
@@ -271,64 +279,85 @@ function ParticipantSelector({
     return characterMatchesSearch(character, normalizedSearch);
   }) ?? [];
   const selectedCount = selectedIds.size;
+  const selectedSummary = selectedCharacters.map((character) => character.name).join(", ");
 
   return (
     <div className="rounded-md border border-zinc-200 bg-zinc-50/60 p-3">
-      <div className="flex items-start justify-between gap-3">
+      <div className="grid gap-2">
         <div>
           <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Personagens participantes</h3>
           <p className="mt-1 text-xs text-zinc-500">{selectedCount} {selectedCount === 1 ? "selecionado" : "selecionados"}</p>
         </div>
+
+        {selectedSummary ? (
+          <p className="line-clamp-2 text-sm text-zinc-700">{selectedSummary}</p>
+        ) : null}
       </div>
 
-      <label className="mt-3 block text-xs">
-        <span className="sr-only">Buscar personagem participante</span>
-        <input
-          value={search}
-          onChange={(event) => onSearchChange(event.target.value)}
-          placeholder="Buscar personagem..."
-          className="min-h-9 w-full rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-sm text-zinc-900 outline-none transition focus:border-zinc-800 focus:ring-2 focus:ring-zinc-200"
+      <button
+        type="button"
+        aria-expanded={expanded}
+        aria-label={expanded ? "Recolher lista de personagens participantes" : "Expandir lista de personagens participantes"}
+        onClick={() => onExpandedChange(!expanded)}
+        className="mt-3 flex min-h-9 w-full items-center justify-between gap-3 rounded-md border border-zinc-200 bg-white px-3 py-2 text-left text-sm font-medium text-zinc-800 transition hover:border-zinc-300 hover:bg-zinc-50 focus:outline-none focus:ring-2 focus:ring-zinc-800 focus:ring-offset-2"
+      >
+        <span>Gerenciar participantes</span>
+        <span
+          aria-hidden="true"
+          className={`h-2.5 w-2.5 shrink-0 rotate-45 border-b-2 border-r-2 border-zinc-500 transition-transform ${
+            expanded ? "rotate-45" : "-rotate-45"
+          }`}
         />
-      </label>
+      </button>
 
-      <div className="mt-3 grid max-h-72 gap-3 overflow-y-auto pr-1">
-        {isLoading ? <p className="text-xs text-zinc-500">Carregando lista...</p> : null}
-        {isError ? <FeedbackMessage variant="error">Nao foi possivel carregar esta lista.</FeedbackMessage> : null}
-        {!isLoading && !isError && characters?.length === 0 ? <p className="text-xs text-zinc-500">Nenhum personagem cadastrado.</p> : null}
+      {expanded ? (
+        <div className="mt-3 grid gap-3">
+          <label className="block text-xs">
+            <span className="sr-only">Buscar personagem participante</span>
+            <input
+              value={search}
+              onChange={(event) => onSearchChange(event.target.value)}
+              placeholder="Buscar personagem..."
+              className="min-h-9 w-full rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-sm text-zinc-900 outline-none transition focus:border-zinc-800 focus:ring-2 focus:ring-zinc-200"
+            />
+          </label>
 
-        {!isLoading && !isError && selectedCharacters.length > 0 ? (
-          <div className="grid gap-2">
-            <h4 className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Selecionados</h4>
-            <div className="grid gap-1.5">
-              {selectedCharacters.map((character) => (
-                <ParticipantRow key={character.id} character={character} checked onToggle={onToggle} highlighted />
-              ))}
-            </div>
-          </div>
-        ) : null}
+          <div className="grid max-h-72 gap-3 overflow-y-auto pr-1">
+            {isLoading ? <p className="text-xs text-zinc-500">Carregando lista...</p> : null}
+            {isError ? <FeedbackMessage variant="error">Nao foi possivel carregar esta lista.</FeedbackMessage> : null}
+            {!isLoading && !isError && characters?.length === 0 ? <p className="text-xs text-zinc-500">Nenhum personagem cadastrado.</p> : null}
 
-        {!isLoading && !isError && characters && characters.length > 0 ? (
-          <div className="grid gap-2">
-            <h4 className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">
-              {selectedCharacters.length > 0 ? "Outros personagens" : "Todos os personagens"}
-            </h4>
-            {otherCharacters.length > 0 ? (
+            {!isLoading && !isError && selectedCharacters.length > 0 ? (
               <div className="grid gap-1.5">
-                {otherCharacters.map((character) => (
-                  <ParticipantRow
-                    key={character.id}
-                    character={character}
-                    checked={selectedIds.has(character.id)}
-                    onToggle={onToggle}
-                  />
+                <h4 className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Selecionados</h4>
+                {selectedCharacters.map((character) => (
+                  <ParticipantRow key={character.id} character={character} checked onToggle={onToggle} highlighted />
                 ))}
               </div>
-            ) : (
-              <p className="text-xs text-zinc-500">Nenhum personagem encontrado.</p>
-            )}
+            ) : null}
+
+            {!isLoading && !isError && characters && characters.length > 0 ? (
+              <div className="grid gap-1.5">
+                <h4 className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">
+                  {selectedCharacters.length > 0 ? "Outros personagens" : "Todos os personagens"}
+                </h4>
+                {otherCharacters.length > 0 ? (
+                  otherCharacters.map((character) => (
+                    <ParticipantRow
+                      key={character.id}
+                      character={character}
+                      checked={selectedIds.has(character.id)}
+                      onToggle={onToggle}
+                    />
+                  ))
+                ) : (
+                  <p className="text-xs text-zinc-500">Nenhum personagem encontrado.</p>
+                )}
+              </div>
+            ) : null}
           </div>
-        ) : null}
-      </div>
+        </div>
+      ) : null}
     </div>
   );
 }
