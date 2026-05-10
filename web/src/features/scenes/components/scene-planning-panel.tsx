@@ -27,6 +27,12 @@ export function ScenePlanningPanel({ bookId, scene }: ScenePlanningPanelProps) {
   const [mainLocationId, setMainLocationId] = useState("");
   const [participantCharacterIds, setParticipantCharacterIds] = useState<string[]>([]);
   const [itemIds, setItemIds] = useState<string[]>([]);
+  const sceneParticipantIdsKey = scene.participantCharacters.map((character) => character.id).join("|");
+  const sceneItemIdsKey = scene.items.map((item) => item.id).join("|");
+
+  useEffect(() => {
+    planningMutation.reset();
+  }, [scene.id]);
 
   useEffect(() => {
     setGoal(scene.goal ?? "");
@@ -36,7 +42,6 @@ export function ScenePlanningPanel({ bookId, scene }: ScenePlanningPanelProps) {
     setMainLocationId(scene.mainLocation?.id ?? "");
     setParticipantCharacterIds(scene.participantCharacters.map((character) => character.id));
     setItemIds(scene.items.map((item) => item.id));
-    planningMutation.reset();
   }, [
     scene.id,
     scene.goal,
@@ -44,8 +49,8 @@ export function ScenePlanningPanel({ bookId, scene }: ScenePlanningPanelProps) {
     scene.outcome,
     scene.povCharacter?.id,
     scene.mainLocation?.id,
-    scene.participantCharacters,
-    scene.items,
+    sceneParticipantIdsKey,
+    sceneItemIdsKey,
   ]);
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
