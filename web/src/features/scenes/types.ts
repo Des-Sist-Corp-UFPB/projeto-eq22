@@ -29,6 +29,7 @@ export type Scene = {
   goal: string | null;
   conflict: string | null;
   outcome: string | null;
+  planningNotes: string | null;
   povCharacter: SceneCharacterSummary | null;
   mainLocation: SceneLocationSummary | null;
   participantCharacters: SceneCharacterSummary[];

@@ -121,6 +121,7 @@ public class SceneService {
         scene.setGoal(request.goal());
         scene.setConflict(request.conflict());
         scene.setOutcome(request.outcome());
+        scene.setPlanningNotes(request.planningNotes());
         scene.setPovCharacter(findCharacterForBook(bookId, request.povCharacterId(), "povCharacterId"));
         scene.setMainLocation(findLocationForBook(bookId, request.mainLocationId()));
         scene.setParticipantCharacters(findParticipantsForBook(bookId, request.participantCharacterIds()));

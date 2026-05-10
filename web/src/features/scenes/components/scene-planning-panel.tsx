@@ -8,6 +8,7 @@ import { useCharacters } from "@/features/characters/api/characters-hooks";
 import { useItems } from "@/features/items/api/items-hooks";
 import { useLocations } from "@/features/locations/api/locations-hooks";
 import { useUpdateScenePlanning } from "@/features/scene-planning/hooks/use-scene-planning";
+import type { CharacterResponse } from "@/features/characters/types";
 import type { Scene } from "@/features/scenes/types";
 
 type ScenePlanningPanelProps = {
@@ -23,9 +24,11 @@ export function ScenePlanningPanel({ bookId, scene }: ScenePlanningPanelProps) {
   const [goal, setGoal] = useState("");
   const [conflict, setConflict] = useState("");
   const [outcome, setOutcome] = useState("");
+  const [planningNotes, setPlanningNotes] = useState("");
   const [povCharacterId, setPovCharacterId] = useState("");
   const [mainLocationId, setMainLocationId] = useState("");
   const [participantCharacterIds, setParticipantCharacterIds] = useState<string[]>([]);
+  const [participantSearch, setParticipantSearch] = useState("");
   const [itemIds, setItemIds] = useState<string[]>([]);
   const sceneParticipantIdsKey = scene.participantCharacters.map((character) => character.id).join("|");
   const sceneItemIdsKey = scene.items.map((item) => item.id).join("|");
@@ -38,15 +41,18 @@ export function ScenePlanningPanel({ bookId, scene }: ScenePlanningPanelProps) {
     setGoal(scene.goal ?? "");
     setConflict(scene.conflict ?? "");
     setOutcome(scene.outcome ?? "");
+    setPlanningNotes(scene.planningNotes ?? "");
     setPovCharacterId(scene.povCharacter?.id ?? "");
     setMainLocationId(scene.mainLocation?.id ?? "");
     setParticipantCharacterIds(scene.participantCharacters.map((character) => character.id));
+    setParticipantSearch("");
     setItemIds(scene.items.map((item) => item.id));
   }, [
     scene.id,
     scene.goal,
     scene.conflict,
     scene.outcome,
+    scene.planningNotes,
     scene.povCharacter?.id,
     scene.mainLocation?.id,
     sceneParticipantIdsKey,
@@ -60,6 +66,7 @@ export function ScenePlanningPanel({ bookId, scene }: ScenePlanningPanelProps) {
       goal: blankToNull(goal),
       conflict: blankToNull(conflict),
       outcome: blankToNull(outcome),
+      planningNotes: blankToNull(planningNotes),
       povCharacterId: povCharacterId || null,
       participantCharacterIds,
       mainLocationId: mainLocationId || null,
@@ -125,6 +132,16 @@ export function ScenePlanningPanel({ bookId, scene }: ScenePlanningPanelProps) {
                 setOutcome(value);
               }}
             />
+            <PlanningTextarea
+              label="Notas da cena"
+              value={planningNotes}
+              placeholder="Lembretes livres: revisar dialogo, pesquisar termo historico, corrigir continuidade."
+              rows={4}
+              onChange={(value) => {
+                planningMutation.reset();
+                setPlanningNotes(value);
+              }}
+            />
           </div>
 
           <div className="grid gap-3">
@@ -181,16 +198,13 @@ export function ScenePlanningPanel({ bookId, scene }: ScenePlanningPanelProps) {
         </div>
 
         <div className="grid gap-4">
-          <PlanningChecklist
-            title="Personagens participantes"
-            items={charactersQuery.data?.map((character) => ({
-              id: character.id,
-              label: character.name,
-              checked: selectedParticipantIds.has(character.id),
-            }))}
+          <ParticipantSelector
+            characters={charactersQuery.data}
+            selectedIds={selectedParticipantIds}
+            search={participantSearch}
             isLoading={charactersQuery.isLoading}
             isError={charactersQuery.isError}
-            emptyMessage="Nenhum personagem cadastrado."
+            onSearchChange={setParticipantSearch}
             onToggle={toggleParticipant}
           />
 
@@ -224,20 +238,148 @@ export function ScenePlanningPanel({ bookId, scene }: ScenePlanningPanelProps) {
   );
 }
 
+type ParticipantSelectorProps = {
+  characters: CharacterResponse[] | undefined;
+  selectedIds: Set<string>;
+  search: string;
+  isLoading: boolean;
+  isError: boolean;
+  onSearchChange: (search: string) => void;
+  onToggle: (id: string) => void;
+};
+
+function ParticipantSelector({
+  characters,
+  selectedIds,
+  search,
+  isLoading,
+  isError,
+  onSearchChange,
+  onToggle,
+}: ParticipantSelectorProps) {
+  const selectedCharacters = characters?.filter((character) => selectedIds.has(character.id)) ?? [];
+  const normalizedSearch = normalizeSearch(search);
+  const otherCharacters = characters?.filter((character) => {
+    if (selectedIds.has(character.id)) {
+      return false;
+    }
+
+    if (!normalizedSearch) {
+      return true;
+    }
+
+    return characterMatchesSearch(character, normalizedSearch);
+  }) ?? [];
+  const selectedCount = selectedIds.size;
+
+  return (
+    <div className="rounded-md border border-zinc-200 bg-zinc-50/60 p-3">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Personagens participantes</h3>
+          <p className="mt-1 text-xs text-zinc-500">{selectedCount} {selectedCount === 1 ? "selecionado" : "selecionados"}</p>
+        </div>
+      </div>
+
+      <label className="mt-3 block text-xs">
+        <span className="sr-only">Buscar personagem participante</span>
+        <input
+          value={search}
+          onChange={(event) => onSearchChange(event.target.value)}
+          placeholder="Buscar personagem..."
+          className="min-h-9 w-full rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-sm text-zinc-900 outline-none transition focus:border-zinc-800 focus:ring-2 focus:ring-zinc-200"
+        />
+      </label>
+
+      <div className="mt-3 grid max-h-72 gap-3 overflow-y-auto pr-1">
+        {isLoading ? <p className="text-xs text-zinc-500">Carregando lista...</p> : null}
+        {isError ? <FeedbackMessage variant="error">Nao foi possivel carregar esta lista.</FeedbackMessage> : null}
+        {!isLoading && !isError && characters?.length === 0 ? <p className="text-xs text-zinc-500">Nenhum personagem cadastrado.</p> : null}
+
+        {!isLoading && !isError && selectedCharacters.length > 0 ? (
+          <div className="grid gap-2">
+            <h4 className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Selecionados</h4>
+            <div className="grid gap-1.5">
+              {selectedCharacters.map((character) => (
+                <ParticipantRow key={character.id} character={character} checked onToggle={onToggle} highlighted />
+              ))}
+            </div>
+          </div>
+        ) : null}
+
+        {!isLoading && !isError && characters && characters.length > 0 ? (
+          <div className="grid gap-2">
+            <h4 className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">
+              {selectedCharacters.length > 0 ? "Outros personagens" : "Todos os personagens"}
+            </h4>
+            {otherCharacters.length > 0 ? (
+              <div className="grid gap-1.5">
+                {otherCharacters.map((character) => (
+                  <ParticipantRow
+                    key={character.id}
+                    character={character}
+                    checked={selectedIds.has(character.id)}
+                    onToggle={onToggle}
+                  />
+                ))}
+              </div>
+            ) : (
+              <p className="text-xs text-zinc-500">Nenhum personagem encontrado.</p>
+            )}
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+type ParticipantRowProps = {
+  character: CharacterResponse;
+  checked: boolean;
+  highlighted?: boolean;
+  onToggle: (id: string) => void;
+};
+
+function ParticipantRow({ character, checked, highlighted = false, onToggle }: ParticipantRowProps) {
+  return (
+    <label
+      className={`flex cursor-pointer items-start gap-2 rounded-md border px-2.5 py-2 text-sm transition ${
+        highlighted ? "border-zinc-300 bg-white shadow-sm" : "border-zinc-200 bg-white/70 hover:border-zinc-300 hover:bg-white"
+      }`}
+    >
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={() => onToggle(character.id)}
+        className="mt-0.5 h-4 w-4 shrink-0 rounded border-zinc-300 text-zinc-900"
+      />
+      <span className="min-w-0">
+        <span className="block truncate font-medium text-zinc-900">{character.name}</span>
+        {character.nickname || character.narrativeFunction ? (
+          <span className="mt-0.5 block truncate text-xs text-zinc-500">
+            {[character.nickname, character.narrativeFunction].filter(Boolean).join(" · ")}
+          </span>
+        ) : null}
+      </span>
+    </label>
+  );
+}
+
 type PlanningTextareaProps = {
   label: string;
   value: string;
   placeholder: string;
+  rows?: number;
   onChange: (value: string) => void;
 };
 
-function PlanningTextarea({ label, value, placeholder, onChange }: PlanningTextareaProps) {
+function PlanningTextarea({ label, value, placeholder, rows = 2, onChange }: PlanningTextareaProps) {
   return (
     <label className="grid gap-1 text-xs">
       <span className="font-medium text-zinc-600">{label}</span>
       <Textarea
         value={value}
-        rows={2}
+        rows={rows}
         onChange={(event) => onChange(event.target.value)}
         placeholder={placeholder}
         className="resize-y bg-white text-sm text-zinc-900 focus:ring-2 focus:ring-zinc-200"
@@ -321,4 +463,14 @@ function toggleId(ids: string[], id: string) {
   }
 
   return [...ids, id];
+}
+
+function normalizeSearch(value: string) {
+  return value.trim().toLocaleLowerCase();
+}
+
+function characterMatchesSearch(character: CharacterResponse, normalizedSearch: string) {
+  return [character.name, character.nickname, character.narrativeFunction]
+    .filter(Boolean)
+    .some((value) => value?.toLocaleLowerCase().includes(normalizedSearch));
 }

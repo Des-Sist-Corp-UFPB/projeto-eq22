@@ -22,6 +22,7 @@ public record SceneResponse(
         String goal,
         String conflict,
         String outcome,
+        String planningNotes,
         CharacterSummaryResponse povCharacter,
         LocationSummaryResponse mainLocation,
         List<CharacterSummaryResponse> participantCharacters,
@@ -45,6 +46,7 @@ public record SceneResponse(
                 scene.getGoal(),
                 scene.getConflict(),
                 scene.getOutcome(),
+                scene.getPlanningNotes(),
                 CharacterSummaryResponse.fromEntity(scene.getPovCharacter()),
                 LocationSummaryResponse.fromEntity(scene.getMainLocation()),
                 scene.getParticipantCharacters()

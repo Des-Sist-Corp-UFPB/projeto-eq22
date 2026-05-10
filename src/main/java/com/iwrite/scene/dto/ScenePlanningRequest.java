@@ -9,6 +9,7 @@ public record ScenePlanningRequest(
         String goal,
         String conflict,
         String outcome,
+        String planningNotes,
         UUID povCharacterId,
         @NotNull List<UUID> participantCharacterIds,
         UUID mainLocationId,

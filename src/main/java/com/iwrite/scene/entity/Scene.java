@@ -73,6 +73,9 @@ public class Scene {
     @Column(columnDefinition = "text")
     private String outcome;
 
+    @Column(columnDefinition = "text")
+    private String planningNotes;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "pov_character_id")
     private Character povCharacter;
@@ -219,6 +222,14 @@ public class Scene {
 
     public void setOutcome(String outcome) {
         this.outcome = outcome;
+    }
+
+    public String getPlanningNotes() {
+        return planningNotes;
+    }
+
+    public void setPlanningNotes(String planningNotes) {
+        this.planningNotes = planningNotes;
     }
 
     public Character getPovCharacter() {
