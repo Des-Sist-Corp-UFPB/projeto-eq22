@@ -97,7 +97,7 @@ export function ScenePlanningPanel({ bookId, scene }: ScenePlanningPanelProps) {
   return (
     <form
       onSubmit={handleSubmit}
-      className="min-h-0 overflow-y-auto border-t border-zinc-200 bg-zinc-50/80 px-4 py-4 lg:border-l lg:border-t-0"
+      className="min-h-0 overflow-y-auto border-t border-zinc-200 bg-zinc-50/80 px-4 py-4 lg:h-full lg:border-l lg:border-t-0"
     >
       <div className="grid w-full gap-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
