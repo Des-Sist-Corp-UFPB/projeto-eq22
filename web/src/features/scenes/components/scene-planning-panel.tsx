@@ -93,6 +93,7 @@ export function ScenePlanningPanel({ formId, bookId, scene }: ScenePlanningPanel
 
   const selectedParticipantIds = new Set(participantCharacterIds);
   const selectedItemIds = new Set(itemIds);
+  const showPlanningFeedback = (planningMutation.isSuccess && planningMutation.data?.id === scene.id) || planningMutation.isError;
 
   return (
     <form
@@ -221,17 +222,19 @@ export function ScenePlanningPanel({ formId, bookId, scene }: ScenePlanningPanel
           />
         </div>
 
-        <div className="min-h-8">
-          {planningMutation.isSuccess && planningMutation.data?.id === scene.id ? (
-            <FeedbackMessage variant="success">Planejamento salvo.</FeedbackMessage>
-          ) : null}
+        {showPlanningFeedback ? (
+          <div className="-mx-4 border-t border-zinc-200 bg-zinc-50/95 px-4 py-3">
+            {planningMutation.isSuccess && planningMutation.data?.id === scene.id ? (
+              <FeedbackMessage variant="success">Planejamento salvo.</FeedbackMessage>
+            ) : null}
 
-          {planningMutation.isError ? (
-            <FeedbackMessage variant="error">
-              Nao foi possivel salvar o planejamento. Verifique os vinculos e tente novamente.
-            </FeedbackMessage>
-          ) : null}
-        </div>
+            {planningMutation.isError ? (
+              <FeedbackMessage variant="error">
+                Nao foi possivel salvar o planejamento. Verifique os vinculos e tente novamente.
+              </FeedbackMessage>
+            ) : null}
+          </div>
+        ) : null}
       </div>
     </form>
   );

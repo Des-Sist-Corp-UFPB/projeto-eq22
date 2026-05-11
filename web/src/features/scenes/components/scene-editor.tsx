@@ -353,7 +353,11 @@ export function SceneEditor({ bookId, sceneId, onSceneDeleted }: SceneEditorProp
               <button
                 type="button"
                 aria-expanded={isPlanningPanelOpen}
-                aria-label={isPlanningPanelOpen ? "Recolher planejamento da cena" : "Expandir planejamento da cena"}
+                aria-label={
+                  isPlanningPanelOpen
+                    ? "Recolher planejamento da cena"
+                    : "Expandir planejamento da cena"
+                }
                 onClick={() => handlePlanningPanelOpenChange(!isPlanningPanelOpen)}
                 className="flex min-w-0 flex-1 items-center gap-3 rounded-md text-left transition hover:text-zinc-950 focus:outline-none focus:ring-2 focus:ring-zinc-800 focus:ring-offset-2"
               >
