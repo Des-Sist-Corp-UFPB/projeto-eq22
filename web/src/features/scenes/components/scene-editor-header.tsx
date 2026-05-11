@@ -67,7 +67,7 @@ export function SceneEditorHeader({
             size="sm"
             disabled={metadataPending || !title.trim()}
           >
-            {metadataPending ? "Salvando..." : "Salvar dados"}
+            {metadataPending ? "Salvando..." : "Salvar cena"}
           </Button>
           <Button type="button" variant="secondary" size="sm" onClick={onSaveContent} disabled={contentPending}>
             {contentPending ? "Salvando..." : "Salvar conteúdo"}

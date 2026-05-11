@@ -1,7 +1,6 @@
 "use client";
 
 import { type FormEvent, useEffect, useState } from "react";
-import { Button } from "@/components/ui/button";
 import { FeedbackMessage } from "@/components/ui/feedback-message";
 import { Textarea } from "@/components/ui/textarea";
 import { useCharacters } from "@/features/characters/api/characters-hooks";
@@ -13,11 +12,12 @@ import type { ItemResponse } from "@/features/items/types";
 import type { Scene } from "@/features/scenes/types";
 
 type ScenePlanningPanelProps = {
+  formId: string;
   bookId: string;
   scene: Scene;
 };
 
-export function ScenePlanningPanel({ bookId, scene }: ScenePlanningPanelProps) {
+export function ScenePlanningPanel({ formId, bookId, scene }: ScenePlanningPanelProps) {
   const charactersQuery = useCharacters(bookId);
   const locationsQuery = useLocations(bookId);
   const itemsQuery = useItems(bookId);
@@ -96,20 +96,11 @@ export function ScenePlanningPanel({ bookId, scene }: ScenePlanningPanelProps) {
 
   return (
     <form
+      id={formId}
       onSubmit={handleSubmit}
-      className="min-h-0 overflow-y-auto border-t border-zinc-200 bg-zinc-50/80 px-4 py-4 lg:h-full lg:border-l lg:border-t-0"
+      className="w-full px-4 pt-4"
     >
       <div className="grid w-full gap-4">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h2 className="text-sm font-semibold text-zinc-950">Planejamento da cena</h2>
-            <p className="text-xs text-zinc-500">Metadados narrativos separados do conteudo textual.</p>
-          </div>
-          <Button type="submit" size="sm" disabled={planningMutation.isPending}>
-            {planningMutation.isPending ? "Salvando..." : "Salvar planejamento"}
-          </Button>
-        </div>
-
         <div className="grid gap-4">
           <div className="grid gap-3">
             <PlanningTextarea
