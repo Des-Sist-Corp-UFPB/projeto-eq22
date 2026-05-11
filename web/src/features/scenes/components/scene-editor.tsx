@@ -50,7 +50,7 @@ export function SceneEditor({ bookId, sceneId, onSceneDeleted }: SceneEditorProp
   const [lastSavedContentJson, setLastSavedContentJson] = useState("");
   const [lastSavedContentText, setLastSavedContentText] = useState("");
   const [loadedSceneId, setLoadedSceneId] = useState<string | null>(null);
-  const [isPlanningPanelOpen, setIsPlanningPanelOpen] = useState(true);
+  const [isPlanningPanelOpen, setIsPlanningPanelOpen] = useState(false);
 
   const sceneQuery = useQuery({
     queryKey: sceneId ? queryKeys.scene(sceneId) : ["scenes", "empty"],
@@ -103,6 +103,9 @@ export function SceneEditor({ bookId, sceneId, onSceneDeleted }: SceneEditorProp
 
   useEffect(() => {
     const storedValue = window.localStorage.getItem(PLANNING_PANEL_STORAGE_KEY);
+    if (storedValue === "true") {
+      setIsPlanningPanelOpen(true);
+    }
     if (storedValue === "false") {
       setIsPlanningPanelOpen(false);
     }
@@ -384,29 +387,29 @@ export function SceneEditor({ bookId, sceneId, onSceneDeleted }: SceneEditorProp
         </section>
 
         <div className="min-h-0 bg-white lg:h-full">
-            <SceneContentEditor
-              editorKey={scene.id}
-              contentJson={contentJson}
-              contentText={contentText}
-              wordCount={scene.wordCount}
-              isSuccess={contentMutation.isSuccess}
-              isError={contentMutation.isError}
-              saveStatus={contentSaveStatus}
-              onContentChange={(sourceSceneId, nextContentJson, nextContentText) => {
-                if (sourceSceneId !== activeSceneIdRef.current) {
-                  return;
-                }
+          <SceneContentEditor
+            editorKey={scene.id}
+            contentJson={contentJson}
+            contentText={contentText}
+            wordCount={scene.wordCount}
+            isSuccess={contentMutation.isSuccess}
+            isError={contentMutation.isError}
+            saveStatus={contentSaveStatus}
+            onContentChange={(sourceSceneId, nextContentJson, nextContentText) => {
+              if (sourceSceneId !== activeSceneIdRef.current) {
+                return;
+              }
 
-                if (!contentMutation.isPending) {
-                  contentMutation.reset();
-                }
-                currentContentJsonRef.current = nextContentJson;
-                currentContentTextRef.current = nextContentText;
-                setContentJson(nextContentJson);
-                setContentText(nextContentText);
-                scheduleAutosave(sourceSceneId, nextContentJson, nextContentText);
-              }}
-            />
+              if (!contentMutation.isPending) {
+                contentMutation.reset();
+              }
+              currentContentJsonRef.current = nextContentJson;
+              currentContentTextRef.current = nextContentText;
+              setContentJson(nextContentJson);
+              setContentText(nextContentText);
+              scheduleAutosave(sourceSceneId, nextContentJson, nextContentText);
+            }}
+          />
         </div>
       </Card>
     </section>
