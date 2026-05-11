@@ -290,8 +290,8 @@ export function SceneEditor({ bookId, sceneId, onSceneDeleted }: SceneEditorProp
         : "saved";
 
   return (
-    <section className="h-full overflow-y-auto bg-zinc-100/70 p-4 md:p-6 lg:p-8">
-      <Card className="mx-auto grid min-h-full max-w-7xl grid-rows-[auto_auto_minmax(0,1fr)] overflow-hidden border-zinc-200 bg-white shadow-xl shadow-zinc-200/70">
+    <section className="h-full overflow-hidden bg-zinc-100/70 p-4 md:p-6 lg:p-8">
+      <Card className="mx-auto grid h-full max-w-7xl grid-rows-[auto_auto_minmax(0,1fr)] overflow-hidden border-zinc-200 bg-white shadow-xl shadow-zinc-200/70">
         <SceneEditorHeader
           scene={scene}
           metadataFormId={METADATA_FORM_ID}
@@ -328,7 +328,7 @@ export function SceneEditor({ bookId, sceneId, onSceneDeleted }: SceneEditorProp
           }}
         />
 
-        <div className="grid min-h-0 bg-white lg:grid-cols-[minmax(0,1fr)_380px] xl:grid-cols-[minmax(0,1fr)_400px]">
+        <div className="grid min-h-0 bg-white lg:h-full lg:grid-cols-[minmax(0,1fr)_380px] xl:grid-cols-[minmax(0,1fr)_400px]">
           <SceneContentEditor
             editorKey={scene.id}
             contentJson={contentJson}
