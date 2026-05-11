@@ -100,7 +100,7 @@ export function ScenePlanningPanel({ formId, bookId, scene }: ScenePlanningPanel
       id={formId}
       onSubmit={handleSubmit}
       className="w-full px-4 pt-4"
-    >
+          >
       <div className="grid w-full gap-4">
         <div className="grid gap-4">
           <div className="grid gap-3">
