@@ -211,6 +211,7 @@ export function ScenePlanningPanel({ formId, bookId, scene }: ScenePlanningPanel
 
           <ItemSelector
             items={itemsQuery.data}
+            characters={charactersQuery.data}
             selectedIds={selectedItemIds}
             search={itemSearch}
             expanded={itemsExpanded}
@@ -394,6 +395,7 @@ function ParticipantRow({ character, checked, highlighted = false, onToggle }: P
 
 type ItemSelectorProps = {
   items: ItemResponse[] | undefined;
+  characters: CharacterResponse[] | undefined;
   selectedIds: Set<string>;
   search: string;
   expanded: boolean;
@@ -406,6 +408,7 @@ type ItemSelectorProps = {
 
 function ItemSelector({
   items,
+  characters,
   selectedIds,
   search,
   expanded,
@@ -415,6 +418,7 @@ function ItemSelector({
   onExpandedChange,
   onToggle,
 }: ItemSelectorProps) {
+  const characterNameById = new Map((characters ?? []).map((character) => [character.id, character.name]));
   const selectedItems = items?.filter((item) => selectedIds.has(item.id)) ?? [];
   const normalizedSearch = normalizeSearch(search);
   const otherItems = items?.filter((item) => {
@@ -426,7 +430,7 @@ function ItemSelector({
       return true;
     }
 
-    return itemMatchesSearch(item, normalizedSearch);
+    return itemMatchesSearch(item, normalizedSearch, characterNameById);
   }) ?? [];
   const selectedCount = selectedIds.size;
   const selectedSummary = selectedItems.map((item) => item.name).join(", ");
@@ -439,7 +443,9 @@ function ItemSelector({
           <p className="mt-1 text-xs text-zinc-500">{selectedCount} {selectedCount === 1 ? "selecionado" : "selecionados"}</p>
         </div>
 
-        {selectedSummary ? <p className="line-clamp-2 text-sm text-zinc-700">{selectedSummary}</p> : null}
+        {selectedSummary ? (
+          <p className="line-clamp-2 text-sm text-zinc-700">{selectedSummary}</p>
+        ) : null}
       </div>
 
       <button
@@ -479,7 +485,14 @@ function ItemSelector({
               <div className="grid gap-1.5">
                 <h4 className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Selecionados</h4>
                 {selectedItems.map((item) => (
-                  <ItemRow key={item.id} item={item} checked onToggle={onToggle} highlighted />
+                  <ItemRow
+                    key={item.id}
+                    item={item}
+                    ownerName={item.currentOwnerCharacterId ? characterNameById.get(item.currentOwnerCharacterId) : undefined}
+                    checked
+                    onToggle={onToggle}
+                    highlighted
+                  />
                 ))}
               </div>
             ) : null}
@@ -491,7 +504,13 @@ function ItemSelector({
                 </h4>
                 {otherItems.length > 0 ? (
                   otherItems.map((item) => (
-                    <ItemRow key={item.id} item={item} checked={selectedIds.has(item.id)} onToggle={onToggle} />
+                    <ItemRow
+                      key={item.id}
+                      item={item}
+                      ownerName={item.currentOwnerCharacterId ? characterNameById.get(item.currentOwnerCharacterId) : undefined}
+                      checked={selectedIds.has(item.id)}
+                      onToggle={onToggle}
+                    />
                   ))
                 ) : (
                   <p className="text-xs text-zinc-500">Nenhum item encontrado.</p>
@@ -507,14 +526,13 @@ function ItemSelector({
 
 type ItemRowProps = {
   item: ItemResponse;
+  ownerName?: string;
   checked: boolean;
   highlighted?: boolean;
   onToggle: (id: string) => void;
 };
 
-function ItemRow({ item, checked, highlighted = false, onToggle }: ItemRowProps) {
-  const details = [item.type, item.origin, item.narrativeImportance].filter(Boolean).join(" · ");
-
+function ItemRow({ item, ownerName, checked, highlighted = false, onToggle }: ItemRowProps) {
   return (
     <label
       className={`flex cursor-pointer items-start gap-2 rounded-md border px-2.5 py-2 text-sm transition ${
@@ -529,7 +547,11 @@ function ItemRow({ item, checked, highlighted = false, onToggle }: ItemRowProps)
       />
       <span className="min-w-0">
         <span className="block truncate font-medium text-zinc-900">{item.name}</span>
-        {details ? <span className="mt-0.5 block truncate text-xs text-zinc-500">{details}</span> : null}
+        {item.type || ownerName || item.origin || item.narrativeImportance ? (
+          <span className="mt-0.5 block truncate text-xs text-zinc-500">
+            {[item.type, ownerName, item.origin, item.narrativeImportance].filter(Boolean).join(" · ")}
+          </span>
+        ) : null}
       </span>
     </label>
   );
@@ -581,47 +603,6 @@ function PlanningListState({ isLoading, isError, isEmpty, emptyMessage }: Planni
   return null;
 }
 
-type PlanningChecklistItem = {
-  id: string;
-  label: string;
-  checked: boolean;
-};
-
-type PlanningChecklistProps = {
-  title: string;
-  items: PlanningChecklistItem[] | undefined;
-  isLoading: boolean;
-  isError: boolean;
-  emptyMessage: string;
-  onToggle: (id: string) => void;
-};
-
-function PlanningChecklist({ title, items, isLoading, isError, emptyMessage, onToggle }: PlanningChecklistProps) {
-  return (
-    <div className="rounded-md border border-zinc-200 bg-zinc-50/60 p-3">
-      <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">{title}</h3>
-
-      <div className="mt-2 grid max-h-40 gap-2 overflow-y-auto pr-1">
-        {isLoading ? <p className="text-xs text-zinc-500">Carregando lista...</p> : null}
-        {isError ? <FeedbackMessage variant="error">Nao foi possivel carregar esta lista.</FeedbackMessage> : null}
-        {!isLoading && !isError && items?.length === 0 ? <p className="text-xs text-zinc-500">{emptyMessage}</p> : null}
-
-        {items?.map((item) => (
-          <label key={item.id} className="flex items-center gap-2 text-sm text-zinc-700">
-            <input
-              type="checkbox"
-              checked={item.checked}
-              onChange={() => onToggle(item.id)}
-              className="h-4 w-4 rounded border-zinc-300 text-zinc-900"
-            />
-            <span className="truncate">{item.label}</span>
-          </label>
-        ))}
-      </div>
-    </div>
-  );
-}
-
 function blankToNull(value: string) {
   const trimmedValue = value.trim();
   return trimmedValue ? trimmedValue : null;
@@ -645,8 +626,14 @@ function characterMatchesSearch(character: CharacterResponse, normalizedSearch: 
     .some((value) => value?.toLocaleLowerCase().includes(normalizedSearch));
 }
 
-function itemMatchesSearch(item: ItemResponse, normalizedSearch: string) {
-  return [item.name, item.type, item.origin, item.narrativeImportance, item.currentOwnerCharacterId]
+function itemMatchesSearch(
+  item: ItemResponse,
+  normalizedSearch: string,
+  characterNameById: Map<string, string>
+) {
+  const ownerName = item.currentOwnerCharacterId ? characterNameById.get(item.currentOwnerCharacterId) : null;
+
+  return [item.name, item.type, item.origin, item.narrativeImportance, ownerName]
     .filter(Boolean)
     .some((value) => value?.toLocaleLowerCase().includes(normalizedSearch));
 }
