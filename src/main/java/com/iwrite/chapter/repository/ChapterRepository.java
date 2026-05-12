@@ -12,5 +12,7 @@ public interface ChapterRepository extends JpaRepository<Chapter, UUID> {
 
     List<Chapter> findBySectionIdOrderBySortOrderAsc(UUID sectionId);
 
+    int countByBookId(UUID bookId);
+
     int countBySectionId(UUID sectionId);
 }
