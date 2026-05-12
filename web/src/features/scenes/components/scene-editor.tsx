@@ -2,6 +2,7 @@
 
 import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { ErrorState, LoadingState } from "@/components/ui/feedback";
 import { deleteScene, getScene, updateScene, updateSceneContent } from "@/features/scenes/api/scenes-api";
@@ -10,12 +11,14 @@ import { SceneEditorHeader, type ContentSaveStatus } from "@/features/scenes/com
 import { SceneEmptyState } from "@/features/scenes/components/scene-empty-state";
 import { SceneMetadataForm } from "@/features/scenes/components/scene-metadata-form";
 import { ScenePlanningPanel } from "@/features/scenes/components/scene-planning-panel";
-import type { SceneStatus } from "@/features/scenes/types";
+import type { Scene, SceneStatus } from "@/features/scenes/types";
 import { queryKeys } from "@/lib/query/keys";
 
 const SCENE_STATUSES: SceneStatus[] = ["IDEA", "PLANNED", "DRAFT", "WRITTEN", "REVISED", "FINAL"];
 const METADATA_FORM_ID = "scene-metadata-form";
+const PLANNING_FORM_ID = "scene-planning-form";
 const CONTENT_AUTOSAVE_DELAY_MS = 1200;
+const PLANNING_PANEL_STORAGE_KEY = "iwrite.scenePlanningPanelOpen";
 
 type SceneEditorProps = {
   bookId: string;
@@ -47,6 +50,7 @@ export function SceneEditor({ bookId, sceneId, onSceneDeleted }: SceneEditorProp
   const [lastSavedContentJson, setLastSavedContentJson] = useState("");
   const [lastSavedContentText, setLastSavedContentText] = useState("");
   const [loadedSceneId, setLoadedSceneId] = useState<string | null>(null);
+  const [isPlanningPanelOpen, setIsPlanningPanelOpen] = useState(false);
 
   const sceneQuery = useQuery({
     queryKey: sceneId ? queryKeys.scene(sceneId) : ["scenes", "empty"],
@@ -96,6 +100,16 @@ export function SceneEditor({ bookId, sceneId, onSceneDeleted }: SceneEditorProp
   useEffect(() => {
     contentSavePendingRef.current = contentMutation.isPending;
   }, [contentMutation.isPending]);
+
+  useEffect(() => {
+    const storedValue = window.localStorage.getItem(PLANNING_PANEL_STORAGE_KEY);
+    if (storedValue === "true") {
+      setIsPlanningPanelOpen(true);
+    }
+    if (storedValue === "false") {
+      setIsPlanningPanelOpen(false);
+    }
+  }, []);
 
   useEffect(() => clearPendingAutosave, [clearPendingAutosave]);
 
@@ -236,6 +250,11 @@ export function SceneEditor({ bookId, sceneId, onSceneDeleted }: SceneEditorProp
     }
   }
 
+  function handlePlanningPanelOpenChange(isOpen: boolean) {
+    setIsPlanningPanelOpen(isOpen);
+    window.localStorage.setItem(PLANNING_PANEL_STORAGE_KEY, String(isOpen));
+  }
+
   if (!sceneId) {
     return (
       <SceneEmptyState
@@ -290,8 +309,8 @@ export function SceneEditor({ bookId, sceneId, onSceneDeleted }: SceneEditorProp
         : "saved";
 
   return (
-    <section className="h-full overflow-hidden bg-zinc-100/70 p-4 md:p-6 lg:p-8">
-      <Card className="mx-auto grid h-full max-w-7xl grid-rows-[auto_auto_minmax(0,1fr)] overflow-hidden border-zinc-200 bg-white shadow-xl shadow-zinc-200/70">
+    <section className="h-full overflow-y-auto bg-zinc-100/70 p-4 md:p-6 lg:p-8">
+      <Card className="mx-auto grid min-h-full max-w-7xl grid-rows-[auto_auto_auto_minmax(0,1fr)] overflow-hidden border-zinc-200 bg-white shadow-xl shadow-zinc-200/70">
         <SceneEditorHeader
           scene={scene}
           metadataFormId={METADATA_FORM_ID}
@@ -328,7 +347,50 @@ export function SceneEditor({ bookId, sceneId, onSceneDeleted }: SceneEditorProp
           }}
         />
 
-        <div className="grid min-h-0 bg-white lg:h-full lg:grid-cols-[minmax(0,1fr)_380px] xl:grid-cols-[minmax(0,1fr)_400px]">
+        <section className="border-b border-zinc-200 bg-white px-4 py-3 md:px-7">
+          <div className="rounded-lg border border-zinc-200 bg-zinc-50/70">
+            <div className="flex flex-wrap items-center gap-3 px-3 py-3">
+              <button
+                type="button"
+                aria-expanded={isPlanningPanelOpen}
+                aria-label={
+                  isPlanningPanelOpen
+                    ? "Recolher planejamento da cena"
+                    : "Expandir planejamento da cena"
+                }
+                onClick={() => handlePlanningPanelOpenChange(!isPlanningPanelOpen)}
+                className="flex min-w-0 flex-1 items-center gap-3 rounded-md text-left transition hover:text-zinc-950 focus:outline-none focus:ring-2 focus:ring-zinc-800 focus:ring-offset-2"
+              >
+                <span
+                  aria-hidden="true"
+                  className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-zinc-200 bg-white text-zinc-600 transition ${
+                    isPlanningPanelOpen ? "rotate-90" : ""
+                  }`}
+                >
+                  <span className="h-2.5 w-2.5 rotate-45 border-r-2 border-t-2 border-current" />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-sm font-semibold text-zinc-950">Planejamento da cena</span>
+                  <span className="mt-0.5 block truncate text-xs text-zinc-500">{getPlanningSummary(scene)}</span>
+                </span>
+              </button>
+
+              {isPlanningPanelOpen ? (
+                <Button type="submit" form={PLANNING_FORM_ID} size="sm">
+                  Salvar planejamento
+                </Button>
+              ) : null}
+            </div>
+
+            {isPlanningPanelOpen ? (
+              <div className="border-t border-zinc-200 bg-zinc-50/60">
+                <ScenePlanningPanel formId={PLANNING_FORM_ID} bookId={bookId} scene={scene} />
+              </div>
+            ) : null}
+          </div>
+        </section>
+
+        <div className="min-h-0 bg-white lg:h-full">
           <SceneContentEditor
             editorKey={scene.id}
             contentJson={contentJson}
@@ -352,10 +414,21 @@ export function SceneEditor({ bookId, sceneId, onSceneDeleted }: SceneEditorProp
               scheduleAutosave(sourceSceneId, nextContentJson, nextContentText);
             }}
           />
-
-          <ScenePlanningPanel bookId={bookId} scene={scene} />
         </div>
       </Card>
     </section>
   );
+}
+
+function getPlanningSummary(scene: Scene) {
+  const summaryParts = [
+    scene.povCharacter ? `POV: ${scene.povCharacter.name}` : null,
+    scene.mainLocation ? `Local: ${scene.mainLocation.name}` : null,
+    scene.participantCharacters.length > 0
+      ? `${scene.participantCharacters.length} ${scene.participantCharacters.length === 1 ? "participante" : "participantes"}`
+      : null,
+    scene.items.length > 0 ? `${scene.items.length} ${scene.items.length === 1 ? "item" : "itens"}` : null,
+  ].filter(Boolean);
+
+  return summaryParts.length > 0 ? summaryParts.join(" · ") : "Nenhum planejamento preenchido.";
 }
