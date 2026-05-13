@@ -6,6 +6,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { CharactersPanel } from "@/features/characters/components/characters-panel";
+import { BookDashboard } from "@/features/dashboard/components/book-dashboard";
 import { ItemsPanel } from "@/features/items/components/items-panel";
 import { LocationsPanel } from "@/features/locations/components/locations-panel";
 import { getOutline } from "@/features/outline/api/outline-api";
@@ -103,12 +104,7 @@ export function BookWorkspace({ bookId }: { bookId: string }) {
 
         <div className={`min-h-0 overflow-hidden bg-zinc-100/70 ${mode !== "scenes" ? "md:col-span-2" : ""}`}>
           {mode === "overview" ? (
-            <section className="h-full overflow-auto p-6">
-              <div className="mx-auto max-w-5xl">
-                <h2 className="text-xl font-semibold text-zinc-950">Visão geral</h2>
-                <p className="mt-2 text-sm text-zinc-600">Resumo e estatísticas narrativas do livro.</p>
-              </div>
-            </section>
+            <BookDashboard bookId={bookId} />
           ) : mode === "scenes" ? (
             <SceneEditor bookId={bookId} sceneId={selectedSceneId} onSceneDeleted={() => setSelectedSceneId(null)} />
           ) : mode === "characters" ? (
