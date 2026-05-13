@@ -13,7 +13,7 @@ import { OutlineSidebar } from "@/features/outline/components/outline-sidebar";
 import { SceneEditor } from "@/features/scenes/components/scene-editor";
 import { queryKeys } from "@/lib/query/keys";
 
-type WorkspaceMode = "scenes" | "characters" | "locations" | "items";
+type WorkspaceMode = "overview" | "scenes" | "characters" | "locations" | "items";
 
 export function BookWorkspace({ bookId }: { bookId: string }) {
   const [selectedSceneId, setSelectedSceneId] = useState<string | null>(null);
@@ -46,6 +46,14 @@ export function BookWorkspace({ bookId }: { bookId: string }) {
 
         <div className="flex shrink-0 items-center gap-2">
           <div className="flex rounded-md border border-zinc-200 bg-zinc-50 p-1">
+            <Button
+              type="button"
+              size="sm"
+              variant={mode === "overview" ? "primary" : "ghost"}
+              onClick={() => setMode("overview")}
+            >
+              Visão geral
+            </Button>
             <Button
               type="button"
               size="sm"
@@ -94,7 +102,14 @@ export function BookWorkspace({ bookId }: { bookId: string }) {
         ) : null}
 
         <div className={`min-h-0 overflow-hidden bg-zinc-100/70 ${mode !== "scenes" ? "md:col-span-2" : ""}`}>
-          {mode === "scenes" ? (
+          {mode === "overview" ? (
+            <section className="h-full overflow-auto p-6">
+              <div className="mx-auto max-w-5xl">
+                <h2 className="text-xl font-semibold text-zinc-950">Visão geral</h2>
+                <p className="mt-2 text-sm text-zinc-600">Resumo e estatísticas narrativas do livro.</p>
+              </div>
+            </section>
+          ) : mode === "scenes" ? (
             <SceneEditor bookId={bookId} sceneId={selectedSceneId} onSceneDeleted={() => setSelectedSceneId(null)} />
           ) : mode === "characters" ? (
             <CharactersPanel bookId={bookId} />
