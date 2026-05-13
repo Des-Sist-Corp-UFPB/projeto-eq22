@@ -10,6 +10,18 @@ export type StatusCountResponse = {
   status: SceneStatus;
   scenesCount: number;
   wordCount: number;
+  scenes: DashboardSceneSummaryResponse[];
+};
+
+export type DashboardSceneSummaryResponse = {
+  sceneId: string;
+  title: string;
+  status: SceneStatus;
+  wordCount: number;
+  chapterId: string;
+  chapterTitle: string;
+  sectionId: string | null;
+  sectionTitle: string | null;
 };
 
 export type PovStatsResponse = {

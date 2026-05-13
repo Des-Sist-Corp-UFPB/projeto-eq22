@@ -1,11 +1,18 @@
 "use client";
 
+import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ErrorState, LoadingState } from "@/components/ui/feedback";
 import { useBookDashboard } from "@/features/dashboard/api/dashboard-hooks";
-import type { BookDashboardResponse, EntityUsageResponse, PovStatsResponse } from "@/features/dashboard/types";
+import type {
+  BookDashboardResponse,
+  DashboardSceneSummaryResponse,
+  EntityUsageResponse,
+  PovStatsResponse,
+  StatusCountResponse,
+} from "@/features/dashboard/types";
 import type { SceneStatus } from "@/features/scenes/types";
 
 type BookDashboardProps = {
@@ -48,6 +55,7 @@ export function BookDashboard({ bookId }: BookDashboardProps) {
 
 function DashboardContent({ dashboard }: { dashboard: BookDashboardResponse }) {
   const planningPercent = clampPercent(dashboard.planningProgress.plannedScenesPercent);
+  const [expandedStatus, setExpandedStatus] = useState<SceneStatus | null>(null);
 
   return (
     <div className="grid gap-4">
@@ -55,8 +63,9 @@ function DashboardContent({ dashboard }: { dashboard: BookDashboardResponse }) {
         <MetricCard label="Total de palavras" value={formatNumber(dashboard.totalWordCount)} />
         <MetricCard label="Total de cenas" value={formatNumber(dashboard.totalScenes)} />
         <MetricCard
-          label="Cenas planejadas"
+          label="Planejamento completo"
           value={`${formatNumber(dashboard.planningProgress.plannedScenesCount)} / ${formatNumber(dashboard.totalScenes)}`}
+          helper="POV, objetivo, conflito e resultado"
         />
         <MetricCard
           label="Capítulos e seções"
@@ -75,10 +84,10 @@ function DashboardContent({ dashboard }: { dashboard: BookDashboardResponse }) {
       <Card className="p-4">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
-            <h2 className="text-base font-semibold text-zinc-950">Progresso de planejamento</h2>
+            <h2 className="text-base font-semibold text-zinc-950">Planejamento narrativo</h2>
             <p className="mt-1 text-sm text-zinc-500">
               {formatNumber(dashboard.planningProgress.plannedScenesCount)} de {formatNumber(dashboard.totalScenes)} cenas
-              com POV, objetivo, conflito e resultado.
+              com planejamento completo. Cena completa quando possui POV, objetivo, conflito e resultado.
             </p>
           </div>
           <span className="text-2xl font-semibold text-zinc-950">{formatPercent(planningPercent)}</span>
@@ -94,13 +103,12 @@ function DashboardContent({ dashboard }: { dashboard: BookDashboardResponse }) {
           <SectionHeader title="Cenas por status" description="Distribuição do trabalho por etapa de escrita." />
           <div className="mt-4 grid gap-2 sm:grid-cols-2">
             {dashboard.scenesByStatus.map((status) => (
-              <div key={status.status} className="rounded-md border border-zinc-200 bg-zinc-50 p-3">
-                <div className="flex items-center justify-between gap-3">
-                  <span className="text-sm font-medium text-zinc-800">{statusLabels[status.status]}</span>
-                  <Badge variant="outline">{formatNumber(status.scenesCount)} cenas</Badge>
-                </div>
-                <p className="mt-2 text-xs text-zinc-500">{formatNumber(status.wordCount)} palavras</p>
-              </div>
+              <StatusCard
+                key={status.status}
+                status={status}
+                isExpanded={expandedStatus === status.status}
+                onToggle={() => setExpandedStatus((current) => (current === status.status ? null : status.status))}
+              />
             ))}
           </div>
         </Card>
@@ -133,6 +141,65 @@ function DashboardContent({ dashboard }: { dashboard: BookDashboardResponse }) {
         </div>
       </section>
     </div>
+  );
+}
+
+function StatusCard({
+  status,
+  isExpanded,
+  onToggle,
+}: {
+  status: StatusCountResponse;
+  isExpanded: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3">
+      <button
+        type="button"
+        aria-expanded={isExpanded}
+        onClick={onToggle}
+        className="flex w-full items-start justify-between gap-3 text-left"
+      >
+        <span>
+          <span className="block text-sm font-medium text-zinc-800">{statusLabels[status.status]}</span>
+          <span className="mt-2 block text-xs text-zinc-500">{formatNumber(status.wordCount)} palavras</span>
+        </span>
+        <span className="flex shrink-0 flex-col items-end gap-2">
+          <Badge variant="outline">{formatNumber(status.scenesCount)} cenas</Badge>
+          <span className="text-xs font-medium text-zinc-500">{isExpanded ? "Ocultar" : "Ver cenas"}</span>
+        </span>
+      </button>
+
+      {isExpanded ? (
+        <div className="mt-3 border-t border-zinc-200 pt-3">
+          <SceneSummaryList scenes={status.scenes} />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function SceneSummaryList({ scenes }: { scenes: DashboardSceneSummaryResponse[] }) {
+  if (scenes.length === 0) {
+    return <p className="text-sm text-zinc-500">Nenhuma cena neste status.</p>;
+  }
+
+  return (
+    <ol className="grid gap-2">
+      {scenes.map((scene) => (
+        <li key={scene.sceneId} className="rounded-md border border-zinc-200 bg-white p-3">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="truncate text-sm font-medium text-zinc-900">{scene.title}</p>
+              <p className="mt-1 text-xs text-zinc-500">{formatSceneLocation(scene)}</p>
+            </div>
+            <Badge variant="outline">{statusLabels[scene.status]}</Badge>
+          </div>
+          <p className="mt-2 text-xs text-zinc-500">{formatNumber(scene.wordCount)} palavras</p>
+        </li>
+      ))}
+    </ol>
   );
 }
 
@@ -225,6 +292,14 @@ function formatNumber(value: number) {
 
 function formatPercent(value: number) {
   return `${formatNumber(Math.round(value))}%`;
+}
+
+function formatSceneLocation(scene: DashboardSceneSummaryResponse) {
+  if (scene.sectionTitle) {
+    return `${scene.chapterTitle} · ${scene.sectionTitle}`;
+  }
+
+  return scene.chapterTitle;
 }
 
 function clampPercent(value: number) {

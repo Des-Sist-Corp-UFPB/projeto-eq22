@@ -2,9 +2,11 @@ package com.iwrite.dashboard.service;
 
 import com.iwrite.book.entity.Book;
 import com.iwrite.book.service.BookService;
+import com.iwrite.chapter.entity.Chapter;
 import com.iwrite.chapter.repository.ChapterRepository;
 import com.iwrite.character.entity.Character;
 import com.iwrite.dashboard.dto.BookDashboardResponse;
+import com.iwrite.dashboard.dto.DashboardSceneSummaryResponse;
 import com.iwrite.dashboard.dto.EntityUsageResponse;
 import com.iwrite.dashboard.dto.NarrativeGapsResponse;
 import com.iwrite.dashboard.dto.PlanningProgressResponse;
@@ -15,6 +17,7 @@ import com.iwrite.location.entity.Location;
 import com.iwrite.scene.entity.Scene;
 import com.iwrite.scene.entity.SceneStatus;
 import com.iwrite.scene.repository.SceneRepository;
+import com.iwrite.section.entity.BookSection;
 import com.iwrite.section.repository.BookSectionRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -84,12 +87,17 @@ public class BookDashboardService {
 
         for (Scene scene : scenes) {
             CountStats stats = statsByStatus.get(scene.getStatus());
-            stats.add(wordCount(scene));
+            stats.add(scene);
         }
 
         return statsByStatus.entrySet()
                 .stream()
-                .map(entry -> new StatusCountResponse(entry.getKey(), entry.getValue().scenesCount, entry.getValue().wordCount))
+                .map(entry -> new StatusCountResponse(
+                        entry.getKey(),
+                        entry.getValue().scenesCount,
+                        entry.getValue().wordCount,
+                        entry.getValue().scenes
+                ))
                 .toList();
     }
 
@@ -229,6 +237,22 @@ public class BookDashboardService {
         return scene.getWordCount() == null ? 0 : scene.getWordCount();
     }
 
+    private DashboardSceneSummaryResponse toSceneSummary(Scene scene) {
+        Chapter chapter = scene.getChapter();
+        BookSection section = chapter.getSection();
+
+        return new DashboardSceneSummaryResponse(
+                scene.getId(),
+                scene.getTitle(),
+                scene.getStatus(),
+                wordCount(scene),
+                chapter.getId(),
+                chapter.getTitle(),
+                section.getId(),
+                section.getTitle()
+        );
+    }
+
     private double plannedScenesPercent(int plannedScenesCount, int totalScenes) {
         if (totalScenes == 0) {
             return 0.0;
@@ -237,13 +261,15 @@ public class BookDashboardService {
         return (plannedScenesCount * 100.0) / totalScenes;
     }
 
-    private static class CountStats {
+    private class CountStats {
         private int scenesCount;
         private int wordCount;
+        private final List<DashboardSceneSummaryResponse> scenes = new java.util.ArrayList<>();
 
-        void add(int sceneWordCount) {
+        void add(Scene scene) {
             scenesCount++;
-            wordCount += sceneWordCount;
+            wordCount += wordCount(scene);
+            scenes.add(toSceneSummary(scene));
         }
     }
 
