@@ -55,7 +55,10 @@ export function BookDashboard({ bookId }: BookDashboardProps) {
 
 function DashboardContent({ dashboard }: { dashboard: BookDashboardResponse }) {
   const planningPercent = clampPercent(dashboard.planningProgress.plannedScenesPercent);
-  const [expandedStatus, setExpandedStatus] = useState<SceneStatus | null>(null);
+  const [selectedStatus, setSelectedStatus] = useState<SceneStatus | null>(null);
+  const selectedStatusDetails = selectedStatus
+    ? dashboard.scenesByStatus.find((status) => status.status === selectedStatus) ?? null
+    : null;
 
   return (
     <div className="grid gap-4">
@@ -106,8 +109,7 @@ function DashboardContent({ dashboard }: { dashboard: BookDashboardResponse }) {
               <StatusCard
                 key={status.status}
                 status={status}
-                isExpanded={expandedStatus === status.status}
-                onToggle={() => setExpandedStatus((current) => (current === status.status ? null : status.status))}
+                onOpen={() => setSelectedStatus(status.status)}
               />
             ))}
           </div>
@@ -140,66 +142,164 @@ function DashboardContent({ dashboard }: { dashboard: BookDashboardResponse }) {
           <UsageCard title="Itens mais usados" items={dashboard.mostUsedItems} emptyMessage="Nenhum item vinculado." />
         </div>
       </section>
-    </div>
-  );
-}
 
-function StatusCard({
-  status,
-  isExpanded,
-  onToggle,
-}: {
-  status: StatusCountResponse;
-  isExpanded: boolean;
-  onToggle: () => void;
-}) {
-  return (
-    <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3">
-      <button
-        type="button"
-        aria-expanded={isExpanded}
-        onClick={onToggle}
-        className="flex w-full items-start justify-between gap-3 text-left"
-      >
-        <span>
-          <span className="block text-sm font-medium text-zinc-800">{statusLabels[status.status]}</span>
-          <span className="mt-2 block text-xs text-zinc-500">{formatNumber(status.wordCount)} palavras</span>
-        </span>
-        <span className="flex shrink-0 flex-col items-end gap-2">
-          <Badge variant="outline">{formatNumber(status.scenesCount)} cenas</Badge>
-          <span className="text-xs font-medium text-zinc-500">{isExpanded ? "Ocultar" : "Ver cenas"}</span>
-        </span>
-      </button>
-
-      {isExpanded ? (
-        <div className="mt-3 border-t border-zinc-200 pt-3">
-          <SceneSummaryList scenes={status.scenes} />
-        </div>
+      {selectedStatusDetails ? (
+        <StatusScenesModal status={selectedStatusDetails} onClose={() => setSelectedStatus(null)} />
       ) : null}
     </div>
   );
 }
 
-function SceneSummaryList({ scenes }: { scenes: DashboardSceneSummaryResponse[] }) {
+function StatusCard({ status, onOpen }: { status: StatusCountResponse; onOpen: () => void }) {
+  return (
+    <div className="flex min-h-[112px] flex-col justify-between rounded-md border border-zinc-200 bg-zinc-50 p-3">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-medium text-zinc-800">{statusLabels[status.status]}</h3>
+          <p className="mt-2 text-xs text-zinc-500">{formatNumber(status.wordCount)} palavras</p>
+        </div>
+        <Badge variant="outline">{formatNumber(status.scenesCount)} cenas</Badge>
+      </div>
+
+      <button type="button" onClick={onOpen} className="mt-4 w-fit text-xs font-medium text-zinc-700 hover:text-zinc-950">
+        Ver cenas
+      </button>
+    </div>
+  );
+}
+
+function StatusScenesModal({ status, onClose }: { status: StatusCountResponse; onClose: () => void }) {
+  const [expandedSceneId, setExpandedSceneId] = useState<string | null>(null);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/35 p-4" role="dialog" aria-modal="true">
+      <div className="grid max-h-[88vh] w-full max-w-4xl grid-rows-[auto_1fr] overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-xl">
+        <header className="flex items-start justify-between gap-4 border-b border-zinc-200 p-4">
+          <div>
+            <h2 className="text-lg font-semibold text-zinc-950">Cenas em {statusLabels[status.status]}</h2>
+            <p className="mt-1 text-sm text-zinc-500">
+              {formatNumber(status.scenesCount)} cenas · {formatNumber(status.wordCount)} palavras
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-md border border-zinc-200 px-3 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50"
+          >
+            Fechar
+          </button>
+        </header>
+
+        <div className="overflow-y-auto p-4">
+          <SceneSummaryList
+            scenes={status.scenes}
+            expandedSceneId={expandedSceneId}
+            onToggleScene={(sceneId) => setExpandedSceneId((current) => (current === sceneId ? null : sceneId))}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SceneSummaryList({
+  scenes,
+  expandedSceneId,
+  onToggleScene,
+}: {
+  scenes: DashboardSceneSummaryResponse[];
+  expandedSceneId: string | null;
+  onToggleScene: (sceneId: string) => void;
+}) {
   if (scenes.length === 0) {
-    return <p className="text-sm text-zinc-500">Nenhuma cena neste status.</p>;
+    return <EmptyState title="Nenhuma cena neste status." size="sm" />;
   }
 
   return (
     <ol className="grid gap-2">
       {scenes.map((scene) => (
         <li key={scene.sceneId} className="rounded-md border border-zinc-200 bg-white p-3">
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <p className="truncate text-sm font-medium text-zinc-900">{scene.title}</p>
-              <p className="mt-1 text-xs text-zinc-500">{formatSceneLocation(scene)}</p>
+          <button type="button" onClick={() => onToggleScene(scene.sceneId)} className="w-full text-left">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="truncate text-sm font-medium text-zinc-900">{scene.title}</p>
+                <p className="mt-1 text-xs text-zinc-500">{formatSceneLocation(scene)}</p>
+              </div>
+              <Badge variant="outline">{statusLabels[scene.status]}</Badge>
             </div>
-            <Badge variant="outline">{statusLabels[scene.status]}</Badge>
-          </div>
-          <p className="mt-2 text-xs text-zinc-500">{formatNumber(scene.wordCount)} palavras</p>
+            <p className="mt-2 text-xs text-zinc-500">{formatNumber(scene.wordCount)} palavras</p>
+            <p className="mt-2 text-xs font-medium text-zinc-500">
+              {expandedSceneId === scene.sceneId ? "Ocultar detalhes" : "Ver detalhes"}
+            </p>
+          </button>
+
+          {expandedSceneId === scene.sceneId ? <SceneDetails scene={scene} /> : null}
         </li>
       ))}
     </ol>
+  );
+}
+
+function SceneDetails({ scene }: { scene: DashboardSceneSummaryResponse }) {
+  const gaps = getSceneGaps(scene);
+
+  return (
+    <div className="mt-3 grid gap-3 border-t border-zinc-200 pt-3">
+      {hasText(scene.summary) ? <DetailBlock label="Resumo" value={scene.summary} /> : null}
+
+      <div className="grid gap-2 sm:grid-cols-2">
+        <DetailLine label="POV" value={scene.povCharacterName} fallback="Sem POV" />
+        <DetailLine label="Localização principal" value={scene.mainLocationName} fallback="Sem localização" />
+        <DetailLine label="Participantes" value={formatNames(scene.participantNames)} fallback="Sem participantes" />
+        <DetailLine label="Itens" value={formatNames(scene.itemNames)} fallback="Sem itens" />
+      </div>
+
+      <div className="grid gap-2">
+        <DetailBlock label="Objetivo" value={scene.goal} fallback="Sem objetivo" />
+        <DetailBlock label="Conflito" value={scene.conflict} fallback="Sem conflito" />
+        <DetailBlock label="Resultado" value={scene.outcome} fallback="Sem resultado" />
+        <DetailBlock label="Notas da cena" value={scene.planningNotes} fallback="Sem notas" />
+      </div>
+
+      <div>
+        <p className="text-xs font-medium uppercase text-zinc-500">Lacunas</p>
+        <div className="mt-2 flex flex-wrap gap-2">
+          {gaps.length === 0 ? (
+            <Badge className="bg-emerald-100 text-emerald-800">Sem lacunas principais</Badge>
+          ) : (
+            gaps.map((gap) => (
+              <Badge key={gap} className="bg-amber-100 text-amber-900">
+                {gap}
+              </Badge>
+            ))
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DetailLine({ label, value, fallback }: { label: string; value: string | null; fallback: string }) {
+  return (
+    <div className="rounded-md bg-zinc-50 p-3">
+      <p className="text-xs font-medium uppercase text-zinc-500">{label}</p>
+      <p className={`mt-1 text-sm ${hasText(value) ? "text-zinc-900" : "text-zinc-500"}`}>{hasText(value) ? value : fallback}</p>
+    </div>
+  );
+}
+
+function DetailBlock({ label, value, fallback }: { label: string; value: string | null; fallback?: string }) {
+  if (!hasText(value) && !fallback) {
+    return null;
+  }
+
+  return (
+    <div className="rounded-md bg-zinc-50 p-3">
+      <p className="text-xs font-medium uppercase text-zinc-500">{label}</p>
+      <p className={`mt-1 whitespace-pre-wrap text-sm leading-6 ${hasText(value) ? "text-zinc-900" : "text-zinc-500"}`}>
+        {hasText(value) ? value : fallback}
+      </p>
+    </div>
   );
 }
 
@@ -296,10 +396,43 @@ function formatPercent(value: number) {
 
 function formatSceneLocation(scene: DashboardSceneSummaryResponse) {
   if (scene.sectionTitle) {
-    return `${scene.chapterTitle} · ${scene.sectionTitle}`;
+    return `${scene.chapterTitle} - ${scene.sectionTitle}`;
   }
 
   return scene.chapterTitle;
+}
+
+function formatNames(names: string[]) {
+  return names.length > 0 ? names.join(", ") : null;
+}
+
+function hasText(value: string | null | undefined) {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function getSceneGaps(scene: DashboardSceneSummaryResponse) {
+  const gaps: string[] = [];
+
+  if (!hasText(scene.povCharacterName)) {
+    gaps.push("Sem POV");
+  }
+  if (!hasText(scene.goal)) {
+    gaps.push("Sem objetivo");
+  }
+  if (!hasText(scene.conflict)) {
+    gaps.push("Sem conflito");
+  }
+  if (!hasText(scene.outcome)) {
+    gaps.push("Sem resultado");
+  }
+  if (!hasText(scene.mainLocationName)) {
+    gaps.push("Sem localização");
+  }
+  if (scene.participantNames.length === 0) {
+    gaps.push("Sem participantes");
+  }
+
+  return gaps;
 }
 
 function clampPercent(value: number) {

@@ -244,12 +244,29 @@ public class BookDashboardService {
         return new DashboardSceneSummaryResponse(
                 scene.getId(),
                 scene.getTitle(),
+                scene.getSummary(),
                 scene.getStatus(),
                 wordCount(scene),
                 chapter.getId(),
                 chapter.getTitle(),
                 section.getId(),
-                section.getTitle()
+                section.getTitle(),
+                scene.getPovCharacter() == null ? null : scene.getPovCharacter().getName(),
+                scene.getMainLocation() == null ? null : scene.getMainLocation().getName(),
+                scene.getParticipantCharacters()
+                        .stream()
+                        .map(Character::getName)
+                        .sorted()
+                        .toList(),
+                scene.getItems()
+                        .stream()
+                        .map(Item::getName)
+                        .sorted()
+                        .toList(),
+                scene.getGoal(),
+                scene.getConflict(),
+                scene.getOutcome(),
+                scene.getPlanningNotes()
         );
     }
 

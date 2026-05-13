@@ -16,12 +16,21 @@ export type StatusCountResponse = {
 export type DashboardSceneSummaryResponse = {
   sceneId: string;
   title: string;
+  summary: string | null;
   status: SceneStatus;
   wordCount: number;
   chapterId: string;
   chapterTitle: string;
   sectionId: string | null;
   sectionTitle: string | null;
+  povCharacterName: string | null;
+  mainLocationName: string | null;
+  participantNames: string[];
+  itemNames: string[];
+  goal: string | null;
+  conflict: string | null;
+  outcome: string | null;
+  planningNotes: string | null;
 };
 
 export type PovStatsResponse = {
