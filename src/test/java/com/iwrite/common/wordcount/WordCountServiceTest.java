@@ -9,10 +9,18 @@ class WordCountServiceTest {
     private final WordCountService wordCountService = new WordCountService();
 
     @Test
-    void returnsZeroForBlankText() {
+    void returnsZeroForNullText() {
         assertThat(wordCountService.countWords(null)).isZero();
+    }
+
+    @Test
+    void returnsZeroForEmptyText() {
         assertThat(wordCountService.countWords("")).isZero();
-        assertThat(wordCountService.countWords("   ")).isZero();
+    }
+
+    @Test
+    void returnsZeroForWhitespaceOnlyText() {
+        assertThat(wordCountService.countWords("   \n\t   ")).isZero();
     }
 
     @Test
@@ -22,11 +30,26 @@ class WordCountServiceTest {
 
     @Test
     void ignoresPunctuationAroundWords() {
-        assertThat(wordCountService.countWords("Olá, mundo! Tudo bem?")).isEqualTo(4);
+        assertThat(wordCountService.countWords("Ola, mundo! Tudo bem?")).isEqualTo(4);
     }
 
     @Test
     void countsAccentedWords() {
         assertThat(wordCountService.countWords("Coração, ação e memória")).isEqualTo(4);
+    }
+
+    @Test
+    void countsWordsAcrossLineBreaksAndRepeatedSpaces() {
+        assertThat(wordCountService.countWords("primeira linha\n\nsegunda\tlinha   final")).isEqualTo(5);
+    }
+
+    @Test
+    void countsNumbersAsWords() {
+        assertThat(wordCountService.countWords("Capitulo 12 tem 3 cenas")).isEqualTo(5);
+    }
+
+    @Test
+    void countsMixedTextWithSymbols() {
+        assertThat(wordCountService.countWords("Cena #42: alfa-beta custa R$ 10,00 + revisao_final")).isEqualTo(9);
     }
 }
