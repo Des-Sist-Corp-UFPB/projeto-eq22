@@ -1,5 +1,6 @@
 package com.iwrite.item.dto;
 
+import com.iwrite.character.dto.CharacterSummaryResponse;
 import com.iwrite.character.entity.Character;
 import com.iwrite.item.entity.Item;
 
@@ -14,6 +15,7 @@ public record ItemResponse(
         String description,
         String origin,
         UUID currentOwnerCharacterId,
+        CharacterSummaryResponse currentOwnerCharacter,
         String narrativeImportance,
         String notes,
         OffsetDateTime createdAt,
@@ -31,6 +33,7 @@ public record ItemResponse(
                 item.getDescription(),
                 item.getOrigin(),
                 currentOwner == null ? null : currentOwner.getId(),
+                CharacterSummaryResponse.fromEntity(currentOwner),
                 item.getNarrativeImportance(),
                 item.getNotes(),
                 item.getCreatedAt(),

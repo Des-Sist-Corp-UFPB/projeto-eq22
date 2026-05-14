@@ -8,5 +8,6 @@ export const queryKeys = {
   items: (bookId: string) => ["books", bookId, "items"] as const,
   item: (itemId: string) => ["items", itemId] as const,
   outline: (bookId: string) => ["books", bookId, "outline"] as const,
+  bookDashboard: (bookId: string) => ["books", bookId, "dashboard"] as const,
   scene: (sceneId: string) => ["scenes", sceneId] as const,
 };

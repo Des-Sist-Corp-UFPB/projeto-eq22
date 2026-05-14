@@ -6,6 +6,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { CharactersPanel } from "@/features/characters/components/characters-panel";
+import { BookDashboard } from "@/features/dashboard/components/book-dashboard";
 import { ItemsPanel } from "@/features/items/components/items-panel";
 import { LocationsPanel } from "@/features/locations/components/locations-panel";
 import { getOutline } from "@/features/outline/api/outline-api";
@@ -13,7 +14,7 @@ import { OutlineSidebar } from "@/features/outline/components/outline-sidebar";
 import { SceneEditor } from "@/features/scenes/components/scene-editor";
 import { queryKeys } from "@/lib/query/keys";
 
-type WorkspaceMode = "scenes" | "characters" | "locations" | "items";
+type WorkspaceMode = "overview" | "scenes" | "characters" | "locations" | "items";
 
 export function BookWorkspace({ bookId }: { bookId: string }) {
   const [selectedSceneId, setSelectedSceneId] = useState<string | null>(null);
@@ -46,6 +47,14 @@ export function BookWorkspace({ bookId }: { bookId: string }) {
 
         <div className="flex shrink-0 items-center gap-2">
           <div className="flex rounded-md border border-zinc-200 bg-zinc-50 p-1">
+            <Button
+              type="button"
+              size="sm"
+              variant={mode === "overview" ? "primary" : "ghost"}
+              onClick={() => setMode("overview")}
+            >
+              Visão geral
+            </Button>
             <Button
               type="button"
               size="sm"
@@ -94,7 +103,9 @@ export function BookWorkspace({ bookId }: { bookId: string }) {
         ) : null}
 
         <div className={`min-h-0 overflow-hidden bg-zinc-100/70 ${mode !== "scenes" ? "md:col-span-2" : ""}`}>
-          {mode === "scenes" ? (
+          {mode === "overview" ? (
+            <BookDashboard bookId={bookId} />
+          ) : mode === "scenes" ? (
             <SceneEditor bookId={bookId} sceneId={selectedSceneId} onSceneDeleted={() => setSelectedSceneId(null)} />
           ) : mode === "characters" ? (
             <CharactersPanel bookId={bookId} />

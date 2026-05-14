@@ -1,3 +1,9 @@
+export type CharacterSummaryResponse = {
+  id: string;
+  name: string;
+  nickname: string | null;
+};
+
 export type ItemResponse = {
   id: string;
   bookId: string;
@@ -6,6 +12,7 @@ export type ItemResponse = {
   description: string | null;
   origin: string | null;
   currentOwnerCharacterId: string | null;
+  currentOwnerCharacter: CharacterSummaryResponse | null;
   narrativeImportance: string | null;
   notes: string | null;
   createdAt: string;
