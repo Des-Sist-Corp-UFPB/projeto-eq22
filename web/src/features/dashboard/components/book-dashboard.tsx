@@ -7,25 +7,16 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { ErrorState, LoadingState } from "@/components/ui/feedback";
 import { useBookDashboard } from "@/features/dashboard/api/dashboard-hooks";
 import { DashboardDetailModal, type DashboardDetailTarget } from "@/features/dashboard/components/dashboard-detail-modal";
+import { DashboardMetricCard } from "@/features/dashboard/components/dashboard-metric-card";
+import { DashboardStatusCard } from "@/features/dashboard/components/dashboard-status-card";
 import type {
   BookDashboardResponse,
   EntityUsageResponse,
   PovStatsResponse,
-  StatusCountResponse,
 } from "@/features/dashboard/types";
-import type { SceneStatus } from "@/features/scenes/types";
 
 type BookDashboardProps = {
   bookId: string;
-};
-
-const statusLabels: Record<SceneStatus, string> = {
-  IDEA: "Ideia",
-  PLANNED: "Planejada",
-  DRAFT: "Rascunho",
-  WRITTEN: "Escrita",
-  REVISED: "Revisada",
-  FINAL: "Final",
 };
 
 export function BookDashboard({ bookId }: BookDashboardProps) {
@@ -60,14 +51,14 @@ function DashboardContent({ dashboard }: { dashboard: BookDashboardResponse }) {
   return (
     <div className="grid gap-4">
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <MetricCard label="Total de palavras" value={formatNumber(dashboard.totalWordCount)} />
-        <MetricCard label="Total de cenas" value={formatNumber(dashboard.totalScenes)} />
-        <MetricCard
+        <DashboardMetricCard label="Total de palavras" value={formatNumber(dashboard.totalWordCount)} />
+        <DashboardMetricCard label="Total de cenas" value={formatNumber(dashboard.totalScenes)} />
+        <DashboardMetricCard
           label="Planejamento completo"
           value={`${formatNumber(dashboard.planningProgress.plannedScenesCount)} / ${formatNumber(dashboard.totalScenes)}`}
           helper="POV, objetivo, conflito e resultado"
         />
-        <MetricCard
+        <DashboardMetricCard
           label="Capítulos e seções"
           value={`${formatNumber(dashboard.totalChapters)} capítulos`}
           helper={`${formatNumber(dashboard.totalSections)} seções`}
@@ -103,7 +94,7 @@ function DashboardContent({ dashboard }: { dashboard: BookDashboardResponse }) {
           <SectionHeader title="Cenas por status" description="Distribuição do trabalho por etapa de escrita." />
           <div className="mt-4 grid gap-2 sm:grid-cols-2">
             {dashboard.scenesByStatus.map((status) => (
-              <StatusCard
+              <DashboardStatusCard
                 key={status.status}
                 status={status}
                 onOpen={() => setDetailTarget({ type: "status", status: status.status })}
@@ -188,34 +179,6 @@ function DashboardContent({ dashboard }: { dashboard: BookDashboardResponse }) {
         />
       ) : null}
     </div>
-  );
-}
-
-function StatusCard({ status, onOpen }: { status: StatusCountResponse; onOpen: () => void }) {
-  return (
-    <div className="flex min-h-[112px] flex-col justify-between rounded-md border border-zinc-200 bg-zinc-50 p-3">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <h3 className="text-sm font-medium text-zinc-800">{statusLabels[status.status]}</h3>
-          <p className="mt-2 text-xs text-zinc-500">{formatNumber(status.wordCount)} palavras</p>
-        </div>
-        <Badge variant="outline">{formatNumber(status.scenesCount)} cenas</Badge>
-      </div>
-
-      <button type="button" onClick={onOpen} className="mt-4 w-fit text-xs font-medium text-zinc-700 hover:text-zinc-950">
-        Ver cenas
-      </button>
-    </div>
-  );
-}
-
-function MetricCard({ label, value, helper }: { label: string; value: string; helper?: string }) {
-  return (
-    <Card className="p-4">
-      <p className="text-xs font-medium uppercase text-zinc-500">{label}</p>
-      <p className="mt-2 text-2xl font-semibold text-zinc-950">{value}</p>
-      {helper ? <p className="mt-1 text-sm text-zinc-500">{helper}</p> : null}
-    </Card>
   );
 }
 
