@@ -59,6 +59,10 @@ export type BookDashboardResponse = {
   bookId: string;
   title: string;
   totalWordCount: number;
+  targetWordCount: number | null;
+  remainingWordCount: number | null;
+  wordCountProgressPercent: number | null;
+  exceededTargetWordCount: number | null;
   totalSections: number;
   totalChapters: number;
   totalScenes: number;

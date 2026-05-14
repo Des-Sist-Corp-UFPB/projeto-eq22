@@ -39,6 +39,8 @@ public class Book {
     @Column(nullable = false)
     private BookStatus status;
 
+    private Integer targetWordCount;
+
     @Column(nullable = false, updatable = false)
     private OffsetDateTime createdAt;
 
@@ -97,6 +99,14 @@ public class Book {
 
     public void setStatus(BookStatus status) {
         this.status = status;
+    }
+
+    public Integer getTargetWordCount() {
+        return targetWordCount;
+    }
+
+    public void setTargetWordCount(Integer targetWordCount) {
+        this.targetWordCount = targetWordCount;
     }
 
     public OffsetDateTime getCreatedAt() {

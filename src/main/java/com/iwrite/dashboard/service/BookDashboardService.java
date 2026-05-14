@@ -66,6 +66,10 @@ public class BookDashboardService {
                 book.getId(),
                 book.getTitle(),
                 totalWordCount,
+                book.getTargetWordCount(),
+                remainingWordCount(totalWordCount, book.getTargetWordCount()),
+                wordCountProgressPercent(totalWordCount, book.getTargetWordCount()),
+                exceededTargetWordCount(totalWordCount, book.getTargetWordCount()),
                 sectionRepository.countByBookId(bookId),
                 chapterRepository.countByBookId(bookId),
                 totalScenes,
@@ -276,6 +280,34 @@ public class BookDashboardService {
         }
 
         return (plannedScenesCount * 100.0) / totalScenes;
+    }
+
+    private Integer remainingWordCount(int totalWordCount, Integer targetWordCount) {
+        if (!hasValidTargetWordCount(targetWordCount)) {
+            return null;
+        }
+
+        return Math.max(targetWordCount - totalWordCount, 0);
+    }
+
+    private Double wordCountProgressPercent(int totalWordCount, Integer targetWordCount) {
+        if (!hasValidTargetWordCount(targetWordCount)) {
+            return null;
+        }
+
+        return (totalWordCount * 100.0) / targetWordCount;
+    }
+
+    private Integer exceededTargetWordCount(int totalWordCount, Integer targetWordCount) {
+        if (!hasValidTargetWordCount(targetWordCount)) {
+            return null;
+        }
+
+        return Math.max(totalWordCount - targetWordCount, 0);
+    }
+
+    private boolean hasValidTargetWordCount(Integer targetWordCount) {
+        return targetWordCount != null && targetWordCount > 0;
     }
 
     private class CountStats {
