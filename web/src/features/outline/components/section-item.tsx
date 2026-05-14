@@ -55,6 +55,7 @@ type SectionItemProps = {
   onDeleteScene: (sceneId: string, sceneTitle: string) => void;
   onMoveSceneUp: (chapter: OutlineChapter, sceneId: string) => void;
   onMoveSceneDown: (chapter: OutlineChapter, sceneId: string) => void;
+  onReorderScenes: (chapter: OutlineChapter, orderedIds: string[]) => void;
 };
 
 export function SectionItem({
@@ -105,6 +106,7 @@ export function SectionItem({
   onDeleteScene,
   onMoveSceneUp,
   onMoveSceneDown,
+  onReorderScenes,
 }: SectionItemProps) {
   return (
     <section className="group/section rounded-md border border-zinc-200 bg-white shadow-sm shadow-zinc-200/50">
@@ -242,6 +244,7 @@ export function SectionItem({
                   onDeleteScene={onDeleteScene}
                   onMoveSceneUp={onMoveSceneUp}
                   onMoveSceneDown={onMoveSceneDown}
+                  onReorderScenes={onReorderScenes}
                 />
               ))}
             </div>

@@ -1,4 +1,14 @@
 import type { FormEvent } from "react";
+import {
+  closestCenter,
+  DndContext,
+  KeyboardSensor,
+  PointerSensor,
+  type DragEndEvent,
+  useSensor,
+  useSensors,
+} from "@dnd-kit/core";
+import { SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { CollapseChevronButton } from "@/features/outline/components/collapse-chevron-button";
@@ -6,6 +16,7 @@ import { InlineCreateForm } from "@/features/outline/components/inline-create-fo
 import { Field, WordCount } from "@/features/outline/components/outline-sidebar-parts";
 import { SceneRow } from "@/features/outline/components/scene-row";
 import type { OutlineChapter } from "@/features/outline/types";
+import { getReorderedIds } from "@/features/outline/utils/reorder";
 
 type ChapterItemProps = {
   chapter: OutlineChapter;
@@ -36,6 +47,7 @@ type ChapterItemProps = {
   onDeleteScene: (sceneId: string, sceneTitle: string) => void;
   onMoveSceneUp: (chapter: OutlineChapter, sceneId: string) => void;
   onMoveSceneDown: (chapter: OutlineChapter, sceneId: string) => void;
+  onReorderScenes: (chapter: OutlineChapter, orderedIds: string[]) => void;
 };
 
 export function ChapterItem({
@@ -67,7 +79,24 @@ export function ChapterItem({
   onDeleteScene,
   onMoveSceneUp,
   onMoveSceneDown,
+  onReorderScenes,
 }: ChapterItemProps) {
+  const sensors = useSensors(
+    useSensor(PointerSensor),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
+
+  function handleSceneDragEnd(event: DragEndEvent) {
+    const orderedIds = getReorderedIds(chapter.scenes, String(event.active.id), event.over ? String(event.over.id) : null);
+    if (!orderedIds) {
+      return;
+    }
+
+    onReorderScenes(chapter, orderedIds);
+  }
+
   return (
     <article className="group/chapter grid gap-2 border-l-2 border-zinc-300 pl-3">
       {isEditing ? (
@@ -166,23 +195,27 @@ export function ChapterItem({
           {chapter.scenes.length === 0 ? (
             <EmptyState size="sm" title="Nenhuma cena" description="Este capitulo ainda nao tem cenas." />
           ) : (
-            <div className="grid gap-1.5">
-              {chapter.scenes.map((scene, sceneIndex) => (
-                <SceneRow
-                  key={scene.id}
-                  scene={scene}
-                  isSelected={selectedSceneId === scene.id}
-                  deletePending={deleteScenePending}
-                  reorderPending={reorderScenePending}
-                  canMoveUp={sceneIndex > 0}
-                  canMoveDown={sceneIndex < chapter.scenes.length - 1}
-                  onSelect={onSelectScene}
-                  onDelete={onDeleteScene}
-                  onMoveUp={(sceneId) => onMoveSceneUp(chapter, sceneId)}
-                  onMoveDown={(sceneId) => onMoveSceneDown(chapter, sceneId)}
-                />
-              ))}
-            </div>
+            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleSceneDragEnd}>
+              <SortableContext items={chapter.scenes.map((scene) => scene.id)} strategy={verticalListSortingStrategy}>
+                <div className="grid gap-1.5">
+                  {chapter.scenes.map((scene, sceneIndex) => (
+                    <SceneRow
+                      key={scene.id}
+                      scene={scene}
+                      isSelected={selectedSceneId === scene.id}
+                      deletePending={deleteScenePending}
+                      reorderPending={reorderScenePending}
+                      canMoveUp={sceneIndex > 0}
+                      canMoveDown={sceneIndex < chapter.scenes.length - 1}
+                      onSelect={onSelectScene}
+                      onDelete={onDeleteScene}
+                      onMoveUp={(sceneId) => onMoveSceneUp(chapter, sceneId)}
+                      onMoveDown={(sceneId) => onMoveSceneDown(chapter, sceneId)}
+                    />
+                  ))}
+                </div>
+              </SortableContext>
+            </DndContext>
           )}
         </>
       ) : null}

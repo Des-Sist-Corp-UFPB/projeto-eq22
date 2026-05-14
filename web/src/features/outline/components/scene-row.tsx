@@ -1,3 +1,5 @@
+import { useSortable } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import type { OutlineScene } from "@/features/outline/types";
 
 type SceneRowProps = {
@@ -25,13 +27,24 @@ export function SceneRow({
   onMoveUp,
   onMoveDown,
 }: SceneRowProps) {
+  const { attributes, listeners, setActivatorNodeRef, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: scene.id,
+    disabled: reorderPending,
+  });
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+  };
+
   return (
     <div
+      ref={setNodeRef}
+      style={style}
       className={`group/scene grid grid-cols-[minmax(0,1fr)_auto] items-stretch rounded-md border transition ${
         isSelected
           ? "border-emerald-700 bg-emerald-50 text-zinc-950 shadow-sm ring-1 ring-emerald-100"
           : "border-transparent bg-white/80 text-zinc-700 hover:border-zinc-200 hover:bg-white"
-      }`}
+      } ${isDragging ? "z-10 opacity-80 shadow-md" : ""}`}
     >
       <button
         type="button"
@@ -49,6 +62,20 @@ export function SceneRow({
           isSelected ? "opacity-100" : "opacity-0 group-hover/scene:opacity-100 group-focus-within/scene:opacity-100"
         }`}
       >
+        <button
+          type="button"
+          ref={setActivatorNodeRef}
+          aria-label={`Reordenar cena ${scene.title}`}
+          title="Reordenar cena"
+          disabled={reorderPending}
+          className={`cursor-grab px-1.5 text-xs font-semibold transition active:cursor-grabbing ${
+            isSelected ? "text-emerald-800 hover:text-emerald-950" : "text-zinc-500 hover:text-zinc-900"
+          } disabled:cursor-not-allowed disabled:opacity-40`}
+          {...attributes}
+          {...listeners}
+        >
+          ::
+        </button>
         <button
           type="button"
           aria-label={`Mover cena ${scene.title} para cima`}
