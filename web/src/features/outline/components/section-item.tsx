@@ -8,7 +8,8 @@ import {
   useSensor,
   useSensors,
 } from "@dnd-kit/core";
-import { SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import { SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { CollapseChevronButton } from "@/features/outline/components/collapse-chevron-button";
@@ -121,6 +122,14 @@ export function SectionItem({
   onMoveSceneDown,
   onReorderScenes,
 }: SectionItemProps) {
+  const { attributes, listeners, setActivatorNodeRef, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: section.id,
+    disabled: reorderSectionPending || editingSectionId === section.id,
+  });
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+  };
   const chapterSensors = useSensors(
     useSensor(PointerSensor),
     useSensor(KeyboardSensor, {
@@ -138,7 +147,13 @@ export function SectionItem({
   }
 
   return (
-    <section className="group/section rounded-md border border-zinc-200 bg-white shadow-sm shadow-zinc-200/50">
+    <section
+      ref={setNodeRef}
+      style={style}
+      className={`group/section rounded-md border border-zinc-200 bg-white shadow-sm shadow-zinc-200/50 ${
+        isDragging ? "z-10 opacity-80 shadow-md" : ""
+      }`}
+    >
       <div className="border-b border-zinc-100 bg-white px-3 py-3">
         {editingSectionId === section.id ? (
           <form onSubmit={(event) => onSubmitSection(event, section.id)} className="grid gap-2">
@@ -194,6 +209,18 @@ export function SectionItem({
               <WordCount count={section.wordCount} />
             </div>
             <div className="flex flex-wrap gap-1.5 opacity-70 transition group-hover/section:opacity-100 focus-within:opacity-100">
+              <button
+                type="button"
+                aria-label={`Reordenar secao ${section.title}`}
+                title="Reordenar secao"
+                disabled={reorderSectionPending}
+                ref={setActivatorNodeRef}
+                className="inline-flex min-h-8 cursor-grab items-center justify-center rounded-md px-2 py-1 text-sm font-medium text-zinc-700 transition hover:bg-zinc-100 active:cursor-grabbing disabled:cursor-not-allowed disabled:opacity-70"
+                {...attributes}
+                {...listeners}
+              >
+                ::
+              </button>
               <Button
                 type="button"
                 variant="ghost"
