@@ -227,6 +227,16 @@ export function OutlineSidebar({ bookId, selectedSceneId, onSelectScene }: Outli
     );
   }
 
+  function handleReorderChapters(section: OutlineSection, orderedIds: string[]) {
+    setSuccessMessage("");
+    reorderChaptersMutation.mutate(
+      { sectionId: section.id, orderedIds },
+      {
+        onSuccess: () => setSuccessMessage("Ordem dos capÃ­tulos atualizada."),
+      }
+    );
+  }
+
   function handleMoveScene(chapter: OutlineChapter, sceneId: string, direction: -1 | 1) {
     const orderedIds = moveItemId(chapter.scenes, sceneId, direction);
     if (!orderedIds) {
@@ -432,6 +442,7 @@ export function OutlineSidebar({ bookId, selectedSceneId, onSelectScene }: Outli
                 onDeleteChapter={handleDeleteChapter}
                 onMoveChapterUp={(section, chapterId) => handleMoveChapter(section, chapterId, -1)}
                 onMoveChapterDown={(section, chapterId) => handleMoveChapter(section, chapterId, 1)}
+                onReorderChapters={handleReorderChapters}
                 onCreateScene={(chapterId, title) => sceneMutation.mutate({ chapterId, title })}
                 onSelectScene={(sceneId) => onSelectScene(sceneId)}
                 onDeleteScene={handleDeleteScene}

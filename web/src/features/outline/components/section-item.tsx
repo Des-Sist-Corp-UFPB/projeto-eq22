@@ -1,4 +1,14 @@
 import type { FormEvent } from "react";
+import {
+  closestCenter,
+  DndContext,
+  KeyboardSensor,
+  PointerSensor,
+  type DragEndEvent,
+  useSensor,
+  useSensors,
+} from "@dnd-kit/core";
+import { SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { CollapseChevronButton } from "@/features/outline/components/collapse-chevron-button";
@@ -6,6 +16,7 @@ import { InlineCreateForm } from "@/features/outline/components/inline-create-fo
 import { ChapterItem } from "@/features/outline/components/chapter-item";
 import { Field, WordCount } from "@/features/outline/components/outline-sidebar-parts";
 import type { OutlineChapter, OutlineSection, SectionType } from "@/features/outline/types";
+import { getReorderedIds } from "@/features/outline/utils/reorder";
 
 type SectionItemProps = {
   section: OutlineSection;
@@ -50,6 +61,7 @@ type SectionItemProps = {
   onDeleteChapter: (chapter: OutlineChapter) => void;
   onMoveChapterUp: (section: OutlineSection, chapterId: string) => void;
   onMoveChapterDown: (section: OutlineSection, chapterId: string) => void;
+  onReorderChapters: (section: OutlineSection, orderedIds: string[]) => void;
   onCreateScene: (chapterId: string, title: string) => void;
   onSelectScene: (sceneId: string) => void;
   onDeleteScene: (sceneId: string, sceneTitle: string) => void;
@@ -101,6 +113,7 @@ export function SectionItem({
   onDeleteChapter,
   onMoveChapterUp,
   onMoveChapterDown,
+  onReorderChapters,
   onCreateScene,
   onSelectScene,
   onDeleteScene,
@@ -108,6 +121,22 @@ export function SectionItem({
   onMoveSceneDown,
   onReorderScenes,
 }: SectionItemProps) {
+  const chapterSensors = useSensors(
+    useSensor(PointerSensor),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
+
+  function handleChapterDragEnd(event: DragEndEvent) {
+    const orderedIds = getReorderedIds(section.chapters, String(event.active.id), event.over ? String(event.over.id) : null);
+    if (!orderedIds) {
+      return;
+    }
+
+    onReorderChapters(section, orderedIds);
+  }
+
   return (
     <section className="group/section rounded-md border border-zinc-200 bg-white shadow-sm shadow-zinc-200/50">
       <div className="border-b border-zinc-100 bg-white px-3 py-3">
@@ -212,42 +241,46 @@ export function SectionItem({
           {section.chapters.length === 0 ? (
             <EmptyState size="sm" title="Nenhum capitulo" description="Esta secao ainda nao tem capitulos." />
           ) : (
-            <div className="grid gap-4">
-              {section.chapters.map((chapter, chapterIndex) => (
-                <ChapterItem
-                  key={chapter.id}
-                  chapter={chapter}
-                  canMoveUp={chapterIndex > 0}
-                  canMoveDown={chapterIndex < section.chapters.length - 1}
-                  isCollapsed={collapsedChapterIds.has(chapter.id)}
-                  isEditing={editingChapterId === chapter.id}
-                  chapterTitle={chapterTitle}
-                  chapterSummary={chapterSummary}
-                  selectedSceneId={selectedSceneId}
-                  updatePending={updateChapterPending}
-                  deletePending={deleteChapterPending}
-                  createScenePending={createScenePending}
-                  deleteScenePending={deleteScenePending}
-                  reorderPending={reorderChapterPending}
-                  reorderScenePending={reorderScenePending}
-                  onTitleChange={onChapterTitleChange}
-                  onSummaryChange={onChapterSummaryChange}
-                  onStartEdit={onStartEditChapter}
-                  onCancelEdit={onCancelEditChapter}
-                  onSubmit={onSubmitChapter}
-                  onDeleteChapter={onDeleteChapter}
-                  onMoveChapterUp={(chapterId) => onMoveChapterUp(section, chapterId)}
-                  onMoveChapterDown={(chapterId) => onMoveChapterDown(section, chapterId)}
-                  onToggleChapter={onToggleChapter}
-                  onCreateScene={onCreateScene}
-                  onSelectScene={onSelectScene}
-                  onDeleteScene={onDeleteScene}
-                  onMoveSceneUp={onMoveSceneUp}
-                  onMoveSceneDown={onMoveSceneDown}
-                  onReorderScenes={onReorderScenes}
-                />
-              ))}
-            </div>
+            <DndContext sensors={chapterSensors} collisionDetection={closestCenter} onDragEnd={handleChapterDragEnd}>
+              <SortableContext items={section.chapters.map((chapter) => chapter.id)} strategy={verticalListSortingStrategy}>
+                <div className="grid gap-4">
+                  {section.chapters.map((chapter, chapterIndex) => (
+                    <ChapterItem
+                      key={chapter.id}
+                      chapter={chapter}
+                      canMoveUp={chapterIndex > 0}
+                      canMoveDown={chapterIndex < section.chapters.length - 1}
+                      isCollapsed={collapsedChapterIds.has(chapter.id)}
+                      isEditing={editingChapterId === chapter.id}
+                      chapterTitle={chapterTitle}
+                      chapterSummary={chapterSummary}
+                      selectedSceneId={selectedSceneId}
+                      updatePending={updateChapterPending}
+                      deletePending={deleteChapterPending}
+                      createScenePending={createScenePending}
+                      deleteScenePending={deleteScenePending}
+                      reorderPending={reorderChapterPending}
+                      reorderScenePending={reorderScenePending}
+                      onTitleChange={onChapterTitleChange}
+                      onSummaryChange={onChapterSummaryChange}
+                      onStartEdit={onStartEditChapter}
+                      onCancelEdit={onCancelEditChapter}
+                      onSubmit={onSubmitChapter}
+                      onDeleteChapter={onDeleteChapter}
+                      onMoveChapterUp={(chapterId) => onMoveChapterUp(section, chapterId)}
+                      onMoveChapterDown={(chapterId) => onMoveChapterDown(section, chapterId)}
+                      onToggleChapter={onToggleChapter}
+                      onCreateScene={onCreateScene}
+                      onSelectScene={onSelectScene}
+                      onDeleteScene={onDeleteScene}
+                      onMoveSceneUp={onMoveSceneUp}
+                      onMoveSceneDown={onMoveSceneDown}
+                      onReorderScenes={onReorderScenes}
+                    />
+                  ))}
+                </div>
+              </SortableContext>
+            </DndContext>
           )}
         </div>
       ) : null}

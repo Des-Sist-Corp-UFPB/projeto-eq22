@@ -8,7 +8,8 @@ import {
   useSensor,
   useSensors,
 } from "@dnd-kit/core";
-import { SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import { SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { CollapseChevronButton } from "@/features/outline/components/collapse-chevron-button";
@@ -81,6 +82,14 @@ export function ChapterItem({
   onMoveSceneDown,
   onReorderScenes,
 }: ChapterItemProps) {
+  const { attributes, listeners, setActivatorNodeRef, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: chapter.id,
+    disabled: reorderPending || isEditing,
+  });
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+  };
   const sensors = useSensors(
     useSensor(PointerSensor),
     useSensor(KeyboardSensor, {
@@ -98,7 +107,11 @@ export function ChapterItem({
   }
 
   return (
-    <article className="group/chapter grid gap-2 border-l-2 border-zinc-300 pl-3">
+    <article
+      ref={setNodeRef}
+      style={style}
+      className={`group/chapter grid gap-2 border-l-2 border-zinc-300 pl-3 ${isDragging ? "z-10 opacity-80" : ""}`}
+    >
       {isEditing ? (
         <form onSubmit={(event) => onSubmit(event, chapter.id)} className="grid gap-2">
           <Field label="Titulo do capitulo">
@@ -149,6 +162,18 @@ export function ChapterItem({
             <WordCount count={chapter.wordCount} />
           </div>
           <div className="flex flex-wrap gap-1.5 opacity-60 transition group-hover/chapter:opacity-100 focus-within:opacity-100">
+            <button
+              type="button"
+              aria-label={`Reordenar capitulo ${chapter.title}`}
+              title="Reordenar capitulo"
+              disabled={reorderPending}
+              ref={setActivatorNodeRef}
+              className="inline-flex min-h-8 cursor-grab items-center justify-center rounded-md px-2 py-1 text-sm font-medium text-zinc-700 transition hover:bg-zinc-100 active:cursor-grabbing disabled:cursor-not-allowed disabled:opacity-70"
+              {...attributes}
+              {...listeners}
+            >
+              ::
+            </button>
             <Button
               type="button"
               variant="ghost"
