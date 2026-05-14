@@ -43,6 +43,7 @@ public class BookService {
         book.setSubtitle(request.subtitle());
         book.setDescription(request.description());
         book.setStatus(request.status() == null ? BookStatus.PLANNING : request.status());
+        book.setTargetWordCount(request.targetWordCount());
 
         return BookResponse.fromEntity(bookRepository.save(book));
     }
@@ -63,6 +64,9 @@ public class BookService {
         }
         if (request.status() != null) {
             book.setStatus(request.status());
+        }
+        if (request.isTargetWordCountPresent()) {
+            book.setTargetWordCount(request.targetWordCount());
         }
 
         return BookResponse.fromEntity(book);

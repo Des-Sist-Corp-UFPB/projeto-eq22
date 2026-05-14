@@ -1,10 +1,15 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ErrorState, LoadingState } from "@/components/ui/feedback";
+import { FeedbackMessage } from "@/components/ui/feedback-message";
+import { Input } from "@/components/ui/input";
+import { updateBook } from "@/features/books/api/books-api";
 import { useBookDashboard } from "@/features/dashboard/api/dashboard-hooks";
 import { DashboardDetailModal, type DashboardDetailTarget } from "@/features/dashboard/components/dashboard-detail-modal";
 import { DashboardMetricCard } from "@/features/dashboard/components/dashboard-metric-card";
@@ -14,6 +19,8 @@ import type {
   EntityUsageResponse,
   PovStatsResponse,
 } from "@/features/dashboard/types";
+import { ApiError } from "@/lib/api/client";
+import { queryKeys } from "@/lib/query/keys";
 
 type BookDashboardProps = {
   bookId: string;
@@ -71,6 +78,8 @@ function DashboardContent({ dashboard }: { dashboard: BookDashboardResponse }) {
           description="Crie cenas no modo Cenas para acompanhar progresso, POVs e lacunas narrativas aqui."
         />
       ) : null}
+
+      <WordTargetCard dashboard={dashboard} />
 
       <Card className="p-4 transition-[transform,background-color,box-shadow] duration-150 ease-out hover:scale-[1.01] hover:bg-white hover:shadow-sm hover:shadow-zinc-200/70">
         <div className="flex flex-wrap items-end justify-between gap-3">
@@ -179,6 +188,156 @@ function DashboardContent({ dashboard }: { dashboard: BookDashboardResponse }) {
         />
       ) : null}
     </div>
+  );
+}
+
+function WordTargetCard({ dashboard }: { dashboard: BookDashboardResponse }) {
+  const queryClient = useQueryClient();
+  const [isEditing, setIsEditing] = useState(false);
+  const [targetValue, setTargetValue] = useState(dashboard.targetWordCount?.toString() ?? "");
+  const [validationMessage, setValidationMessage] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+
+  const updateTargetMutation = useMutation({
+    mutationFn: (targetWordCount: number | null) => updateBook(dashboard.bookId, { targetWordCount }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.bookDashboard(dashboard.bookId) });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.book(dashboard.bookId) });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.books });
+    },
+  });
+
+  useEffect(() => {
+    setTargetValue(dashboard.targetWordCount?.toString() ?? "");
+  }, [dashboard.targetWordCount]);
+
+  function startEditing() {
+    setValidationMessage(null);
+    setSuccessMessage(null);
+    setIsEditing(true);
+  }
+
+  function cancelEditing() {
+    setValidationMessage(null);
+    setTargetValue(dashboard.targetWordCount?.toString() ?? "");
+    setIsEditing(false);
+  }
+
+  function saveTarget() {
+    const parsedValue = Number(targetValue);
+
+    setValidationMessage(null);
+    setSuccessMessage(null);
+
+    if (!Number.isInteger(parsedValue) || parsedValue <= 0) {
+      setValidationMessage("Informe uma meta maior que zero.");
+      return;
+    }
+
+    updateTargetMutation.mutate(parsedValue, {
+      onSuccess: () => {
+        setSuccessMessage("Meta de palavras salva.");
+        setIsEditing(false);
+      },
+    });
+  }
+
+  function removeTarget() {
+    setValidationMessage(null);
+    setSuccessMessage(null);
+    updateTargetMutation.mutate(null, {
+      onSuccess: () => {
+        setSuccessMessage("Meta de palavras removida.");
+        setIsEditing(false);
+      },
+    });
+  }
+
+  const errorMessage = getBookTargetErrorMessage(updateTargetMutation.error);
+  const hasTarget = dashboard.targetWordCount != null;
+  const progressPercent = dashboard.wordCountProgressPercent ?? 0;
+  const visualProgressPercent = clampPercent(progressPercent);
+
+  return (
+    <Card className="p-4 transition-[transform,background-color,box-shadow] duration-150 ease-out hover:scale-[1.01] hover:bg-white hover:shadow-sm hover:shadow-zinc-200/70">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="text-base font-semibold text-zinc-950">Meta de palavras</h2>
+          <p className="mt-1 text-sm text-zinc-500">Referência editorial opcional para acompanhar o tamanho do livro.</p>
+        </div>
+        {!isEditing ? (
+          <Button type="button" variant="secondary" size="sm" onClick={startEditing}>
+            {hasTarget ? "Editar meta" : "Definir meta"}
+          </Button>
+        ) : null}
+      </div>
+
+      {!hasTarget && !isEditing ? (
+        <div className="mt-4 rounded-md border border-dashed border-zinc-300 bg-zinc-50 p-4">
+          <p className="text-sm font-medium text-zinc-900">Nenhuma meta de palavras definida.</p>
+          <p className="mt-1 text-sm text-zinc-500">
+            Defina uma referência opcional para acompanhar o progresso do livro.
+          </p>
+        </div>
+      ) : null}
+
+      {hasTarget && !isEditing ? (
+        <div className="mt-4 grid gap-3">
+          <div className="flex flex-wrap items-end justify-between gap-3">
+            <div>
+              <p className="text-2xl font-semibold text-zinc-950">
+                {formatNumber(dashboard.totalWordCount)} / {formatNumber(dashboard.targetWordCount ?? 0)} palavras
+              </p>
+              <p className="mt-1 text-sm text-zinc-500">{formatPercent(progressPercent)} da meta de palavras</p>
+            </div>
+            {dashboard.exceededTargetWordCount && dashboard.exceededTargetWordCount > 0 ? (
+              <Badge className="bg-amber-100 text-amber-900">
+                Meta ultrapassada em {formatNumber(dashboard.exceededTargetWordCount)} palavras
+              </Badge>
+            ) : (
+              <Badge variant="outline">{formatNumber(dashboard.remainingWordCount ?? 0)} palavras restantes</Badge>
+            )}
+          </div>
+          <div className="h-3 overflow-hidden rounded-full bg-zinc-100">
+            <div className="h-full rounded-full bg-sky-500" style={{ width: `${visualProgressPercent}%` }} />
+          </div>
+        </div>
+      ) : null}
+
+      {isEditing ? (
+        <div className="mt-4 grid gap-3 rounded-md border border-zinc-200 bg-zinc-50 p-3">
+          <label className="grid gap-1 text-sm font-medium text-zinc-900">
+            Meta opcional de palavras
+            <Input
+              type="number"
+              min={1}
+              step={1}
+              value={targetValue}
+              onChange={(event) => setTargetValue(event.target.value)}
+              placeholder="Ex.: 70000"
+              disabled={updateTargetMutation.isPending}
+            />
+          </label>
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" size="sm" onClick={saveTarget} disabled={updateTargetMutation.isPending}>
+              {updateTargetMutation.isPending ? "Salvando..." : "Salvar meta"}
+            </Button>
+            {hasTarget ? (
+              <Button type="button" variant="secondary" size="sm" onClick={removeTarget} disabled={updateTargetMutation.isPending}>
+                Remover meta
+              </Button>
+            ) : null}
+            <Button type="button" variant="ghost" size="sm" onClick={cancelEditing} disabled={updateTargetMutation.isPending}>
+              Cancelar
+            </Button>
+          </div>
+        </div>
+      ) : null}
+
+      {validationMessage ? <FeedbackMessage variant="error" className="mt-3">{validationMessage}</FeedbackMessage> : null}
+      {errorMessage ? <FeedbackMessage variant="error" className="mt-3">{errorMessage}</FeedbackMessage> : null}
+      {successMessage ? <FeedbackMessage variant="success" className="mt-3">{successMessage}</FeedbackMessage> : null}
+    </Card>
   );
 }
 
@@ -300,4 +459,16 @@ function clampPercent(value: number) {
   }
 
   return Math.max(0, Math.min(100, value));
+}
+
+function getBookTargetErrorMessage(error: unknown) {
+  if (!error) {
+    return null;
+  }
+
+  if (error instanceof ApiError) {
+    return error.message || "Não foi possível salvar a meta agora.";
+  }
+
+  return "Não foi possível salvar a meta agora.";
 }

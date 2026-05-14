@@ -12,6 +12,7 @@ public record BookResponse(
         String subtitle,
         String description,
         BookStatus status,
+        Integer targetWordCount,
         OffsetDateTime createdAt,
         OffsetDateTime updatedAt
 ) {
@@ -23,6 +24,7 @@ public record BookResponse(
                 book.getSubtitle(),
                 book.getDescription(),
                 book.getStatus(),
+                book.getTargetWordCount(),
                 book.getCreatedAt(),
                 book.getUpdatedAt()
         );

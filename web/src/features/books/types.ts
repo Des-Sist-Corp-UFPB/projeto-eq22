@@ -6,6 +6,7 @@ export type Book = {
   subtitle: string | null;
   description: string | null;
   status: BookStatus;
+  targetWordCount: number | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -14,6 +15,7 @@ export type CreateBookRequest = {
   title: string;
   subtitle?: string;
   description?: string;
+  targetWordCount?: number | null;
 };
 
 export type UpdateBookRequest = {
@@ -21,4 +23,5 @@ export type UpdateBookRequest = {
   subtitle?: string;
   description?: string;
   status?: BookStatus;
+  targetWordCount?: number | null;
 };
