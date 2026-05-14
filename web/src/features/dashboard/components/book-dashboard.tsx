@@ -72,7 +72,7 @@ function DashboardContent({ dashboard }: { dashboard: BookDashboardResponse }) {
         />
       ) : null}
 
-      <Card className="p-4">
+      <Card className="p-4 transition-[transform,background-color,box-shadow] duration-150 ease-out hover:scale-[1.01] hover:bg-white hover:shadow-sm hover:shadow-zinc-200/70">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <h2 className="text-base font-semibold text-zinc-950">Planejamento narrativo</h2>

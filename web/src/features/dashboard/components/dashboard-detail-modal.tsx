@@ -327,7 +327,7 @@ function ItemDetailView({
       <EntitySummary title={query.data.name} subtitle={query.data.type} />
       <div className="grid gap-3 sm:grid-cols-2">
         <MetricBox label="Cenas vinculadas" value={formatNumber(usage?.scenesCount ?? 0)} />
-        <DetailLine label="Dono atual" value={query.data.currentOwnerCharacterId} fallback="Sem dono atual" />
+        <DetailLine label="Dono atual" value={query.data.currentOwnerCharacter?.name ?? null} fallback="Sem dono" />
       </div>
       <DetailBlock label="Descrição" value={query.data.description} fallback="Sem descrição" />
       <DetailBlock label="Origem" value={query.data.origin} fallback="Sem origem" />
