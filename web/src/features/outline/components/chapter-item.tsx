@@ -1,10 +1,12 @@
-import type { FormEvent } from "react";
+import { type FormEvent, useState } from "react";
 import {
   closestCenter,
   DndContext,
+  DragOverlay,
   KeyboardSensor,
   PointerSensor,
   type DragEndEvent,
+  type DragStartEvent,
   useSensor,
   useSensors,
 } from "@dnd-kit/core";
@@ -15,6 +17,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { CollapseChevronButton } from "@/features/outline/components/collapse-chevron-button";
 import { InlineCreateForm } from "@/features/outline/components/inline-create-form";
 import { Field, WordCount } from "@/features/outline/components/outline-sidebar-parts";
+import { SceneDragPreview } from "@/features/outline/components/outline-drag-overlay";
 import { SceneRow } from "@/features/outline/components/scene-row";
 import type { OutlineChapter } from "@/features/outline/types";
 import { getReorderedIds } from "@/features/outline/utils/reorder";
@@ -90,14 +93,21 @@ export function ChapterItem({
     transform: CSS.Transform.toString(transform),
     transition,
   };
+  const [activeSceneId, setActiveSceneId] = useState<string | null>(null);
   const sensors = useSensors(
-    useSensor(PointerSensor),
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 8,
+      },
+    }),
     useSensor(KeyboardSensor, {
       coordinateGetter: sortableKeyboardCoordinates,
     })
   );
 
   function handleSceneDragEnd(event: DragEndEvent) {
+    setActiveSceneId(null);
+
     const orderedIds = getReorderedIds(chapter.scenes, String(event.active.id), event.over ? String(event.over.id) : null);
     if (!orderedIds) {
       return;
@@ -106,11 +116,21 @@ export function ChapterItem({
     onReorderScenes(chapter, orderedIds);
   }
 
+  function handleSceneDragStart(event: DragStartEvent) {
+    setActiveSceneId(String(event.active.id));
+  }
+
+  function handleSceneDragCancel() {
+    setActiveSceneId(null);
+  }
+
+  const activeScene = activeSceneId ? chapter.scenes.find((scene) => scene.id === activeSceneId) : null;
+
   return (
     <article
       ref={setNodeRef}
       style={style}
-      className={`group/chapter grid gap-2 border-l-2 border-zinc-300 pl-3 ${isDragging ? "z-10 opacity-80" : ""}`}
+      className={`group/chapter grid gap-2 border-l-2 border-zinc-300 pl-3 ${isDragging ? "z-10 opacity-40" : ""}`}
     >
       {isEditing ? (
         <form onSubmit={(event) => onSubmit(event, chapter.id)} className="grid gap-2">
@@ -149,10 +169,13 @@ export function ChapterItem({
               />
               <button
                 type="button"
-                className="min-w-0 flex-1 text-left focus:outline-none focus:ring-2 focus:ring-zinc-800 focus:ring-offset-2"
+                ref={setActivatorNodeRef}
+                className="min-w-0 flex-1 cursor-grab rounded-md text-left transition hover:bg-zinc-50 active:cursor-grabbing focus:outline-none focus:ring-2 focus:ring-zinc-800 focus:ring-offset-2"
                 aria-expanded={!isCollapsed}
                 aria-label={`${isCollapsed ? "Expandir" : "Recolher"} capitulo ${chapter.title}`}
                 onClick={() => onToggleChapter(chapter.id)}
+                {...attributes}
+                {...listeners}
               >
                 <p className="text-[11px] font-medium uppercase text-zinc-500">Capitulo</p>
                 <h3 className="truncate text-sm font-medium text-zinc-800">{chapter.title}</h3>
@@ -167,9 +190,7 @@ export function ChapterItem({
               aria-label={`Reordenar capitulo ${chapter.title}`}
               title="Reordenar capitulo"
               disabled={reorderPending}
-              ref={setActivatorNodeRef}
               className="inline-flex min-h-8 cursor-grab items-center justify-center rounded-md px-2 py-1 text-sm font-medium text-zinc-700 transition hover:bg-zinc-100 active:cursor-grabbing disabled:cursor-not-allowed disabled:opacity-70"
-              {...attributes}
               {...listeners}
             >
               ::
@@ -220,7 +241,13 @@ export function ChapterItem({
           {chapter.scenes.length === 0 ? (
             <EmptyState size="sm" title="Nenhuma cena" description="Este capitulo ainda nao tem cenas." />
           ) : (
-            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleSceneDragEnd}>
+            <DndContext
+              sensors={sensors}
+              collisionDetection={closestCenter}
+              onDragStart={handleSceneDragStart}
+              onDragEnd={handleSceneDragEnd}
+              onDragCancel={handleSceneDragCancel}
+            >
               <SortableContext items={chapter.scenes.map((scene) => scene.id)} strategy={verticalListSortingStrategy}>
                 <div className="grid gap-1.5">
                   {chapter.scenes.map((scene, sceneIndex) => (
@@ -240,6 +267,7 @@ export function ChapterItem({
                   ))}
                 </div>
               </SortableContext>
+              <DragOverlay>{activeScene ? <SceneDragPreview scene={activeScene} /> : null}</DragOverlay>
             </DndContext>
           )}
         </>

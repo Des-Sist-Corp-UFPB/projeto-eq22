@@ -4,9 +4,11 @@ import { type FormEvent, useEffect, useState } from "react";
 import {
   closestCenter,
   DndContext,
+  DragOverlay,
   KeyboardSensor,
   PointerSensor,
   type DragEndEvent,
+  type DragStartEvent,
   useSensor,
   useSensors,
 } from "@dnd-kit/core";
@@ -33,6 +35,7 @@ import {
   useReorderSectionsMutation,
 } from "@/features/outline/api/outline-reorder-mutations";
 import { InlineCreateForm } from "@/features/outline/components/inline-create-form";
+import { SectionDragPreview } from "@/features/outline/components/outline-drag-overlay";
 import { SectionItem } from "@/features/outline/components/section-item";
 import type { OutlineChapter, OutlineSection, SectionType } from "@/features/outline/types";
 import { getReorderedIds } from "@/features/outline/utils/reorder";
@@ -72,6 +75,7 @@ export function OutlineSidebar({ bookId, selectedSceneId, onSelectScene }: Outli
   const [chapterSummary, setChapterSummary] = useState("");
   const [collapsedSectionIds, setCollapsedSectionIds] = useState<Set<string>>(() => new Set());
   const [collapsedChapterIds, setCollapsedChapterIds] = useState<Set<string>>(() => new Set());
+  const [activeSectionId, setActiveSectionId] = useState<string | null>(null);
 
   const outlineQuery = useQuery({
     queryKey: queryKeys.outline(bookId),
@@ -81,7 +85,11 @@ export function OutlineSidebar({ bookId, selectedSceneId, onSelectScene }: Outli
   const reorderChaptersMutation = useReorderChaptersMutation(bookId);
   const reorderScenesMutation = useReorderScenesMutation(bookId);
   const sectionSensors = useSensors(
-    useSensor(PointerSensor),
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 8,
+      },
+    }),
     useSensor(KeyboardSensor, {
       coordinateGetter: sortableKeyboardCoordinates,
     })
@@ -245,6 +253,8 @@ export function OutlineSidebar({ bookId, selectedSceneId, onSelectScene }: Outli
   }
 
   function handleSectionDragEnd(event: DragEndEvent) {
+    setActiveSectionId(null);
+
     const outline = outlineQuery.data;
     if (!outline) {
       return;
@@ -256,6 +266,14 @@ export function OutlineSidebar({ bookId, selectedSceneId, onSelectScene }: Outli
     }
 
     handleReorderSections(orderedIds);
+  }
+
+  function handleSectionDragStart(event: DragStartEvent) {
+    setActiveSectionId(String(event.active.id));
+  }
+
+  function handleSectionDragCancel() {
+    setActiveSectionId(null);
   }
 
   function handleReorderSections(orderedIds: string[]) {
@@ -405,6 +423,7 @@ export function OutlineSidebar({ bookId, selectedSceneId, onSelectScene }: Outli
     reorderSectionsMutation.isError ||
     reorderChaptersMutation.isError ||
     reorderScenesMutation.isError;
+  const activeSection = activeSectionId ? outline.sections.find((section) => section.id === activeSectionId) : null;
 
   return (
     <aside className="flex h-full min-h-0 flex-col bg-white">
@@ -437,7 +456,13 @@ export function OutlineSidebar({ bookId, selectedSceneId, onSelectScene }: Outli
             description="Crie uma seção para começar a organizar o esboço do livro."
           />
         ) : (
-          <DndContext sensors={sectionSensors} collisionDetection={closestCenter} onDragEnd={handleSectionDragEnd}>
+          <DndContext
+            sensors={sectionSensors}
+            collisionDetection={closestCenter}
+            onDragStart={handleSectionDragStart}
+            onDragEnd={handleSectionDragEnd}
+            onDragCancel={handleSectionDragCancel}
+          >
             <SortableContext items={outline.sections.map((section) => section.id)} strategy={verticalListSortingStrategy}>
               <div className="grid gap-4">
                 {outline.sections.map((section, sectionIndex) => (
@@ -496,6 +521,7 @@ export function OutlineSidebar({ bookId, selectedSceneId, onSelectScene }: Outli
                 ))}
               </div>
             </SortableContext>
+            <DragOverlay>{activeSection ? <SectionDragPreview section={activeSection} /> : null}</DragOverlay>
           </DndContext>
         )}
       </div>

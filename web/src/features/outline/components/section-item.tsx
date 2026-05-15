@@ -1,10 +1,12 @@
-import type { FormEvent } from "react";
+import { type FormEvent, useState } from "react";
 import {
   closestCenter,
   DndContext,
+  DragOverlay,
   KeyboardSensor,
   PointerSensor,
   type DragEndEvent,
+  type DragStartEvent,
   useSensor,
   useSensors,
 } from "@dnd-kit/core";
@@ -15,6 +17,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { CollapseChevronButton } from "@/features/outline/components/collapse-chevron-button";
 import { InlineCreateForm } from "@/features/outline/components/inline-create-form";
 import { ChapterItem } from "@/features/outline/components/chapter-item";
+import { ChapterDragPreview } from "@/features/outline/components/outline-drag-overlay";
 import { Field, WordCount } from "@/features/outline/components/outline-sidebar-parts";
 import type { OutlineChapter, OutlineSection, SectionType } from "@/features/outline/types";
 import { getReorderedIds } from "@/features/outline/utils/reorder";
@@ -130,14 +133,21 @@ export function SectionItem({
     transform: CSS.Transform.toString(transform),
     transition,
   };
+  const [activeChapterId, setActiveChapterId] = useState<string | null>(null);
   const chapterSensors = useSensors(
-    useSensor(PointerSensor),
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 8,
+      },
+    }),
     useSensor(KeyboardSensor, {
       coordinateGetter: sortableKeyboardCoordinates,
     })
   );
 
   function handleChapterDragEnd(event: DragEndEvent) {
+    setActiveChapterId(null);
+
     const orderedIds = getReorderedIds(section.chapters, String(event.active.id), event.over ? String(event.over.id) : null);
     if (!orderedIds) {
       return;
@@ -146,12 +156,22 @@ export function SectionItem({
     onReorderChapters(section, orderedIds);
   }
 
+  function handleChapterDragStart(event: DragStartEvent) {
+    setActiveChapterId(String(event.active.id));
+  }
+
+  function handleChapterDragCancel() {
+    setActiveChapterId(null);
+  }
+
+  const activeChapter = activeChapterId ? section.chapters.find((chapter) => chapter.id === activeChapterId) : null;
+
   return (
     <section
       ref={setNodeRef}
       style={style}
       className={`group/section rounded-md border border-zinc-200 bg-white shadow-sm shadow-zinc-200/50 ${
-        isDragging ? "z-10 opacity-80 shadow-md" : ""
+        isDragging ? "z-10 opacity-40" : ""
       }`}
     >
       <div className="border-b border-zinc-100 bg-white px-3 py-3">
@@ -197,10 +217,13 @@ export function SectionItem({
                 />
                 <button
                   type="button"
-                  className="min-w-0 flex-1 text-left focus:outline-none focus:ring-2 focus:ring-zinc-800 focus:ring-offset-2"
+                  ref={setActivatorNodeRef}
+                  className="min-w-0 flex-1 cursor-grab rounded-md text-left transition hover:bg-zinc-50 active:cursor-grabbing focus:outline-none focus:ring-2 focus:ring-zinc-800 focus:ring-offset-2"
                   aria-expanded={!isCollapsed}
                   aria-label={`${isCollapsed ? "Expandir" : "Recolher"} secao ${section.title}`}
                   onClick={() => onToggleSection(section.id)}
+                  {...attributes}
+                  {...listeners}
                 >
                   <p className="text-[11px] font-medium uppercase text-zinc-500">Secao · {section.type}</p>
                   <h2 className="truncate text-sm font-semibold text-zinc-900">{section.title}</h2>
@@ -214,9 +237,7 @@ export function SectionItem({
                 aria-label={`Reordenar secao ${section.title}`}
                 title="Reordenar secao"
                 disabled={reorderSectionPending}
-                ref={setActivatorNodeRef}
                 className="inline-flex min-h-8 cursor-grab items-center justify-center rounded-md px-2 py-1 text-sm font-medium text-zinc-700 transition hover:bg-zinc-100 active:cursor-grabbing disabled:cursor-not-allowed disabled:opacity-70"
-                {...attributes}
                 {...listeners}
               >
                 ::
@@ -268,7 +289,13 @@ export function SectionItem({
           {section.chapters.length === 0 ? (
             <EmptyState size="sm" title="Nenhum capitulo" description="Esta secao ainda nao tem capitulos." />
           ) : (
-            <DndContext sensors={chapterSensors} collisionDetection={closestCenter} onDragEnd={handleChapterDragEnd}>
+            <DndContext
+              sensors={chapterSensors}
+              collisionDetection={closestCenter}
+              onDragStart={handleChapterDragStart}
+              onDragEnd={handleChapterDragEnd}
+              onDragCancel={handleChapterDragCancel}
+            >
               <SortableContext items={section.chapters.map((chapter) => chapter.id)} strategy={verticalListSortingStrategy}>
                 <div className="grid gap-4">
                   {section.chapters.map((chapter, chapterIndex) => (
@@ -307,6 +334,7 @@ export function SectionItem({
                   ))}
                 </div>
               </SortableContext>
+              <DragOverlay>{activeChapter ? <ChapterDragPreview chapter={activeChapter} /> : null}</DragOverlay>
             </DndContext>
           )}
         </div>

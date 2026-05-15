@@ -44,12 +44,15 @@ export function SceneRow({
         isSelected
           ? "border-emerald-700 bg-emerald-50 text-zinc-950 shadow-sm ring-1 ring-emerald-100"
           : "border-transparent bg-white/80 text-zinc-700 hover:border-zinc-200 hover:bg-white"
-      } ${isDragging ? "z-10 opacity-80 shadow-md" : ""}`}
+      } ${isDragging ? "z-10 opacity-40" : ""}`}
     >
       <button
         type="button"
+        ref={setActivatorNodeRef}
         onClick={() => onSelect(scene.id)}
-        className="min-w-0 px-2.5 py-1.5 text-left text-sm focus:outline-none focus:ring-2 focus:ring-zinc-800 focus:ring-offset-1"
+        className="min-w-0 cursor-grab rounded-l-md px-2.5 py-1.5 text-left text-sm transition hover:bg-zinc-50 active:cursor-grabbing focus:outline-none focus:ring-2 focus:ring-zinc-800 focus:ring-offset-1"
+        {...attributes}
+        {...listeners}
       >
         <span className="block truncate font-medium">{scene.title}</span>
         <span className={`mt-0.5 flex items-center justify-between gap-2 text-[11px] ${isSelected ? "text-emerald-800" : "text-zinc-500"}`}>
@@ -64,14 +67,12 @@ export function SceneRow({
       >
         <button
           type="button"
-          ref={setActivatorNodeRef}
           aria-label={`Reordenar cena ${scene.title}`}
           title="Reordenar cena"
           disabled={reorderPending}
           className={`cursor-grab px-1.5 text-xs font-semibold transition active:cursor-grabbing ${
             isSelected ? "text-emerald-800 hover:text-emerald-950" : "text-zinc-500 hover:text-zinc-900"
           } disabled:cursor-not-allowed disabled:opacity-40`}
-          {...attributes}
           {...listeners}
         >
           ::
