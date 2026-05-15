@@ -1,0 +1,102 @@
+import { fireEvent, screen } from "@testing-library/react";
+import React from "react";
+import { beforeEach, describe, expect, test, vi } from "vitest";
+import { TiptapEditor } from "@/features/scenes/editor/tiptap-editor";
+import { renderWithClient } from "@/test/test-utils";
+
+const mocks = vi.hoisted(() => ({
+  useEditor: vi.fn(),
+  textAlignConfigure: vi.fn(() => "text-align-extension"),
+  setTextAlign: vi.fn(),
+}));
+
+vi.mock("@tiptap/react", () => ({
+  useEditor: mocks.useEditor,
+  EditorContent: () => <div data-testid="editor-content" />,
+}));
+
+vi.mock("@tiptap/starter-kit", () => ({
+  default: "starter-kit-extension",
+}));
+
+vi.mock("@tiptap/extension-text-align", () => ({
+  default: {
+    configure: mocks.textAlignConfigure,
+  },
+}));
+
+describe("TiptapEditor toolbar", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.useEditor.mockReturnValue(createEditor());
+  });
+
+  test("configura alinhamento para paragrafos e titulos", () => {
+    renderEditor();
+
+    expect(mocks.textAlignConfigure).toHaveBeenCalledWith({ types: ["paragraph", "heading"] });
+    expect(mocks.useEditor).toHaveBeenCalledWith(
+      expect.objectContaining({
+        extensions: ["starter-kit-extension", "text-align-extension"],
+      })
+    );
+  });
+
+  test("renderiza botoes existentes e botoes de alinhamento com nomes acessiveis", () => {
+    renderEditor();
+
+    expect(screen.getByRole("button", { name: "B" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "I" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Par.grafo/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /T.tulo/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Alinhar paragrafo a esquerda" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Centralizar paragrafo" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Alinhar paragrafo a direita" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Justificar paragrafo" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Desfazer" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Refazer" })).toBeInTheDocument();
+  });
+
+  test("aciona comando de alinhamento ao clicar em um botao", () => {
+    renderEditor();
+
+    fireEvent.click(screen.getByRole("button", { name: "Centralizar paragrafo" }));
+
+    expect(mocks.setTextAlign).toHaveBeenCalledWith("center");
+  });
+});
+
+function renderEditor() {
+  renderWithClient(
+    <TiptapEditor contentKey="scene-1" initialContentText="Texto" onChange={vi.fn()} />
+  );
+}
+
+function createEditor() {
+  const chain = {
+    focus: vi.fn(() => chain),
+    toggleBold: vi.fn(() => chain),
+    toggleItalic: vi.fn(() => chain),
+    setParagraph: vi.fn(() => chain),
+    toggleHeading: vi.fn(() => chain),
+    setTextAlign: vi.fn((alignment: string) => {
+      mocks.setTextAlign(alignment);
+      return chain;
+    }),
+    undo: vi.fn(() => chain),
+    redo: vi.fn(() => chain),
+    run: vi.fn(),
+  };
+
+  return {
+    isActive: vi.fn(() => false),
+    can: vi.fn(() => ({
+      undo: vi.fn(() => true),
+      redo: vi.fn(() => true),
+    })),
+    chain: vi.fn(() => chain),
+    commands: {
+      setContent: vi.fn(),
+    },
+  };
+}

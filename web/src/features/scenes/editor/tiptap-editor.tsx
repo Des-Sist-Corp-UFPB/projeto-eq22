@@ -3,6 +3,7 @@
 import { useEffect, useMemo } from "react";
 import type { Editor } from "@tiptap/react";
 import { EditorContent, useEditor, type JSONContent } from "@tiptap/react";
+import TextAlign from "@tiptap/extension-text-align";
 import StarterKit from "@tiptap/starter-kit";
 import { handleTiptapTabKey } from "@/features/scenes/editor/tab-keymap";
 
@@ -45,15 +46,17 @@ function parseContentJson(contentJson: JSONContent | string | null | undefined):
 
 type ToolbarButtonProps = {
   label: string;
+  ariaLabel?: string;
   active?: boolean;
   disabled?: boolean;
   onClick: () => void;
 };
 
-function ToolbarButton({ label, active, disabled, onClick }: ToolbarButtonProps) {
+function ToolbarButton({ label, ariaLabel, active, disabled, onClick }: ToolbarButtonProps) {
   return (
     <button
       type="button"
+      aria-label={ariaLabel}
       disabled={disabled}
       onClick={onClick}
       className={`inline-flex min-h-8 items-center justify-center rounded-md border px-2.5 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-50 ${
@@ -84,6 +87,34 @@ function TiptapToolbar({ editor }: { editor: Editor | null }) {
         disabled={!editor}
         onClick={() => editor?.chain().focus().toggleHeading({ level: 2 }).run()}
       />
+      <ToolbarButton
+        label="Esquerda"
+        ariaLabel="Alinhar paragrafo a esquerda"
+        active={editor?.isActive({ textAlign: "left" })}
+        disabled={!editor}
+        onClick={() => editor?.chain().focus().setTextAlign("left").run()}
+      />
+      <ToolbarButton
+        label="Centro"
+        ariaLabel="Centralizar paragrafo"
+        active={editor?.isActive({ textAlign: "center" })}
+        disabled={!editor}
+        onClick={() => editor?.chain().focus().setTextAlign("center").run()}
+      />
+      <ToolbarButton
+        label="Direita"
+        ariaLabel="Alinhar paragrafo a direita"
+        active={editor?.isActive({ textAlign: "right" })}
+        disabled={!editor}
+        onClick={() => editor?.chain().focus().setTextAlign("right").run()}
+      />
+      <ToolbarButton
+        label="Justificar"
+        ariaLabel="Justificar paragrafo"
+        active={editor?.isActive({ textAlign: "justify" })}
+        disabled={!editor}
+        onClick={() => editor?.chain().focus().setTextAlign("justify").run()}
+      />
       <ToolbarButton label="Desfazer" disabled={!editor || !editor.can().undo()} onClick={() => editor?.chain().focus().undo().run()} />
       <ToolbarButton label="Refazer" disabled={!editor || !editor.can().redo()} onClick={() => editor?.chain().focus().redo().run()} />
     </div>
@@ -103,7 +134,7 @@ export function TiptapEditor({
   );
 
   const editor = useEditor({
-    extensions: [StarterKit],
+    extensions: [StarterKit, TextAlign.configure({ types: ["paragraph", "heading"] })],
     content: initialContent,
     immediatelyRender: false,
     editorProps: {
