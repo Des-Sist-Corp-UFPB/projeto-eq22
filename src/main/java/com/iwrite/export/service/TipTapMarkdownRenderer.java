@@ -104,6 +104,32 @@ public class TipTapMarkdownRenderer {
             }
         }
 
+        if (!hasBold && !hasItalic) {
+            return text;
+        }
+
+        int contentStart = 0;
+        while (contentStart < text.length() && Character.isWhitespace(text.charAt(contentStart))) {
+            contentStart++;
+        }
+
+        int contentEnd = text.length();
+        while (contentEnd > contentStart && Character.isWhitespace(text.charAt(contentEnd - 1))) {
+            contentEnd--;
+        }
+
+        if (contentStart == contentEnd) {
+            return text;
+        }
+
+        String leadingWhitespace = text.substring(0, contentStart);
+        String markedText = text.substring(contentStart, contentEnd);
+        String trailingWhitespace = text.substring(contentEnd);
+
+        return leadingWhitespace + wrapMarkedText(markedText, hasBold, hasItalic) + trailingWhitespace;
+    }
+
+    private String wrapMarkedText(String text, boolean hasBold, boolean hasItalic) {
         if (hasBold && hasItalic) {
             return "**_" + text + "_**";
         }

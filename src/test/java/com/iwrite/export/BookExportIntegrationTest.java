@@ -114,7 +114,7 @@ class BookExportIntegrationTest extends PostgresIntegrationTest {
         var chapter = createChapter(section, "Capitulo");
         var scene = createScene(chapter, "Cena", SceneStatus.DRAFT, 0, "fallback");
         sceneService.updateContent(scene.id(), new SceneContentRequest("""
-                {"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"marcado","marks":[{"type":"bold"},{"type":"italic"}]}]}]}""", "fallback"));
+                {"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Antes"},{"type":"text","text":" marcado ","marks":[{"type":"bold"},{"type":"italic"}]},{"type":"text","text":"depois"}]}]}""", "fallback"));
 
         mockMvc.perform(get("/api/books/{bookId}/export", book.id()))
                 .andExpect(status().isOk())
@@ -125,7 +125,49 @@ class BookExportIntegrationTest extends PostgresIntegrationTest {
 
                         ### Capitulo
 
-                        **_marcado_**"""));
+                        Antes **_marcado_** depois"""));
+    }
+
+    @Test
+    void contentJsonBoldAndItalicWithEndingPunctuationUsesBalancedMarkdown() throws Exception {
+        var book = createBook("Livro com pontuacao");
+        var section = createSection(book, "Parte");
+        var chapter = createChapter(section, "Capitulo");
+        var scene = createScene(chapter, "Cena", SceneStatus.DRAFT, 0, "fallback");
+        sceneService.updateContent(scene.id(), new SceneContentRequest("""
+                {"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Disse "},{"type":"text","text":"ola,","marks":[{"type":"bold"}]},{"type":"text","text":" e "},{"type":"text","text":"corra!","marks":[{"type":"italic"}]}]}]}""", "fallback"));
+
+        mockMvc.perform(get("/api/books/{bookId}/export", book.id()))
+                .andExpect(status().isOk())
+                .andExpect(content().string("""
+                        # Livro com pontuacao
+
+                        ## Parte
+
+                        ### Capitulo
+
+                        Disse **ola,** e *corra!*"""));
+    }
+
+    @Test
+    void contentJsonMarkedTextKeepsTrailingSpaceBeforeNormalText() throws Exception {
+        var book = createBook("Livro sem colar");
+        var section = createSection(book, "Parte");
+        var chapter = createChapter(section, "Capitulo");
+        var scene = createScene(chapter, "Cena", SceneStatus.DRAFT, 0, "fallback");
+        sceneService.updateContent(scene.id(), new SceneContentRequest("""
+                {"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Antes "},{"type":"text","text":"palavra ","marks":[{"type":"bold"}]},{"type":"text","text":"seguinte"}]}]}""", "fallback"));
+
+        mockMvc.perform(get("/api/books/{bookId}/export", book.id()))
+                .andExpect(status().isOk())
+                .andExpect(content().string("""
+                        # Livro sem colar
+
+                        ## Parte
+
+                        ### Capitulo
+
+                        Antes **palavra** seguinte"""));
     }
 
     @Test
