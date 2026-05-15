@@ -238,6 +238,119 @@ class BookExportIntegrationTest extends PostgresIntegrationTest {
     }
 
     @Test
+    void contentJsonHeadingLevelsFourFiveAndSixArePreservedBelowChapterLevel() throws Exception {
+        var book = createBook("Livro com headings profundos");
+        var section = createSection(book, "Parte");
+        var chapter = createChapter(section, "Capitulo");
+        var scene = createScene(chapter, "Cena", SceneStatus.DRAFT, 0, "fallback");
+        sceneService.updateContent(scene.id(), new SceneContentRequest("""
+                {"type":"doc","content":[{"type":"heading","attrs":{"level":4},"content":[{"type":"text","text":"Titulo nivel quatro"}]},{"type":"heading","attrs":{"level":5},"content":[{"type":"text","text":"Titulo nivel cinco"}]},{"type":"heading","attrs":{"level":6},"content":[{"type":"text","text":"Titulo nivel seis"}]}]}""", "fallback"));
+
+        mockMvc.perform(get("/api/books/{bookId}/export", book.id()))
+                .andExpect(status().isOk())
+                .andExpect(content().string("""
+                        # Livro com headings profundos
+
+                        ## Parte
+
+                        ### Capitulo
+
+                        ###### Titulo nivel quatro
+
+                        ###### Titulo nivel cinco
+
+                        ###### Titulo nivel seis"""));
+    }
+
+    @Test
+    void contentJsonBulletListIsExportedWithoutLosingItems() throws Exception {
+        var book = createBook("Livro com lista");
+        var section = createSection(book, "Parte");
+        var chapter = createChapter(section, "Capitulo");
+        var scene = createScene(chapter, "Cena", SceneStatus.DRAFT, 0, "fallback");
+        sceneService.updateContent(scene.id(), new SceneContentRequest("""
+                {"type":"doc","content":[{"type":"bulletList","content":[{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"Item um"}]}]},{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"Item dois","marks":[{"type":"bold"}]}]}]}]}]}""", "fallback"));
+
+        mockMvc.perform(get("/api/books/{bookId}/export", book.id()))
+                .andExpect(status().isOk())
+                .andExpect(content().string("""
+                        # Livro com lista
+
+                        ## Parte
+
+                        ### Capitulo
+
+                        - Item um
+                        - **Item dois**"""));
+    }
+
+    @Test
+    void contentJsonBlockquoteIsExportedWithoutLosingText() throws Exception {
+        var book = createBook("Livro com citacao");
+        var section = createSection(book, "Parte");
+        var chapter = createChapter(section, "Capitulo");
+        var scene = createScene(chapter, "Cena", SceneStatus.DRAFT, 0, "fallback");
+        sceneService.updateContent(scene.id(), new SceneContentRequest("""
+                {"type":"doc","content":[{"type":"blockquote","content":[{"type":"paragraph","content":[{"type":"text","text":"Texto citado"}]}]}]}""", "fallback"));
+
+        mockMvc.perform(get("/api/books/{bookId}/export", book.id()))
+                .andExpect(status().isOk())
+                .andExpect(content().string("""
+                        # Livro com citacao
+
+                        ## Parte
+
+                        ### Capitulo
+
+                        > Texto citado"""));
+    }
+
+    @Test
+    void contentJsonCodeBlockIsExportedWithoutLosingText() throws Exception {
+        var book = createBook("Livro com codigo");
+        var section = createSection(book, "Parte");
+        var chapter = createChapter(section, "Capitulo");
+        var scene = createScene(chapter, "Cena", SceneStatus.DRAFT, 0, "fallback");
+        sceneService.updateContent(scene.id(), new SceneContentRequest("""
+                {"type":"doc","content":[{"type":"codeBlock","content":[{"type":"text","text":"linha 1\\nlinha 2"}]}]}""", "fallback"));
+
+        mockMvc.perform(get("/api/books/{bookId}/export", book.id()))
+                .andExpect(status().isOk())
+                .andExpect(content().string("""
+                        # Livro com codigo
+
+                        ## Parte
+
+                        ### Capitulo
+
+                        ```
+                        linha 1
+                        linha 2
+                        ```"""));
+    }
+
+    @Test
+    void unknownContentJsonBlockWithTextFallsBackToContentText() throws Exception {
+        var book = createBook("Livro fallback desconhecido");
+        var section = createSection(book, "Parte");
+        var chapter = createChapter(section, "Capitulo");
+        var scene = createScene(chapter, "Cena", SceneStatus.DRAFT, 0, "original");
+        sceneService.updateContent(scene.id(), new SceneContentRequest("""
+                {"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"inicio json"}]},{"type":"unknownBlock","content":[{"type":"text","text":"texto importante"}]},{"type":"paragraph","content":[{"type":"text","text":"fim json"}]}]}""", "fallback completo"));
+
+        mockMvc.perform(get("/api/books/{bookId}/export", book.id()))
+                .andExpect(status().isOk())
+                .andExpect(content().string("""
+                        # Livro fallback desconhecido
+
+                        ## Parte
+
+                        ### Capitulo
+
+                        fallback completo"""));
+    }
+
+    @Test
     void invalidContentJsonFallsBackToContentText() throws Exception {
         var book = createBook("Livro fallback invalido");
         var section = createSection(book, "Parte");
