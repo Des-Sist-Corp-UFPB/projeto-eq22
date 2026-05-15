@@ -1,24 +1,32 @@
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8085";
-const DEFAULT_EXPORT_FILE_NAME = "manuscrito.md";
 
-export type BookMarkdownExportOptions = {
+export type BookExportFormat = "markdown" | "docx";
+
+export type BookExportOptions = {
+  format: BookExportFormat;
   includeSceneTitles: boolean;
   includeEmptyScenes: boolean;
 };
 
-export async function downloadBookMarkdownExport(bookId: string, options: BookMarkdownExportOptions) {
+const EXPORT_FORMAT_CONFIG: Record<BookExportFormat, { path: string; fallbackFileName: string }> = {
+  markdown: { path: "export", fallbackFileName: "manuscrito.md" },
+  docx: { path: "export/docx", fallbackFileName: "manuscrito.docx" },
+};
+
+export async function downloadBookExport(bookId: string, options: BookExportOptions) {
+  const formatConfig = EXPORT_FORMAT_CONFIG[options.format];
   const params = new URLSearchParams({
     includeSceneTitles: String(options.includeSceneTitles),
     includeEmptyScenes: String(options.includeEmptyScenes),
   });
-  const response = await fetch(`${API_URL}/api/books/${bookId}/export?${params.toString()}`);
+  const response = await fetch(`${API_URL}/api/books/${bookId}/${formatConfig.path}?${params.toString()}`);
 
   if (!response.ok) {
     throw new Error(await readExportErrorMessage(response));
   }
 
   const blob = await response.blob();
-  const fileName = getFileNameFromContentDisposition(response.headers.get("content-disposition")) ?? DEFAULT_EXPORT_FILE_NAME;
+  const fileName = getFileNameFromContentDisposition(response.headers.get("content-disposition")) ?? formatConfig.fallbackFileName;
   const url = window.URL.createObjectURL(blob);
   const anchor = document.createElement("a");
 
