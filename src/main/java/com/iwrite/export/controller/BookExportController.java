@@ -17,6 +17,7 @@ import java.util.UUID;
 public class BookExportController {
 
     private static final MediaType MARKDOWN_MEDIA_TYPE = MediaType.parseMediaType("text/markdown; charset=UTF-8");
+    private static final MediaType DOCX_MEDIA_TYPE = MediaType.parseMediaType("application/vnd.openxmlformats-officedocument.wordprocessingml.document");
 
     private final BookExportService bookExportService;
 
@@ -38,5 +39,21 @@ public class BookExportController {
                 .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + fileName + "\"")
                 .header(HttpHeaders.ACCESS_CONTROL_EXPOSE_HEADERS, HttpHeaders.CONTENT_DISPOSITION)
                 .body(markdown);
+    }
+
+    @GetMapping("/{bookId}/export/docx")
+    public ResponseEntity<byte[]> exportDocx(
+            @PathVariable UUID bookId,
+            @RequestParam(defaultValue = "false") boolean includeSceneTitles,
+            @RequestParam(defaultValue = "false") boolean includeEmptyScenes
+    ) {
+        byte[] docx = bookExportService.exportDocx(bookId, includeSceneTitles, includeEmptyScenes);
+        String fileName = bookExportService.getDocxFileName(bookId);
+
+        return ResponseEntity.ok()
+                .contentType(DOCX_MEDIA_TYPE)
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + fileName + "\"")
+                .header(HttpHeaders.ACCESS_CONTROL_EXPOSE_HEADERS, HttpHeaders.CONTENT_DISPOSITION)
+                .body(docx);
     }
 }
