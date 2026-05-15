@@ -25,17 +25,20 @@ public class BookExportService {
     private final BookSectionRepository sectionRepository;
     private final ChapterRepository chapterRepository;
     private final SceneRepository sceneRepository;
+    private final TipTapMarkdownRenderer tipTapMarkdownRenderer;
 
     public BookExportService(
             BookService bookService,
             BookSectionRepository sectionRepository,
             ChapterRepository chapterRepository,
-            SceneRepository sceneRepository
+            SceneRepository sceneRepository,
+            TipTapMarkdownRenderer tipTapMarkdownRenderer
     ) {
         this.bookService = bookService;
         this.sectionRepository = sectionRepository;
         this.chapterRepository = chapterRepository;
         this.sceneRepository = sceneRepository;
+        this.tipTapMarkdownRenderer = tipTapMarkdownRenderer;
     }
 
     @Transactional(readOnly = true)
@@ -118,8 +121,8 @@ public class BookExportService {
     }
 
     private String buildSceneBlock(Scene scene, boolean includeSceneTitles, boolean includeEmptyScenes) {
-        String contentText = scene.getContentText();
-        boolean hasContent = contentText != null && !contentText.isBlank();
+        String sceneContent = getSceneContent(scene);
+        boolean hasContent = sceneContent != null && !sceneContent.isBlank();
 
         if (!hasContent && !includeEmptyScenes) {
             return null;
@@ -133,10 +136,15 @@ public class BookExportService {
             if (!sceneBlock.isEmpty()) {
                 sceneBlock.append("\n\n");
             }
-            sceneBlock.append(contentText);
+            sceneBlock.append(sceneContent);
         }
 
         return sceneBlock.isEmpty() ? null : sceneBlock.toString();
+    }
+
+    private String getSceneContent(Scene scene) {
+        return tipTapMarkdownRenderer.render(scene.getContentJson())
+                .orElseGet(() -> scene.getContentText() == null || scene.getContentText().isBlank() ? null : scene.getContentText());
     }
 
     private void appendBlock(StringBuilder markdown, String block) {

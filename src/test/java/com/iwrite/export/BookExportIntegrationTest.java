@@ -2,6 +2,7 @@ package com.iwrite.export;
 
 import com.iwrite.book.dto.BookRequest;
 import com.iwrite.chapter.dto.ChapterRequest;
+import com.iwrite.scene.dto.SceneContentRequest;
 import com.iwrite.scene.entity.SceneStatus;
 import com.iwrite.section.dto.BookSectionRequest;
 import com.iwrite.section.entity.SectionType;
@@ -104,5 +105,89 @@ class BookExportIntegrationTest extends PostgresIntegrationTest {
                         ---
 
                         #### Cena vazia"""));
+    }
+
+    @Test
+    void contentJsonBoldAndItalicBecomeMarkdown() throws Exception {
+        var book = createBook("Livro formatado");
+        var section = createSection(book, "Parte");
+        var chapter = createChapter(section, "Capitulo");
+        var scene = createScene(chapter, "Cena", SceneStatus.DRAFT, 0, "fallback");
+        sceneService.updateContent(scene.id(), new SceneContentRequest("""
+                {"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"negrito","marks":[{"type":"bold"}]},{"type":"text","text":" e "},{"type":"text","text":"italico","marks":[{"type":"italic"}]}]}]}""", "fallback"));
+
+        mockMvc.perform(get("/api/books/{bookId}/export", book.id()))
+                .andExpect(status().isOk())
+                .andExpect(content().string("""
+                        # Livro formatado
+
+                        ## Parte
+
+                        ### Capitulo
+
+                        **negrito** e *italico*"""));
+    }
+
+    @Test
+    void contentJsonHeadingBecomesMarkdownHeading() throws Exception {
+        var book = createBook("Livro com heading");
+        var section = createSection(book, "Parte");
+        var chapter = createChapter(section, "Capitulo");
+        var scene = createScene(chapter, "Cena", SceneStatus.DRAFT, 0, "fallback");
+        sceneService.updateContent(scene.id(), new SceneContentRequest("""
+                {"type":"doc","content":[{"type":"heading","attrs":{"level":2},"content":[{"type":"text","text":"Titulo interno"}]},{"type":"paragraph","content":[{"type":"text","text":"corpo"}]}]}""", "fallback"));
+
+        mockMvc.perform(get("/api/books/{bookId}/export", book.id()))
+                .andExpect(status().isOk())
+                .andExpect(content().string("""
+                        # Livro com heading
+
+                        ## Parte
+
+                        ### Capitulo
+
+                        ## Titulo interno
+
+                        corpo"""));
+    }
+
+    @Test
+    void invalidContentJsonFallsBackToContentText() throws Exception {
+        var book = createBook("Livro fallback invalido");
+        var section = createSection(book, "Parte");
+        var chapter = createChapter(section, "Capitulo");
+        var scene = createScene(chapter, "Cena", SceneStatus.DRAFT, 0, "original");
+        sceneService.updateContent(scene.id(), new SceneContentRequest("{invalid", "texto fallback"));
+
+        mockMvc.perform(get("/api/books/{bookId}/export", book.id()))
+                .andExpect(status().isOk())
+                .andExpect(content().string("""
+                        # Livro fallback invalido
+
+                        ## Parte
+
+                        ### Capitulo
+
+                        texto fallback"""));
+    }
+
+    @Test
+    void emptyContentJsonFallsBackToContentText() throws Exception {
+        var book = createBook("Livro fallback vazio");
+        var section = createSection(book, "Parte");
+        var chapter = createChapter(section, "Capitulo");
+        var scene = createScene(chapter, "Cena", SceneStatus.DRAFT, 0, "original");
+        sceneService.updateContent(scene.id(), new SceneContentRequest("{\"type\":\"doc\",\"content\":[]}", "texto fallback"));
+
+        mockMvc.perform(get("/api/books/{bookId}/export", book.id()))
+                .andExpect(status().isOk())
+                .andExpect(content().string("""
+                        # Livro fallback vazio
+
+                        ## Parte
+
+                        ### Capitulo
+
+                        texto fallback"""));
     }
 }
