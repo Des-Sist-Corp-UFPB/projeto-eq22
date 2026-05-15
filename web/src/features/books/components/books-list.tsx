@@ -6,6 +6,7 @@ import { FeedbackMessage } from "@/components/ui/feedback-message";
 import { LoadingState } from "@/components/ui/feedback";
 import { listBooks } from "@/features/books/api/books-api";
 import { BookCard } from "@/features/books/components/book-card";
+import { sortBooksForLibrary } from "@/features/books/utils/sort-books";
 import { queryKeys } from "@/lib/query/keys";
 
 export function BooksList() {
@@ -41,9 +42,11 @@ export function BooksList() {
     );
   }
 
+  const books = sortBooksForLibrary(query.data);
+
   return (
     <div className="grid gap-4 sm:grid-cols-2">
-      {query.data.map((book) => (
+      {books.map((book) => (
         <BookCard key={book.id} book={book} />
       ))}
     </div>
