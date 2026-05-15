@@ -19,15 +19,30 @@ type WorkspaceMode = "overview" | "scenes" | "characters" | "locations" | "items
 export function BookWorkspace({ bookId }: { bookId: string }) {
   const [selectedSceneId, setSelectedSceneId] = useState<string | null>(null);
   const [mode, setMode] = useState<WorkspaceMode>("scenes");
+  const [isFocusMode, setIsFocusMode] = useState(false);
   const outlineQuery = useQuery({
     queryKey: queryKeys.outline(bookId),
     queryFn: () => getOutline(bookId),
   });
 
   const outline = outlineQuery.data;
+  const isScenesFocusMode = mode === "scenes" && isFocusMode;
+
+  function handleModeChange(nextMode: WorkspaceMode) {
+    setMode(nextMode);
+    if (nextMode !== "scenes") {
+      setIsFocusMode(false);
+    }
+  }
+
+  function handleSceneDeleted() {
+    setSelectedSceneId(null);
+    setIsFocusMode(false);
+  }
 
   return (
-    <main className="grid h-screen grid-rows-[64px_1fr] overflow-hidden bg-zinc-50 text-zinc-950">
+    <main className={`grid h-screen overflow-hidden bg-zinc-50 text-zinc-950 ${isScenesFocusMode ? "grid-rows-[1fr]" : "grid-rows-[64px_1fr]"}`}>
+      {isScenesFocusMode ? null : (
       <header className="flex min-w-0 items-center justify-between gap-4 border-b border-zinc-200 bg-white px-4 shadow-sm shadow-zinc-200/60 md:px-6">
         <div className="flex min-w-0 items-center gap-4">
           <Link
@@ -51,7 +66,7 @@ export function BookWorkspace({ bookId }: { bookId: string }) {
               type="button"
               size="sm"
               variant={mode === "overview" ? "primary" : "ghost"}
-              onClick={() => setMode("overview")}
+              onClick={() => handleModeChange("overview")}
             >
               Visão geral
             </Button>
@@ -59,7 +74,7 @@ export function BookWorkspace({ bookId }: { bookId: string }) {
               type="button"
               size="sm"
               variant={mode === "scenes" ? "primary" : "ghost"}
-              onClick={() => setMode("scenes")}
+              onClick={() => handleModeChange("scenes")}
             >
               Cenas
             </Button>
@@ -67,7 +82,7 @@ export function BookWorkspace({ bookId }: { bookId: string }) {
               type="button"
               size="sm"
               variant={mode === "characters" ? "primary" : "ghost"}
-              onClick={() => setMode("characters")}
+              onClick={() => handleModeChange("characters")}
             >
               Personagens
             </Button>
@@ -75,11 +90,11 @@ export function BookWorkspace({ bookId }: { bookId: string }) {
               type="button"
               size="sm"
               variant={mode === "locations" ? "primary" : "ghost"}
-              onClick={() => setMode("locations")}
+              onClick={() => handleModeChange("locations")}
             >
               Localizações
             </Button>
-            <Button type="button" size="sm" variant={mode === "items" ? "primary" : "ghost"} onClick={() => setMode("items")}>
+            <Button type="button" size="sm" variant={mode === "items" ? "primary" : "ghost"} onClick={() => handleModeChange("items")}>
               Itens
             </Button>
           </div>
@@ -89,19 +104,27 @@ export function BookWorkspace({ bookId }: { bookId: string }) {
           </Badge>
         </div>
       </header>
+      )}
 
-      <div className="grid min-h-0 grid-cols-1 overflow-hidden md:grid-cols-[340px_minmax(0,1fr)]">
-        {mode === "scenes" ? (
+      <div className={`grid min-h-0 grid-cols-1 overflow-hidden ${isScenesFocusMode ? "" : "md:grid-cols-[340px_minmax(0,1fr)]"}`}>
+        {mode === "scenes" && !isScenesFocusMode ? (
           <div className="min-h-0 overflow-hidden border-r border-zinc-200 bg-white">
             <OutlineSidebar bookId={bookId} selectedSceneId={selectedSceneId} onSelectScene={setSelectedSceneId} />
           </div>
         ) : null}
 
-        <div className={`min-h-0 overflow-hidden bg-zinc-100/70 ${mode !== "scenes" ? "md:col-span-2" : ""}`}>
+        <div className={`min-h-0 overflow-hidden bg-zinc-100/70 ${mode !== "scenes" || isScenesFocusMode ? "md:col-span-2" : ""}`}>
           {mode === "overview" ? (
             <BookDashboard bookId={bookId} />
           ) : mode === "scenes" ? (
-            <SceneEditor bookId={bookId} sceneId={selectedSceneId} onSceneDeleted={() => setSelectedSceneId(null)} />
+            <SceneEditor
+              bookId={bookId}
+              sceneId={selectedSceneId}
+              isFocusMode={isScenesFocusMode}
+              onEnterFocusMode={() => setIsFocusMode(true)}
+              onExitFocusMode={() => setIsFocusMode(false)}
+              onSceneDeleted={handleSceneDeleted}
+            />
           ) : mode === "characters" ? (
             <CharactersPanel bookId={bookId} />
           ) : mode === "locations" ? (
