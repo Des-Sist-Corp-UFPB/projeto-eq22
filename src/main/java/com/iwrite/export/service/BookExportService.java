@@ -25,21 +25,24 @@ public class BookExportService {
     private final BookSectionRepository sectionRepository;
     private final ChapterRepository chapterRepository;
     private final SceneRepository sceneRepository;
+    private final TipTapMarkdownRenderer tipTapMarkdownRenderer;
 
     public BookExportService(
             BookService bookService,
             BookSectionRepository sectionRepository,
             ChapterRepository chapterRepository,
-            SceneRepository sceneRepository
+            SceneRepository sceneRepository,
+            TipTapMarkdownRenderer tipTapMarkdownRenderer
     ) {
         this.bookService = bookService;
         this.sectionRepository = sectionRepository;
         this.chapterRepository = chapterRepository;
         this.sceneRepository = sceneRepository;
+        this.tipTapMarkdownRenderer = tipTapMarkdownRenderer;
     }
 
     @Transactional(readOnly = true)
-    public String exportMarkdown(UUID bookId) {
+    public String exportMarkdown(UUID bookId, boolean includeSceneTitles, boolean includeEmptyScenes) {
         Book book = bookService.getBook(bookId);
         List<BookSection> sections = sectionRepository.findByBookIdOrderBySortOrderAsc(bookId);
         List<Chapter> chapters = chapterRepository.findByBookIdOrderBySortOrderAsc(bookId);
@@ -60,7 +63,7 @@ public class BookExportService {
 
             for (Chapter chapter : chaptersBySection.getOrDefault(section.getId(), List.of())) {
                 appendHeading(markdown, "###", chapter.getTitle());
-                appendChapterScenes(markdown, scenesByChapter.getOrDefault(chapter.getId(), List.of()));
+                appendChapterScenes(markdown, scenesByChapter.getOrDefault(chapter.getId(), List.of()), includeSceneTitles, includeEmptyScenes);
             }
         }
 
@@ -94,12 +97,17 @@ public class BookExportService {
         appendBlock(markdown, text);
     }
 
-    private void appendChapterScenes(StringBuilder markdown, List<Scene> scenes) {
+    private void appendChapterScenes(
+            StringBuilder markdown,
+            List<Scene> scenes,
+            boolean includeSceneTitles,
+            boolean includeEmptyScenes
+    ) {
         boolean hasPreviousSceneContent = false;
 
         for (Scene scene : scenes) {
-            String contentText = scene.getContentText();
-            if (contentText == null || contentText.isBlank()) {
+            String sceneBlock = buildSceneBlock(scene, includeSceneTitles, includeEmptyScenes);
+            if (sceneBlock == null) {
                 continue;
             }
 
@@ -107,9 +115,36 @@ public class BookExportService {
                 appendBlock(markdown, "---");
             }
 
-            appendBlock(markdown, contentText);
+            appendBlock(markdown, sceneBlock);
             hasPreviousSceneContent = true;
         }
+    }
+
+    private String buildSceneBlock(Scene scene, boolean includeSceneTitles, boolean includeEmptyScenes) {
+        String sceneContent = getSceneContent(scene);
+        boolean hasContent = sceneContent != null && !sceneContent.isBlank();
+
+        if (!hasContent && !includeEmptyScenes) {
+            return null;
+        }
+
+        StringBuilder sceneBlock = new StringBuilder();
+        if (includeSceneTitles) {
+            sceneBlock.append("#### ").append(scene.getTitle());
+        }
+        if (hasContent) {
+            if (!sceneBlock.isEmpty()) {
+                sceneBlock.append("\n\n");
+            }
+            sceneBlock.append(sceneContent);
+        }
+
+        return sceneBlock.isEmpty() ? null : sceneBlock.toString();
+    }
+
+    private String getSceneContent(Scene scene) {
+        return tipTapMarkdownRenderer.render(scene.getContentJson())
+                .orElseGet(() -> scene.getContentText() == null || scene.getContentText().isBlank() ? null : scene.getContentText());
     }
 
     private void appendBlock(StringBuilder markdown, String block) {

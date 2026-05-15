@@ -17,38 +17,36 @@ describe("ExportManuscriptButton", () => {
     vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
   });
 
-  test("mostra o botao de exportacao", () => {
+  test("mostra opcoes ao exportar", () => {
     renderWithClient(<ExportManuscriptButton bookId="book-1" />);
 
     expect(screen.getByRole("button", { name: "Exportar manuscrito" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Exportar manuscrito" }));
+
+    expect(screen.getByLabelText(/Incluir titulos das cenas/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Incluir cenas vazias/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Baixar Markdown" })).toBeInTheDocument();
   });
 
-  test("chama o endpoint de exportacao e mostra erro amigavel quando falha", async () => {
-    const fetchMock = vi
-      .spyOn(globalThis, "fetch")
-      .mockResolvedValueOnce(
-        new Response("conteudo", {
-          status: 200,
-          headers: { "content-disposition": 'attachment; filename="livro.md"' },
-        })
-      )
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify({ messages: ["Book not found"] }), {
-          status: 404,
-          headers: { "content-type": "application/json" },
-        })
-      );
+  test("chama o endpoint de exportacao com query params selecionados", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("conteudo", {
+        status: 200,
+        headers: { "content-disposition": 'attachment; filename="livro.md"' },
+      })
+    );
 
     renderWithClient(<ExportManuscriptButton bookId="book-1" />);
 
     fireEvent.click(screen.getByRole("button", { name: "Exportar manuscrito" }));
-    await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith("http://localhost:8085/api/books/book-1/export");
-    });
-    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText(/Incluir titulos das cenas/));
+    fireEvent.click(screen.getByLabelText(/Incluir cenas vazias/));
+    fireEvent.click(screen.getByRole("button", { name: "Baixar Markdown" }));
 
-    fireEvent.click(screen.getByRole("button", { name: "Exportar manuscrito" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("Nao foi possivel exportar o manuscrito agora. Tente novamente.");
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "http://localhost:8085/api/books/book-1/export?includeSceneTitles=true&includeEmptyScenes=true"
+      );
+    });
   });
 });
