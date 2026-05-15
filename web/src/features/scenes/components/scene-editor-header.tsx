@@ -15,8 +15,11 @@ type SceneEditorHeaderProps = {
   deletePending: boolean;
   deleteError: boolean;
   isFocusMode?: boolean;
+  isFullscreenAvailable?: boolean;
+  isFullscreenActive?: boolean;
   onEnterFocusMode?: () => void;
   onExitFocusMode?: () => void;
+  onToggleFullscreen?: () => void;
   onSaveContent: () => void;
   onDeleteScene: (sceneTitle: string) => void;
 };
@@ -45,8 +48,11 @@ export function SceneEditorHeader({
   deletePending,
   deleteError,
   isFocusMode = false,
+  isFullscreenAvailable = false,
+  isFullscreenActive = false,
   onEnterFocusMode,
   onExitFocusMode,
+  onToggleFullscreen,
   onSaveContent,
   onDeleteScene,
 }: SceneEditorHeaderProps) {
@@ -67,9 +73,16 @@ export function SceneEditorHeader({
 
         <div className="flex shrink-0 flex-wrap items-center gap-1.5 rounded-md border border-zinc-200 bg-zinc-50/70 p-1">
           {isFocusMode ? (
-            <Button type="button" variant="primary" size="sm" onClick={onExitFocusMode}>
-              Sair do foco
-            </Button>
+            <>
+              {isFullscreenAvailable ? (
+                <Button type="button" variant="secondary" size="sm" onClick={onToggleFullscreen}>
+                  {isFullscreenActive ? "Sair da tela cheia" : "Tela cheia"}
+                </Button>
+              ) : null}
+              <Button type="button" variant="primary" size="sm" onClick={onExitFocusMode}>
+                Sair do foco
+              </Button>
+            </>
           ) : (
             <Button type="button" variant="secondary" size="sm" onClick={onEnterFocusMode}>
               Modo foco

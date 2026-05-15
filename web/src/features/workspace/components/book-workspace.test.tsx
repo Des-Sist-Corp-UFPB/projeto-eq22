@@ -71,9 +71,36 @@ vi.mock("@/features/scenes/editor/tiptap-editor", () => ({
 }));
 
 describe("BookWorkspace focus mode", () => {
+  let fullscreenElement: Element | null;
+  let requestFullscreen: ReturnType<typeof vi.fn>;
+  let exitFullscreen: ReturnType<typeof vi.fn>;
+
   beforeEach(() => {
     vi.clearAllMocks();
     window.localStorage.clear();
+    fullscreenElement = null;
+    requestFullscreen = vi.fn(() => {
+      fullscreenElement = document.documentElement;
+      document.dispatchEvent(new Event("fullscreenchange"));
+      return Promise.resolve();
+    });
+    exitFullscreen = vi.fn(() => {
+      fullscreenElement = null;
+      document.dispatchEvent(new Event("fullscreenchange"));
+      return Promise.resolve();
+    });
+    Object.defineProperty(document, "fullscreenElement", {
+      configurable: true,
+      get: () => fullscreenElement,
+    });
+    Object.defineProperty(document.documentElement, "requestFullscreen", {
+      configurable: true,
+      value: requestFullscreen,
+    });
+    Object.defineProperty(document, "exitFullscreen", {
+      configurable: true,
+      value: exitFullscreen,
+    });
     mocks.getOutline.mockResolvedValue(outline);
     mocks.getScene.mockResolvedValue(sceneForPlanning);
     mocks.updateScene.mockResolvedValue(sceneForPlanning);
@@ -111,4 +138,91 @@ describe("BookWorkspace focus mode", () => {
     expect(screen.getByRole("heading", { name: sceneForPlanning.title })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Modo foco" })).toBeInTheDocument();
   });
+
+  test("restaura foco via localStorage apenas depois que uma cena e selecionada", async () => {
+    window.localStorage.setItem("iwrite.focusMode.enabled", "true");
+    renderWithClient(<BookWorkspace bookId="book-1" />);
+
+    expect(await screen.findByText("Livro")).toBeInTheDocument();
+
+    selectScene();
+
+    await waitFor(() => {
+      expect(screen.queryByText("Livro")).not.toBeInTheDocument();
+    });
+    expect(await screen.findByRole("heading", { name: sceneForPlanning.title })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Sair do foco" })).toBeInTheDocument();
+  });
+
+  test("nao restaura foco sem cena selecionada", async () => {
+    window.localStorage.setItem("iwrite.focusMode.enabled", "true");
+    renderWithClient(<BookWorkspace bookId="book-1" />);
+
+    expect(await screen.findByText("Livro")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Sair do foco" })).not.toBeInTheDocument();
+  });
+
+  test("salva a preferencia ao entrar e sair do foco", async () => {
+    renderWithClient(<BookWorkspace bookId="book-1" />);
+
+    await screen.findByText("Livro");
+    selectScene();
+    expect(await screen.findByRole("heading", { name: sceneForPlanning.title })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Modo foco" }));
+    expect(window.localStorage.getItem("iwrite.focusMode.enabled")).toBe("true");
+
+    fireEvent.click(screen.getByRole("button", { name: "Sair do foco" }));
+    expect(window.localStorage.getItem("iwrite.focusMode.enabled")).toBe("false");
+    expect(await screen.findByText("Livro")).toBeInTheDocument();
+  });
+
+  test("Ctrl+Shift+F alterna foco e Esc sai do foco", async () => {
+    renderWithClient(<BookWorkspace bookId="book-1" />);
+
+    await screen.findByText("Livro");
+    selectScene();
+    expect(await screen.findByRole("heading", { name: sceneForPlanning.title })).toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: "F", ctrlKey: true, shiftKey: true });
+    await waitFor(() => {
+      expect(screen.queryByText("Livro")).not.toBeInTheDocument();
+    });
+
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(await screen.findByText("Livro")).toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: "F", ctrlKey: true, shiftKey: true });
+    await waitFor(() => {
+      expect(screen.queryByText("Livro")).not.toBeInTheDocument();
+    });
+
+    fireEvent.keyDown(window, { key: "F", ctrlKey: true, shiftKey: true });
+    expect(await screen.findByText("Livro")).toBeInTheDocument();
+  });
+
+  test("mostra tela cheia em foco e sai da tela cheia ao sair do foco", async () => {
+    renderWithClient(<BookWorkspace bookId="book-1" />);
+
+    await screen.findByText("Livro");
+    selectScene();
+    expect(await screen.findByRole("heading", { name: sceneForPlanning.title })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Modo foco" }));
+    expect(await screen.findByRole("button", { name: "Tela cheia" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Tela cheia" }));
+    expect(requestFullscreen).toHaveBeenCalled();
+    expect(await screen.findByRole("button", { name: "Sair da tela cheia" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Sair do foco" }));
+    expect(exitFullscreen).toHaveBeenCalled();
+    expect(await screen.findByText("Livro")).toBeInTheDocument();
+  });
 });
+
+function selectScene() {
+  const sceneRow = screen.getByText(sceneForPlanning.title).closest("button");
+  expect(sceneRow).not.toBeNull();
+  fireEvent.click(sceneRow as HTMLButtonElement);
+}

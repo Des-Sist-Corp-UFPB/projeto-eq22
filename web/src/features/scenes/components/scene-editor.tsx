@@ -24,8 +24,11 @@ type SceneEditorProps = {
   bookId: string;
   sceneId: string | null;
   isFocusMode?: boolean;
+  isFullscreenAvailable?: boolean;
+  isFullscreenActive?: boolean;
   onEnterFocusMode?: () => void;
   onExitFocusMode?: () => void;
+  onToggleFullscreen?: () => void;
   onSceneDeleted: () => void;
 };
 
@@ -39,8 +42,11 @@ export function SceneEditor({
   bookId,
   sceneId,
   isFocusMode = false,
+  isFullscreenAvailable = false,
+  isFullscreenActive = false,
   onEnterFocusMode,
   onExitFocusMode,
+  onToggleFullscreen,
   onSceneDeleted,
 }: SceneEditorProps) {
   const queryClient = useQueryClient();
@@ -336,8 +342,11 @@ export function SceneEditor({
           deletePending={deleteMutation.isPending}
           deleteError={deleteMutation.isError}
           isFocusMode={isFocusMode}
+          isFullscreenAvailable={isFullscreenAvailable}
+          isFullscreenActive={isFullscreenActive}
           onEnterFocusMode={onEnterFocusMode}
           onExitFocusMode={onExitFocusMode}
+          onToggleFullscreen={onToggleFullscreen}
           onSaveContent={() => handleSaveContent(scene.id)}
           onDeleteScene={handleDeleteScene}
         />
