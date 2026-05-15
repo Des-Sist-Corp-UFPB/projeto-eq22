@@ -166,7 +166,7 @@ describe("ScenePlanningPanel", () => {
 
     renderWithClient(<ScenePlanningPanel formId="planning-form" bookId="book-1" scene={sceneForPlanning} />);
 
-    expect(screen.getByText(/Nao foi possivel salvar o planejamento/)).toBeInTheDocument();
+    expect(screen.getByText(/Não foi possível salvar o planejamento/)).toBeInTheDocument();
   });
 });
 

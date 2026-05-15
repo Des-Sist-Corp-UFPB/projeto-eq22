@@ -1,6 +1,18 @@
 "use client";
 
 import { type FormEvent, useEffect, useState } from "react";
+import {
+  closestCenter,
+  DndContext,
+  DragOverlay,
+  KeyboardSensor,
+  PointerSensor,
+  type DragEndEvent,
+  type DragStartEvent,
+  useSensor,
+  useSensors,
+} from "@dnd-kit/core";
+import { SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -23,8 +35,10 @@ import {
   useReorderSectionsMutation,
 } from "@/features/outline/api/outline-reorder-mutations";
 import { InlineCreateForm } from "@/features/outline/components/inline-create-form";
+import { SectionDragPreview } from "@/features/outline/components/outline-drag-overlay";
 import { SectionItem } from "@/features/outline/components/section-item";
 import type { OutlineChapter, OutlineSection, SectionType } from "@/features/outline/types";
+import { getReorderedIds } from "@/features/outline/utils/reorder";
 import { queryKeys } from "@/lib/query/keys";
 
 type OutlineSidebarProps = {
@@ -34,21 +48,6 @@ type OutlineSidebarProps = {
 };
 
 const sectionTypes: SectionType[] = ["PART", "PROLOGUE", "INTERLUDE", "EPILOGUE", "OTHER"];
-
-function moveItemId(items: { id: string }[], itemId: string, direction: -1 | 1) {
-  const currentIndex = items.findIndex((item) => item.id === itemId);
-  const nextIndex = currentIndex + direction;
-
-  if (currentIndex < 0 || nextIndex < 0 || nextIndex >= items.length) {
-    return null;
-  }
-
-  const orderedIds = items.map((item) => item.id);
-  const [movedId] = orderedIds.splice(currentIndex, 1);
-  orderedIds.splice(nextIndex, 0, movedId);
-
-  return orderedIds;
-}
 
 export function OutlineSidebar({ bookId, selectedSceneId, onSelectScene }: OutlineSidebarProps) {
   const queryClient = useQueryClient();
@@ -61,6 +60,7 @@ export function OutlineSidebar({ bookId, selectedSceneId, onSelectScene }: Outli
   const [chapterSummary, setChapterSummary] = useState("");
   const [collapsedSectionIds, setCollapsedSectionIds] = useState<Set<string>>(() => new Set());
   const [collapsedChapterIds, setCollapsedChapterIds] = useState<Set<string>>(() => new Set());
+  const [activeSectionId, setActiveSectionId] = useState<string | null>(null);
 
   const outlineQuery = useQuery({
     queryKey: queryKeys.outline(bookId),
@@ -69,6 +69,16 @@ export function OutlineSidebar({ bookId, selectedSceneId, onSelectScene }: Outli
   const reorderSectionsMutation = useReorderSectionsMutation(bookId);
   const reorderChaptersMutation = useReorderChaptersMutation(bookId);
   const reorderScenesMutation = useReorderScenesMutation(bookId);
+  const sectionSensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 8,
+      },
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
 
   useEffect(() => {
     const outline = outlineQuery.data;
@@ -193,16 +203,31 @@ export function OutlineSidebar({ bookId, selectedSceneId, onSelectScene }: Outli
     },
   });
 
-  function handleMoveSection(sectionId: string, direction: -1 | 1) {
+  function handleSectionDragEnd(event: DragEndEvent) {
+    setActiveSectionId(null);
+
+    const outline = outlineQuery.data;
     if (!outline) {
       return;
     }
 
-    const orderedIds = moveItemId(outline.sections, sectionId, direction);
+    const orderedIds = getReorderedIds(outline.sections, String(event.active.id), event.over ? String(event.over.id) : null);
     if (!orderedIds) {
       return;
     }
 
+    handleReorderSections(orderedIds);
+  }
+
+  function handleSectionDragStart(event: DragStartEvent) {
+    setActiveSectionId(String(event.active.id));
+  }
+
+  function handleSectionDragCancel() {
+    setActiveSectionId(null);
+  }
+
+  function handleReorderSections(orderedIds: string[]) {
     setSuccessMessage("");
     reorderSectionsMutation.mutate(
       { orderedIds },
@@ -212,12 +237,7 @@ export function OutlineSidebar({ bookId, selectedSceneId, onSelectScene }: Outli
     );
   }
 
-  function handleMoveChapter(section: OutlineSection, chapterId: string, direction: -1 | 1) {
-    const orderedIds = moveItemId(section.chapters, chapterId, direction);
-    if (!orderedIds) {
-      return;
-    }
-
+  function handleReorderChapters(section: OutlineSection, orderedIds: string[]) {
     setSuccessMessage("");
     reorderChaptersMutation.mutate(
       { sectionId: section.id, orderedIds },
@@ -227,12 +247,7 @@ export function OutlineSidebar({ bookId, selectedSceneId, onSelectScene }: Outli
     );
   }
 
-  function handleMoveScene(chapter: OutlineChapter, sceneId: string, direction: -1 | 1) {
-    const orderedIds = moveItemId(chapter.scenes, sceneId, direction);
-    if (!orderedIds) {
-      return;
-    }
-
+  function handleReorderScenes(chapter: OutlineChapter, orderedIds: string[]) {
     setSuccessMessage("");
     reorderScenesMutation.mutate(
       { chapterId: chapter.id, orderedIds },
@@ -344,6 +359,7 @@ export function OutlineSidebar({ bookId, selectedSceneId, onSelectScene }: Outli
     reorderSectionsMutation.isError ||
     reorderChaptersMutation.isError ||
     reorderScenesMutation.isError;
+  const activeSection = activeSectionId ? outline.sections.find((section) => section.id === activeSectionId) : null;
 
   return (
     <aside className="flex h-full min-h-0 flex-col bg-white">
@@ -376,60 +392,65 @@ export function OutlineSidebar({ bookId, selectedSceneId, onSelectScene }: Outli
             description="Crie uma seção para começar a organizar o esboço do livro."
           />
         ) : (
-          <div className="grid gap-4">
-            {outline.sections.map((section, sectionIndex) => (
-              <SectionItem
-                key={section.id}
-                section={section}
-                canMoveUp={sectionIndex > 0}
-                canMoveDown={sectionIndex < outline.sections.length - 1}
-                isCollapsed={collapsedSectionIds.has(section.id)}
-                collapsedChapterIds={collapsedChapterIds}
-                sectionTypes={sectionTypes}
-                selectedSceneId={selectedSceneId}
-                editingSectionId={editingSectionId}
-                sectionTitle={sectionTitle}
-                sectionType={sectionType}
-                editingChapterId={editingChapterId}
-                chapterTitle={chapterTitle}
-                chapterSummary={chapterSummary}
-                updateSectionPending={updateSectionMutation.isPending}
-                deleteSectionPending={deleteSectionMutation.isPending}
-                createChapterPending={chapterMutation.isPending}
-                updateChapterPending={updateChapterMutation.isPending}
-                deleteChapterPending={deleteChapterMutation.isPending}
-                createScenePending={sceneMutation.isPending}
-                deleteScenePending={deleteSceneMutation.isPending}
-                reorderSectionPending={reorderSectionsMutation.isPending}
-                reorderChapterPending={reorderChaptersMutation.isPending}
-                reorderScenePending={reorderScenesMutation.isPending}
-                onSectionTitleChange={setSectionTitle}
-                onSectionTypeChange={setSectionType}
-                onStartEditSection={startEditingSection}
-                onCancelEditSection={() => setEditingSectionId(null)}
-                onSubmitSection={handleSectionSubmit}
-                onDeleteSection={handleDeleteSection}
-                onMoveSectionUp={(sectionId) => handleMoveSection(sectionId, -1)}
-                onMoveSectionDown={(sectionId) => handleMoveSection(sectionId, 1)}
-                onToggleSection={toggleSection}
-                onToggleChapter={toggleChapter}
-                onCreateChapter={(sectionId, title) => chapterMutation.mutate({ sectionId, title })}
-                onChapterTitleChange={setChapterTitle}
-                onChapterSummaryChange={setChapterSummary}
-                onStartEditChapter={startEditingChapter}
-                onCancelEditChapter={() => setEditingChapterId(null)}
-                onSubmitChapter={handleChapterSubmit}
-                onDeleteChapter={handleDeleteChapter}
-                onMoveChapterUp={(section, chapterId) => handleMoveChapter(section, chapterId, -1)}
-                onMoveChapterDown={(section, chapterId) => handleMoveChapter(section, chapterId, 1)}
-                onCreateScene={(chapterId, title) => sceneMutation.mutate({ chapterId, title })}
-                onSelectScene={(sceneId) => onSelectScene(sceneId)}
-                onDeleteScene={handleDeleteScene}
-                onMoveSceneUp={(chapter, sceneId) => handleMoveScene(chapter, sceneId, -1)}
-                onMoveSceneDown={(chapter, sceneId) => handleMoveScene(chapter, sceneId, 1)}
-              />
-            ))}
-          </div>
+          <DndContext
+            sensors={sectionSensors}
+            collisionDetection={closestCenter}
+            onDragStart={handleSectionDragStart}
+            onDragEnd={handleSectionDragEnd}
+            onDragCancel={handleSectionDragCancel}
+          >
+            <SortableContext items={outline.sections.map((section) => section.id)} strategy={verticalListSortingStrategy}>
+              <div className="grid gap-4">
+                {outline.sections.map((section) => (
+                  <SectionItem
+                    key={section.id}
+                    section={section}
+                    isCollapsed={collapsedSectionIds.has(section.id)}
+                    collapsedChapterIds={collapsedChapterIds}
+                    sectionTypes={sectionTypes}
+                    selectedSceneId={selectedSceneId}
+                    editingSectionId={editingSectionId}
+                    sectionTitle={sectionTitle}
+                    sectionType={sectionType}
+                    editingChapterId={editingChapterId}
+                    chapterTitle={chapterTitle}
+                    chapterSummary={chapterSummary}
+                    updateSectionPending={updateSectionMutation.isPending}
+                    deleteSectionPending={deleteSectionMutation.isPending}
+                    createChapterPending={chapterMutation.isPending}
+                    updateChapterPending={updateChapterMutation.isPending}
+                    deleteChapterPending={deleteChapterMutation.isPending}
+                    createScenePending={sceneMutation.isPending}
+                    deleteScenePending={deleteSceneMutation.isPending}
+                    reorderSectionPending={reorderSectionsMutation.isPending}
+                    reorderChapterPending={reorderChaptersMutation.isPending}
+                    reorderScenePending={reorderScenesMutation.isPending}
+                    onSectionTitleChange={setSectionTitle}
+                    onSectionTypeChange={setSectionType}
+                    onStartEditSection={startEditingSection}
+                    onCancelEditSection={() => setEditingSectionId(null)}
+                    onSubmitSection={handleSectionSubmit}
+                    onDeleteSection={handleDeleteSection}
+                    onToggleSection={toggleSection}
+                    onToggleChapter={toggleChapter}
+                    onCreateChapter={(sectionId, title) => chapterMutation.mutate({ sectionId, title })}
+                    onChapterTitleChange={setChapterTitle}
+                    onChapterSummaryChange={setChapterSummary}
+                    onStartEditChapter={startEditingChapter}
+                    onCancelEditChapter={() => setEditingChapterId(null)}
+                    onSubmitChapter={handleChapterSubmit}
+                    onDeleteChapter={handleDeleteChapter}
+                    onReorderChapters={handleReorderChapters}
+                    onCreateScene={(chapterId, title) => sceneMutation.mutate({ chapterId, title })}
+                    onSelectScene={(sceneId) => onSelectScene(sceneId)}
+                    onDeleteScene={handleDeleteScene}
+                    onReorderScenes={handleReorderScenes}
+                  />
+                ))}
+              </div>
+            </SortableContext>
+            <DragOverlay>{activeSection ? <SectionDragPreview section={activeSection} /> : null}</DragOverlay>
+          </DndContext>
         )}
       </div>
 

@@ -79,12 +79,7 @@ export function BookWorkspace({ bookId }: { bookId: string }) {
             >
               Localizações
             </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant={mode === "items" ? "primary" : "ghost"}
-              onClick={() => setMode("items")}
-            >
+            <Button type="button" size="sm" variant={mode === "items" ? "primary" : "ghost"} onClick={() => setMode("items")}>
               Itens
             </Button>
           </div>
