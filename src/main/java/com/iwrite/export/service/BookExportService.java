@@ -52,16 +52,15 @@ public class BookExportService {
 
         StringBuilder markdown = new StringBuilder();
         appendHeading(markdown, "#", book.getTitle());
+        appendOptionalBlock(markdown, book.getSubtitle());
+        appendOptionalBlock(markdown, book.getDescription());
 
         for (BookSection section : sections) {
             appendHeading(markdown, "##", section.getTitle());
 
             for (Chapter chapter : chaptersBySection.getOrDefault(section.getId(), List.of())) {
                 appendHeading(markdown, "###", chapter.getTitle());
-
-                for (Scene scene : scenesByChapter.getOrDefault(chapter.getId(), List.of())) {
-                    appendSceneContent(markdown, scene.getContentText());
-                }
+                appendChapterScenes(markdown, scenesByChapter.getOrDefault(chapter.getId(), List.of()));
             }
         }
 
@@ -87,12 +86,30 @@ public class BookExportService {
         appendBlock(markdown, marker + " " + title);
     }
 
-    private void appendSceneContent(StringBuilder markdown, String contentText) {
-        if (contentText == null || contentText.isBlank()) {
+    private void appendOptionalBlock(StringBuilder markdown, String text) {
+        if (text == null || text.isBlank()) {
             return;
         }
 
-        appendBlock(markdown, contentText);
+        appendBlock(markdown, text);
+    }
+
+    private void appendChapterScenes(StringBuilder markdown, List<Scene> scenes) {
+        boolean hasPreviousSceneContent = false;
+
+        for (Scene scene : scenes) {
+            String contentText = scene.getContentText();
+            if (contentText == null || contentText.isBlank()) {
+                continue;
+            }
+
+            if (hasPreviousSceneContent) {
+                appendBlock(markdown, "---");
+            }
+
+            appendBlock(markdown, contentText);
+            hasPreviousSceneContent = true;
+        }
     }
 
     private void appendBlock(StringBuilder markdown, String block) {

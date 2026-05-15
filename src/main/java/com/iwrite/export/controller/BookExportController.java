@@ -31,6 +31,7 @@ public class BookExportController {
         return ResponseEntity.ok()
                 .contentType(MARKDOWN_MEDIA_TYPE)
                 .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + fileName + "\"")
+                .header(HttpHeaders.ACCESS_CONTROL_EXPOSE_HEADERS, HttpHeaders.CONTENT_DISPOSITION)
                 .body(markdown);
     }
 }
