@@ -56,7 +56,7 @@ public class TipTapMarkdownRenderer {
             return renderInlineContent(node)
                     .map(String::strip)
                     .filter(text -> !text.isBlank())
-                    .map(text -> "#".repeat(level) + " " + text);
+                    .map(text -> "#".repeat(level + 3) + " " + text);
         }
 
         return Optional.empty();
@@ -66,7 +66,7 @@ public class TipTapMarkdownRenderer {
         StringBuilder text = new StringBuilder();
 
         for (JsonNode child : node.path("content")) {
-            String renderedChild = renderInlineNode(child);
+            String renderedChild = renderInlineNode(child, text.isEmpty() || text.charAt(text.length() - 1) == '\n');
             if (renderedChild != null) {
                 text.append(renderedChild);
             }
@@ -76,11 +76,11 @@ public class TipTapMarkdownRenderer {
         return renderedText.isBlank() ? Optional.empty() : Optional.of(renderedText);
     }
 
-    private String renderInlineNode(JsonNode node) {
+    private String renderInlineNode(JsonNode node, boolean atLineStart) {
         String type = node.path("type").asText();
 
         if ("text".equals(type)) {
-            return applyMarks(node.path("text").asText(""), node.path("marks"));
+            return applyMarks(escapeText(node.path("text").asText(""), atLineStart), node.path("marks"));
         }
 
         if ("hardBreak".equals(type)) {
@@ -91,18 +91,58 @@ public class TipTapMarkdownRenderer {
     }
 
     private String applyMarks(String text, JsonNode marks) {
-        String markedText = text;
+        boolean hasBold = false;
+        boolean hasItalic = false;
 
         for (JsonNode mark : marks) {
             String markType = mark.path("type").asText();
             if ("bold".equals(markType)) {
-                markedText = "**" + markedText + "**";
+                hasBold = true;
             }
             if ("italic".equals(markType)) {
-                markedText = "*" + markedText + "*";
+                hasItalic = true;
             }
         }
 
-        return markedText;
+        if (hasBold && hasItalic) {
+            return "**_" + text + "_**";
+        }
+        if (hasBold) {
+            return "**" + text + "**";
+        }
+        if (hasItalic) {
+            return "*" + text + "*";
+        }
+
+        return text;
+    }
+
+    private String escapeText(String text, boolean atLineStart) {
+        StringBuilder escapedText = new StringBuilder();
+        boolean isLineStart = atLineStart;
+        int index = 0;
+
+        while (index < text.length()) {
+            if (isLineStart && startsWithMarkdownSyntax(text, index)) {
+                escapedText.append('\\');
+            }
+
+            char character = text.charAt(index);
+            escapedText.append(character);
+            isLineStart = character == '\n';
+            index++;
+        }
+
+        return escapedText.toString();
+    }
+
+    private boolean startsWithMarkdownSyntax(String text, int index) {
+        return text.startsWith("***", index)
+                || text.startsWith("---", index)
+                || text.startsWith("#", index)
+                || text.startsWith(">", index)
+                || text.startsWith("- ", index)
+                || text.startsWith("* ", index)
+                || text.startsWith("+ ", index);
     }
 }

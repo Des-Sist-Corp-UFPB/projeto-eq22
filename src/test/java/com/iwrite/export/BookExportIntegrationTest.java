@@ -108,13 +108,13 @@ class BookExportIntegrationTest extends PostgresIntegrationTest {
     }
 
     @Test
-    void contentJsonBoldAndItalicBecomeMarkdown() throws Exception {
+    void contentJsonBoldAndItalicCombinationUsesStableMarkdown() throws Exception {
         var book = createBook("Livro formatado");
         var section = createSection(book, "Parte");
         var chapter = createChapter(section, "Capitulo");
         var scene = createScene(chapter, "Cena", SceneStatus.DRAFT, 0, "fallback");
         sceneService.updateContent(scene.id(), new SceneContentRequest("""
-                {"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"negrito","marks":[{"type":"bold"}]},{"type":"text","text":" e "},{"type":"text","text":"italico","marks":[{"type":"italic"}]}]}]}""", "fallback"));
+                {"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"marcado","marks":[{"type":"bold"},{"type":"italic"}]}]}]}""", "fallback"));
 
         mockMvc.perform(get("/api/books/{bookId}/export", book.id()))
                 .andExpect(status().isOk())
@@ -125,17 +125,61 @@ class BookExportIntegrationTest extends PostgresIntegrationTest {
 
                         ### Capitulo
 
-                        **negrito** e *italico*"""));
+                        **_marcado_**"""));
     }
 
     @Test
-    void contentJsonHeadingBecomesMarkdownHeading() throws Exception {
+    void contentJsonTextStartingWithTripleAsteriskIsEscaped() throws Exception {
+        var book = createBook("Livro com asteriscos");
+        var section = createSection(book, "Parte");
+        var chapter = createChapter(section, "Capitulo");
+        var scene = createScene(chapter, "Cena", SceneStatus.DRAFT, 0, "fallback");
+        sceneService.updateContent(scene.id(), new SceneContentRequest("""
+                {"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"*** texto comum"}]}]}""", "fallback"));
+
+        mockMvc.perform(get("/api/books/{bookId}/export", book.id()))
+                .andExpect(status().isOk())
+                .andExpect(content().string("""
+                        # Livro com asteriscos
+
+                        ## Parte
+
+                        ### Capitulo
+
+                        \\*** texto comum"""));
+    }
+
+    @Test
+    void contentJsonTextStartingWithStructuralMarkdownCharactersIsEscaped() throws Exception {
+        var book = createBook("Livro com escapes");
+        var section = createSection(book, "Parte");
+        var chapter = createChapter(section, "Capitulo");
+        var scene = createScene(chapter, "Cena", SceneStatus.DRAFT, 0, "fallback");
+        sceneService.updateContent(scene.id(), new SceneContentRequest("""
+                {"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"# titulo falso"},{"type":"hardBreak"},{"type":"text","text":"> citacao falsa"},{"type":"hardBreak"},{"type":"text","text":"- item falso"}]}]}""", "fallback"));
+
+        mockMvc.perform(get("/api/books/{bookId}/export", book.id()))
+                .andExpect(status().isOk())
+                .andExpect(content().string("""
+                        # Livro com escapes
+
+                        ## Parte
+
+                        ### Capitulo
+
+                        \\# titulo falso
+                        \\> citacao falsa
+                        \\- item falso"""));
+    }
+
+    @Test
+    void contentJsonHeadingIsShiftedBelowChapterLevel() throws Exception {
         var book = createBook("Livro com heading");
         var section = createSection(book, "Parte");
         var chapter = createChapter(section, "Capitulo");
         var scene = createScene(chapter, "Cena", SceneStatus.DRAFT, 0, "fallback");
         sceneService.updateContent(scene.id(), new SceneContentRequest("""
-                {"type":"doc","content":[{"type":"heading","attrs":{"level":2},"content":[{"type":"text","text":"Titulo interno"}]},{"type":"paragraph","content":[{"type":"text","text":"corpo"}]}]}""", "fallback"));
+                {"type":"doc","content":[{"type":"heading","attrs":{"level":1},"content":[{"type":"text","text":"Titulo interno"}]},{"type":"heading","attrs":{"level":3},"content":[{"type":"text","text":"Subtitulo interno"}]}]}""", "fallback"));
 
         mockMvc.perform(get("/api/books/{bookId}/export", book.id()))
                 .andExpect(status().isOk())
@@ -146,9 +190,9 @@ class BookExportIntegrationTest extends PostgresIntegrationTest {
 
                         ### Capitulo
 
-                        ## Titulo interno
+                        #### Titulo interno
 
-                        corpo"""));
+                        ###### Subtitulo interno"""));
     }
 
     @Test
