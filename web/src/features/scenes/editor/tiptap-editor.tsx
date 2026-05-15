@@ -4,6 +4,7 @@ import { useEffect, useMemo } from "react";
 import type { Editor } from "@tiptap/react";
 import { EditorContent, useEditor, type JSONContent } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
+import { handleTiptapTabKey } from "@/features/scenes/editor/tab-keymap";
 
 type TiptapEditorProps = {
   contentKey: string;
@@ -107,8 +108,9 @@ export function TiptapEditor({
     immediatelyRender: false,
     editorProps: {
       attributes: {
-        class: `min-h-[320px] rounded-lg border border-zinc-200 bg-white px-4 py-4 text-base leading-7 text-zinc-900 outline-none focus:border-zinc-800 ${className}`,
+        class: `min-h-[320px] whitespace-pre-wrap rounded-lg border border-zinc-200 bg-white px-4 py-4 text-base leading-7 text-zinc-900 outline-none [tab-size:4] focus:border-zinc-800 ${className}`,
       },
+      handleKeyDown: handleTiptapTabKey,
     },
     onUpdate: ({ editor: updatedEditor }) => {
       onChange(updatedEditor.getJSON(), updatedEditor.getText());
