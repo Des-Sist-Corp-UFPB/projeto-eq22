@@ -15,7 +15,6 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.containsString;
-import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
@@ -396,6 +395,6 @@ class BookExportIntegrationTest extends PostgresIntegrationTest {
         var book = createBook("Livro legado");
 
         mockMvc.perform(get("/api/books/{bookId}/export", book.id()))
-                .andExpect(result -> assertThat(result.getResponse().getStatus() / 100).isNotEqualTo(2));
+                .andExpect(status().isNotFound());
     }
 }
