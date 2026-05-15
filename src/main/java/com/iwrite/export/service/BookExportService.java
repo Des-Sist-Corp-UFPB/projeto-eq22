@@ -8,6 +8,7 @@ import com.iwrite.scene.entity.Scene;
 import com.iwrite.scene.repository.SceneRepository;
 import com.iwrite.section.entity.BookSection;
 import com.iwrite.section.repository.BookSectionRepository;
+import org.apache.poi.xwpf.usermodel.ParagraphAlignment;
 import org.apache.poi.xwpf.usermodel.XWPFDocument;
 import org.apache.poi.xwpf.usermodel.XWPFParagraph;
 import org.apache.poi.xwpf.usermodel.XWPFRun;
@@ -210,25 +211,33 @@ public class BookExportService {
             boolean includeSceneTitles,
             boolean includeEmptyScenes
     ) {
+        boolean hasPreviousScene = false;
+
         for (Scene scene : scenes) {
-            appendDocxScene(document, scene, includeSceneTitles, includeEmptyScenes);
+            boolean appendedScene = appendDocxScene(document, scene, includeSceneTitles, includeEmptyScenes, hasPreviousScene);
+            hasPreviousScene = appendedScene || hasPreviousScene;
         }
     }
 
-    private void appendDocxScene(
+    private boolean appendDocxScene(
             XWPFDocument document,
             Scene scene,
             boolean includeSceneTitles,
-            boolean includeEmptyScenes
+            boolean includeEmptyScenes,
+            boolean hasPreviousScene
     ) {
         boolean hasJsonContent = tipTapDocxRenderer.canRender(scene.getContentJson());
         boolean hasTextContent = scene.getContentText() != null && !scene.getContentText().isBlank();
 
         if (!hasJsonContent && !hasTextContent && !includeEmptyScenes) {
-            return;
+            return false;
         }
         if (!hasJsonContent && !hasTextContent && !includeSceneTitles) {
-            return;
+            return false;
+        }
+
+        if (!includeSceneTitles && hasPreviousScene) {
+            appendDocxSceneSeparator(document);
         }
 
         if (includeSceneTitles) {
@@ -237,12 +246,20 @@ public class BookExportService {
 
         if (hasJsonContent) {
             tipTapDocxRenderer.renderInto(document, scene.getContentJson());
-            return;
+            return true;
         }
 
         if (hasTextContent) {
             appendDocxParagraph(document, scene.getContentText());
         }
+
+        return true;
+    }
+
+    private void appendDocxSceneSeparator(XWPFDocument document) {
+        XWPFParagraph paragraph = document.createParagraph();
+        paragraph.setAlignment(ParagraphAlignment.CENTER);
+        paragraph.createRun().setText("***");
     }
 
     private void appendDocxHeading(XWPFDocument document, String style, String text) {

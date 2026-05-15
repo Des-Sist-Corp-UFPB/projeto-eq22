@@ -236,12 +236,9 @@ public class TipTapDocxRenderer {
 
     private int internalHeadingLevel(int tipTapLevel) {
         if (tipTapLevel <= 1) {
-            return 4;
+            return 3;
         }
-        if (tipTapLevel == 2) {
-            return 5;
-        }
-        return 6;
+        return 4;
     }
 
     private Optional<String> plainInlineText(JsonNode node) {

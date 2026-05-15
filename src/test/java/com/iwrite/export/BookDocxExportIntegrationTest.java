@@ -6,6 +6,7 @@ import com.iwrite.scene.entity.SceneStatus;
 import com.iwrite.section.dto.BookSectionRequest;
 import com.iwrite.section.entity.SectionType;
 import com.iwrite.support.PostgresIntegrationTest;
+import org.apache.poi.xwpf.usermodel.ParagraphAlignment;
 import org.apache.poi.xwpf.usermodel.XWPFDocument;
 import org.apache.poi.xwpf.usermodel.XWPFParagraph;
 import org.apache.poi.xwpf.usermodel.XWPFRun;
@@ -55,6 +56,19 @@ class BookDocxExportIntegrationTest extends PostgresIntegrationTest {
     }
 
     @Test
+    void docxExportUsesDistinctHeadingStylesForBookSectionAndChapterTitles() throws Exception {
+        var book = createBook("Livro com estilos");
+        var section = createSection(book, "Parte principal");
+        createChapter(section, "Capitulo inicial");
+
+        try (XWPFDocument document = openExport(book.id(), false, false)) {
+            assertThat(paragraphContaining(document, "Livro com estilos").getStyle()).isEqualTo("Title");
+            assertThat(paragraphContaining(document, "Parte principal").getStyle()).isEqualTo("Heading1");
+            assertThat(paragraphContaining(document, "Capitulo inicial").getStyle()).isEqualTo("Heading2");
+        }
+    }
+
+    @Test
     void docxExportUsesSectionChapterSceneSortOrder() throws Exception {
         var book = createBook("Livro ordenado");
         var firstSection = sectionService.create(book.id(), new BookSectionRequest("Primeira parte", SectionType.PART, 0));
@@ -85,17 +99,25 @@ class BookDocxExportIntegrationTest extends PostgresIntegrationTest {
         var section = createSection(book, "Parte");
         var chapter = createChapter(section, "Capitulo");
         createScene(chapter, "Cena visivel", SceneStatus.DRAFT, 0, "texto da cena");
+        createScene(chapter, "Cena seguinte", SceneStatus.DRAFT, 1, "texto seguinte");
 
         try (XWPFDocument document = openExport(book.id(), false, false)) {
             assertThat(documentText(document))
                     .contains("texto da cena")
-                    .doesNotContain("Cena visivel");
+                    .contains("texto seguinte")
+                    .doesNotContain("Cena visivel")
+                    .doesNotContain("Cena seguinte");
         }
 
         try (XWPFDocument document = openExport(book.id(), true, false)) {
             assertThat(documentText(document))
                     .contains("Cena visivel")
-                    .contains("texto da cena");
+                    .contains("texto da cena")
+                    .contains("Cena seguinte")
+                    .contains("texto seguinte");
+            assertThat(paragraphContaining(document, "Cena visivel").getStyle()).isEqualTo("Heading3");
+            assertThat(paragraphContaining(document, "Cena seguinte").getStyle()).isEqualTo("Heading3");
+            assertThat(paragraphTexts(document)).doesNotContain("***");
         }
     }
 
@@ -113,6 +135,40 @@ class BookDocxExportIntegrationTest extends PostgresIntegrationTest {
 
             assertThat(runWithText(paragraph, "negrito")).matches(XWPFRun::isBold);
             assertThat(runWithText(paragraph, "italico")).matches(XWPFRun::isItalic);
+        }
+    }
+
+    @Test
+    void contentJsonHeadingInsideSceneUsesLowerDocxHeadingStyle() throws Exception {
+        var book = createBook("Livro com heading interno");
+        var section = createSection(book, "Parte");
+        var chapter = createChapter(section, "Capitulo");
+        var scene = createScene(chapter, "Cena", SceneStatus.DRAFT, 0, "fallback");
+        sceneService.updateContent(scene.id(), new SceneContentRequest("""
+                {"type":"doc","content":[{"type":"heading","attrs":{"level":1},"content":[{"type":"text","text":"Heading de cena"}]},{"type":"heading","attrs":{"level":2},"content":[{"type":"text","text":"Subheading de cena"}]},{"type":"heading","attrs":{"level":3},"content":[{"type":"text","text":"Detalhe de cena"}]}]}""", "fallback"));
+
+        try (XWPFDocument document = openExport(book.id(), false, false)) {
+            assertThat(paragraphContaining(document, "Heading de cena").getStyle()).isEqualTo("Heading3");
+            assertThat(paragraphContaining(document, "Subheading de cena").getStyle()).isEqualTo("Heading4");
+            assertThat(paragraphContaining(document, "Detalhe de cena").getStyle()).isEqualTo("Heading4");
+        }
+    }
+
+    @Test
+    void docxExportSeparatesScenesWhenSceneTitlesAreOmitted() throws Exception {
+        var book = createBook("Livro com separador");
+        var section = createSection(book, "Parte");
+        var chapter = createChapter(section, "Capitulo");
+        createScene(chapter, "Cena um", SceneStatus.DRAFT, 0, "conteudo um");
+        createScene(chapter, "Cena dois", SceneStatus.DRAFT, 1, "conteudo dois");
+
+        try (XWPFDocument document = openExport(book.id(), false, false)) {
+            List<String> paragraphs = paragraphTexts(document);
+
+            assertThat(paragraphs).contains("***");
+            assertComesBefore(paragraphs, "conteudo um", "***");
+            assertComesBefore(paragraphs, "***", "conteudo dois");
+            assertThat(paragraphContaining(document, "***").getAlignment()).isEqualTo(ParagraphAlignment.CENTER);
         }
     }
 
