@@ -20,12 +20,8 @@ function renderSceneRow(props?: Partial<React.ComponentProps<typeof SceneRow>>) 
     isSelected: false,
     deletePending: false,
     reorderPending: false,
-    canMoveUp: true,
-    canMoveDown: true,
     onSelect: vi.fn(),
     onDelete: vi.fn(),
-    onMoveUp: vi.fn(),
-    onMoveDown: vi.fn(),
   };
 
   const mergedProps = { ...defaultProps, ...props };
@@ -57,11 +53,11 @@ describe("SceneRow", () => {
     expect(onSelect).toHaveBeenCalledWith(scene.id);
   });
 
-  test("mantem setas e excluir renderizados", () => {
+  test("mantem excluir renderizado e setas removidas", () => {
     renderSceneRow();
 
-    expect(screen.getByRole("button", { name: "Mover cena A chave aparece para cima" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Mover cena A chave aparece para baixo" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Mover cena A chave aparece para cima" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Mover cena A chave aparece para baixo" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Excluir" })).toBeInTheDocument();
   });
 });

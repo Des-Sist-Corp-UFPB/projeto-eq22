@@ -49,21 +49,6 @@ type OutlineSidebarProps = {
 
 const sectionTypes: SectionType[] = ["PART", "PROLOGUE", "INTERLUDE", "EPILOGUE", "OTHER"];
 
-function moveItemId(items: { id: string }[], itemId: string, direction: -1 | 1) {
-  const currentIndex = items.findIndex((item) => item.id === itemId);
-  const nextIndex = currentIndex + direction;
-
-  if (currentIndex < 0 || nextIndex < 0 || nextIndex >= items.length) {
-    return null;
-  }
-
-  const orderedIds = items.map((item) => item.id);
-  const [movedId] = orderedIds.splice(currentIndex, 1);
-  orderedIds.splice(nextIndex, 0, movedId);
-
-  return orderedIds;
-}
-
 export function OutlineSidebar({ bookId, selectedSceneId, onSelectScene }: OutlineSidebarProps) {
   const queryClient = useQueryClient();
   const [successMessage, setSuccessMessage] = useState("");
@@ -218,40 +203,6 @@ export function OutlineSidebar({ bookId, selectedSceneId, onSelectScene }: Outli
     },
   });
 
-  function handleMoveSection(sectionId: string, direction: -1 | 1) {
-    if (!outline) {
-      return;
-    }
-
-    const orderedIds = moveItemId(outline.sections, sectionId, direction);
-    if (!orderedIds) {
-      return;
-    }
-
-    setSuccessMessage("");
-    reorderSectionsMutation.mutate(
-      { orderedIds },
-      {
-        onSuccess: () => setSuccessMessage("Ordem das seções atualizada."),
-      }
-    );
-  }
-
-  function handleMoveChapter(section: OutlineSection, chapterId: string, direction: -1 | 1) {
-    const orderedIds = moveItemId(section.chapters, chapterId, direction);
-    if (!orderedIds) {
-      return;
-    }
-
-    setSuccessMessage("");
-    reorderChaptersMutation.mutate(
-      { sectionId: section.id, orderedIds },
-      {
-        onSuccess: () => setSuccessMessage("Ordem dos capítulos atualizada."),
-      }
-    );
-  }
-
   function handleSectionDragEnd(event: DragEndEvent) {
     setActiveSectionId(null);
 
@@ -281,7 +232,7 @@ export function OutlineSidebar({ bookId, selectedSceneId, onSelectScene }: Outli
     reorderSectionsMutation.mutate(
       { orderedIds },
       {
-        onSuccess: () => setSuccessMessage("Ordem das seÃ§Ãµes atualizada."),
+        onSuccess: () => setSuccessMessage("Ordem das seções atualizada."),
       }
     );
   }
@@ -291,22 +242,7 @@ export function OutlineSidebar({ bookId, selectedSceneId, onSelectScene }: Outli
     reorderChaptersMutation.mutate(
       { sectionId: section.id, orderedIds },
       {
-        onSuccess: () => setSuccessMessage("Ordem dos capÃ­tulos atualizada."),
-      }
-    );
-  }
-
-  function handleMoveScene(chapter: OutlineChapter, sceneId: string, direction: -1 | 1) {
-    const orderedIds = moveItemId(chapter.scenes, sceneId, direction);
-    if (!orderedIds) {
-      return;
-    }
-
-    setSuccessMessage("");
-    reorderScenesMutation.mutate(
-      { chapterId: chapter.id, orderedIds },
-      {
-        onSuccess: () => setSuccessMessage("Ordem das cenas atualizada."),
+        onSuccess: () => setSuccessMessage("Ordem dos capítulos atualizada."),
       }
     );
   }
@@ -465,12 +401,10 @@ export function OutlineSidebar({ bookId, selectedSceneId, onSelectScene }: Outli
           >
             <SortableContext items={outline.sections.map((section) => section.id)} strategy={verticalListSortingStrategy}>
               <div className="grid gap-4">
-                {outline.sections.map((section, sectionIndex) => (
+                {outline.sections.map((section) => (
                   <SectionItem
                     key={section.id}
                     section={section}
-                    canMoveUp={sectionIndex > 0}
-                    canMoveDown={sectionIndex < outline.sections.length - 1}
                     isCollapsed={collapsedSectionIds.has(section.id)}
                     collapsedChapterIds={collapsedChapterIds}
                     sectionTypes={sectionTypes}
@@ -497,8 +431,6 @@ export function OutlineSidebar({ bookId, selectedSceneId, onSelectScene }: Outli
                     onCancelEditSection={() => setEditingSectionId(null)}
                     onSubmitSection={handleSectionSubmit}
                     onDeleteSection={handleDeleteSection}
-                    onMoveSectionUp={(sectionId) => handleMoveSection(sectionId, -1)}
-                    onMoveSectionDown={(sectionId) => handleMoveSection(sectionId, 1)}
                     onToggleSection={toggleSection}
                     onToggleChapter={toggleChapter}
                     onCreateChapter={(sectionId, title) => chapterMutation.mutate({ sectionId, title })}
@@ -508,14 +440,10 @@ export function OutlineSidebar({ bookId, selectedSceneId, onSelectScene }: Outli
                     onCancelEditChapter={() => setEditingChapterId(null)}
                     onSubmitChapter={handleChapterSubmit}
                     onDeleteChapter={handleDeleteChapter}
-                    onMoveChapterUp={(section, chapterId) => handleMoveChapter(section, chapterId, -1)}
-                    onMoveChapterDown={(section, chapterId) => handleMoveChapter(section, chapterId, 1)}
                     onReorderChapters={handleReorderChapters}
                     onCreateScene={(chapterId, title) => sceneMutation.mutate({ chapterId, title })}
                     onSelectScene={(sceneId) => onSelectScene(sceneId)}
                     onDeleteScene={handleDeleteScene}
-                    onMoveSceneUp={(chapter, sceneId) => handleMoveScene(chapter, sceneId, -1)}
-                    onMoveSceneDown={(chapter, sceneId) => handleMoveScene(chapter, sceneId, 1)}
                     onReorderScenes={handleReorderScenes}
                   />
                 ))}

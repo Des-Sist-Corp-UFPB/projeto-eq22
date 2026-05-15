@@ -8,7 +8,7 @@ import type { OutlineChapter } from "@/features/outline/types";
 
 const chapter: OutlineChapter = {
   id: "chapter-1",
-  title: "Capitulo 1",
+  title: "Capítulo 1",
   summary: "Resumo curto",
   sortOrder: 0,
   wordCount: 1200,
@@ -18,8 +18,6 @@ const chapter: OutlineChapter = {
 function renderChapterItem(props?: Partial<React.ComponentProps<typeof ChapterItem>>) {
   const defaultProps: React.ComponentProps<typeof ChapterItem> = {
     chapter,
-    canMoveUp: true,
-    canMoveDown: true,
     isCollapsed: false,
     isEditing: false,
     chapterTitle: "",
@@ -37,14 +35,10 @@ function renderChapterItem(props?: Partial<React.ComponentProps<typeof ChapterIt
     onCancelEdit: vi.fn(),
     onSubmit: vi.fn(),
     onDeleteChapter: vi.fn(),
-    onMoveChapterUp: vi.fn(),
-    onMoveChapterDown: vi.fn(),
     onToggleChapter: vi.fn(),
     onCreateScene: vi.fn(),
     onSelectScene: vi.fn(),
     onDeleteScene: vi.fn(),
-    onMoveSceneUp: vi.fn(),
-    onMoveSceneDown: vi.fn(),
     onReorderScenes: vi.fn(),
   };
 
@@ -65,15 +59,15 @@ describe("ChapterItem", () => {
   test("renderiza drag handle de capitulo com nome acessivel", () => {
     renderChapterItem();
 
-    expect(screen.getByRole("button", { name: "Reordenar capitulo Capitulo 1" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Reordenar capítulo Capítulo 1" })).toBeInTheDocument();
   });
 
   test("mantem controles existentes de capitulo renderizados", () => {
     renderChapterItem();
 
-    expect(screen.getAllByRole("button", { name: "Recolher capitulo Capitulo 1" })).toHaveLength(2);
-    expect(screen.getByRole("button", { name: "Mover capitulo Capitulo 1 para cima" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Mover capitulo Capitulo 1 para baixo" })).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Recolher capítulo Capítulo 1" })).toHaveLength(2);
+    expect(screen.queryByRole("button", { name: "Mover capítulo Capítulo 1 para cima" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Mover capítulo Capítulo 1 para baixo" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Editar" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Excluir" })).toBeInTheDocument();
   });

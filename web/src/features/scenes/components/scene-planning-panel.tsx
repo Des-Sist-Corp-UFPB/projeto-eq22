@@ -231,7 +231,7 @@ export function ScenePlanningPanel({ formId, bookId, scene }: ScenePlanningPanel
 
             {planningMutation.isError ? (
               <FeedbackMessage variant="error">
-                Nao foi possivel salvar o planejamento. Verifique os vinculos e tente novamente.
+                Não foi possível salvar o planejamento. Verifique os vínculos e tente novamente.
               </FeedbackMessage>
             ) : null}
           </div>
@@ -323,7 +323,7 @@ function ParticipantSelector({
 
           <div className="grid max-h-72 gap-3 overflow-y-auto pr-1">
             {isLoading ? <p className="text-xs text-zinc-500">Carregando lista...</p> : null}
-            {isError ? <FeedbackMessage variant="error">Nao foi possivel carregar esta lista.</FeedbackMessage> : null}
+            {isError ? <FeedbackMessage variant="error">Não foi possível carregar esta lista.</FeedbackMessage> : null}
             {!isLoading && !isError && characters?.length === 0 ? <p className="text-xs text-zinc-500">Nenhum personagem cadastrado.</p> : null}
 
             {!isLoading && !isError && selectedCharacters.length > 0 ? (
@@ -478,7 +478,7 @@ function ItemSelector({
 
           <div className="grid max-h-72 gap-3 overflow-y-auto pr-1">
             {isLoading ? <p className="text-xs text-zinc-500">Carregando lista...</p> : null}
-            {isError ? <FeedbackMessage variant="error">Nao foi possivel carregar esta lista.</FeedbackMessage> : null}
+            {isError ? <FeedbackMessage variant="error">Não foi possível carregar esta lista.</FeedbackMessage> : null}
             {!isLoading && !isError && items?.length === 0 ? <p className="text-xs text-zinc-500">Nenhum item cadastrado.</p> : null}
 
             {!isLoading && !isError && selectedItems.length > 0 ? (
@@ -593,7 +593,7 @@ function PlanningListState({ isLoading, isError, isEmpty, emptyMessage }: Planni
   }
 
   if (isError) {
-    return <p className="text-xs text-red-600">Nao foi possivel carregar esta lista.</p>;
+    return <p className="text-xs text-red-600">Não foi possível carregar esta lista.</p>;
   }
 
   if (isEmpty) {

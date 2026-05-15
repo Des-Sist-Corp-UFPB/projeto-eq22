@@ -36,8 +36,6 @@ function renderSectionItem(props?: Partial<React.ComponentProps<typeof SectionIt
     reorderSectionPending: false,
     reorderChapterPending: false,
     reorderScenePending: false,
-    canMoveUp: true,
-    canMoveDown: true,
     isCollapsed: false,
     collapsedChapterIds: new Set(),
     onSectionTitleChange: vi.fn(),
@@ -46,8 +44,6 @@ function renderSectionItem(props?: Partial<React.ComponentProps<typeof SectionIt
     onCancelEditSection: vi.fn(),
     onSubmitSection: vi.fn(),
     onDeleteSection: vi.fn(),
-    onMoveSectionUp: vi.fn(),
-    onMoveSectionDown: vi.fn(),
     onToggleSection: vi.fn(),
     onToggleChapter: vi.fn(),
     onCreateChapter: vi.fn(),
@@ -57,14 +53,10 @@ function renderSectionItem(props?: Partial<React.ComponentProps<typeof SectionIt
     onCancelEditChapter: vi.fn(),
     onSubmitChapter: vi.fn(),
     onDeleteChapter: vi.fn(),
-    onMoveChapterUp: vi.fn(),
-    onMoveChapterDown: vi.fn(),
     onReorderChapters: vi.fn(),
     onCreateScene: vi.fn(),
     onSelectScene: vi.fn(),
     onDeleteScene: vi.fn(),
-    onMoveSceneUp: vi.fn(),
-    onMoveSceneDown: vi.fn(),
     onReorderScenes: vi.fn(),
   };
 
@@ -82,18 +74,18 @@ function renderSectionItem(props?: Partial<React.ComponentProps<typeof SectionIt
 }
 
 describe("SectionItem", () => {
-  test("renderiza drag handle de secao com nome acessivel", () => {
+  test("renderiza drag handle de seção com nome acessível", () => {
     renderSectionItem();
 
-    expect(screen.getByRole("button", { name: "Reordenar secao Parte 1" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Reordenar seção Parte 1" })).toBeInTheDocument();
   });
 
   test("mantem controles existentes de secao renderizados", () => {
     renderSectionItem();
 
-    expect(screen.getAllByRole("button", { name: "Recolher secao Parte 1" })).toHaveLength(2);
-    expect(screen.getByRole("button", { name: "Mover secao Parte 1 para cima" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Mover secao Parte 1 para baixo" })).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Recolher seção Parte 1" })).toHaveLength(2);
+    expect(screen.queryByRole("button", { name: "Mover seção Parte 1 para cima" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Mover seção Parte 1 para baixo" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Editar" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Excluir" })).toBeInTheDocument();
   });

@@ -24,8 +24,6 @@ import { getReorderedIds } from "@/features/outline/utils/reorder";
 
 type ChapterItemProps = {
   chapter: OutlineChapter;
-  canMoveUp: boolean;
-  canMoveDown: boolean;
   isCollapsed: boolean;
   isEditing: boolean;
   chapterTitle: string;
@@ -43,21 +41,15 @@ type ChapterItemProps = {
   onCancelEdit: () => void;
   onSubmit: (event: FormEvent<HTMLFormElement>, chapterId: string) => void;
   onDeleteChapter: (chapter: OutlineChapter) => void;
-  onMoveChapterUp: (chapterId: string) => void;
-  onMoveChapterDown: (chapterId: string) => void;
   onToggleChapter: (chapterId: string) => void;
   onCreateScene: (chapterId: string, title: string) => void;
   onSelectScene: (sceneId: string) => void;
   onDeleteScene: (sceneId: string, sceneTitle: string) => void;
-  onMoveSceneUp: (chapter: OutlineChapter, sceneId: string) => void;
-  onMoveSceneDown: (chapter: OutlineChapter, sceneId: string) => void;
   onReorderScenes: (chapter: OutlineChapter, orderedIds: string[]) => void;
 };
 
 export function ChapterItem({
   chapter,
-  canMoveUp,
-  canMoveDown,
   isCollapsed,
   isEditing,
   chapterTitle,
@@ -75,14 +67,10 @@ export function ChapterItem({
   onCancelEdit,
   onSubmit,
   onDeleteChapter,
-  onMoveChapterUp,
-  onMoveChapterDown,
   onToggleChapter,
   onCreateScene,
   onSelectScene,
   onDeleteScene,
-  onMoveSceneUp,
-  onMoveSceneDown,
   onReorderScenes,
 }: ChapterItemProps) {
   const { attributes, listeners, setActivatorNodeRef, setNodeRef, transform, transition, isDragging } = useSortable({
@@ -134,7 +122,7 @@ export function ChapterItem({
     >
       {isEditing ? (
         <form onSubmit={(event) => onSubmit(event, chapter.id)} className="grid gap-2">
-          <Field label="Titulo do capitulo">
+          <Field label="Título do capítulo">
             <input
               value={chapterTitle}
               onChange={(event) => onTitleChange(event.target.value)}
@@ -164,7 +152,7 @@ export function ChapterItem({
             <div className="flex min-w-0 flex-1 items-start gap-2.5">
               <CollapseChevronButton
                 isExpanded={!isCollapsed}
-                label={`${isCollapsed ? "Expandir" : "Recolher"} capitulo ${chapter.title}`}
+                label={`${isCollapsed ? "Expandir" : "Recolher"} capítulo ${chapter.title}`}
                 onClick={() => onToggleChapter(chapter.id)}
               />
               <button
@@ -172,12 +160,12 @@ export function ChapterItem({
                 ref={setActivatorNodeRef}
                 className="min-w-0 flex-1 cursor-grab rounded-md text-left transition hover:bg-zinc-50 active:cursor-grabbing focus:outline-none focus:ring-2 focus:ring-zinc-800 focus:ring-offset-2"
                 aria-expanded={!isCollapsed}
-                aria-label={`${isCollapsed ? "Expandir" : "Recolher"} capitulo ${chapter.title}`}
+                aria-label={`${isCollapsed ? "Expandir" : "Recolher"} capítulo ${chapter.title}`}
                 onClick={() => onToggleChapter(chapter.id)}
                 {...attributes}
                 {...listeners}
               >
-                <p className="text-[11px] font-medium uppercase text-zinc-500">Capitulo</p>
+                <p className="text-[11px] font-medium uppercase text-zinc-500">Capítulo</p>
                 <h3 className="truncate text-sm font-medium text-zinc-800">{chapter.title}</h3>
                 {chapter.summary ? <p className="mt-1 line-clamp-2 text-xs leading-5 text-zinc-500">{chapter.summary}</p> : null}
               </button>
@@ -187,36 +175,14 @@ export function ChapterItem({
           <div className="flex flex-wrap gap-1.5 opacity-60 transition group-hover/chapter:opacity-100 focus-within:opacity-100">
             <button
               type="button"
-              aria-label={`Reordenar capitulo ${chapter.title}`}
-              title="Reordenar capitulo"
+              aria-label={`Reordenar capítulo ${chapter.title}`}
+              title="Reordenar capítulo"
               disabled={reorderPending}
-              className="inline-flex min-h-8 cursor-grab items-center justify-center rounded-md px-2 py-1 text-sm font-medium text-zinc-700 transition hover:bg-zinc-100 active:cursor-grabbing disabled:cursor-not-allowed disabled:opacity-70"
+              className="inline-flex min-h-8 cursor-grab items-center justify-center rounded-md px-2 py-1 text-sm font-medium text-zinc-700 transition hover:bg-zinc-100 active:cursor-grabbing focus:outline-none focus:ring-2 focus:ring-zinc-800 focus:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-70"
               {...listeners}
             >
               ::
             </button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              aria-label={`Mover capitulo ${chapter.title} para cima`}
-              title="Mover para cima"
-              disabled={!canMoveUp || reorderPending}
-              onClick={() => onMoveChapterUp(chapter.id)}
-            >
-              ↑
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              aria-label={`Mover capitulo ${chapter.title} para baixo`}
-              title="Mover para baixo"
-              disabled={!canMoveDown || reorderPending}
-              onClick={() => onMoveChapterDown(chapter.id)}
-            >
-              ↓
-            </Button>
             <Button type="button" variant="ghost" size="sm" onClick={() => onStartEdit(chapter)}>
               Editar
             </Button>
@@ -239,7 +205,7 @@ export function ChapterItem({
           />
 
           {chapter.scenes.length === 0 ? (
-            <EmptyState size="sm" title="Nenhuma cena" description="Este capitulo ainda nao tem cenas." />
+            <EmptyState size="sm" title="Nenhuma cena" description="Este capítulo ainda não tem cenas." />
           ) : (
             <DndContext
               sensors={sensors}
@@ -250,19 +216,15 @@ export function ChapterItem({
             >
               <SortableContext items={chapter.scenes.map((scene) => scene.id)} strategy={verticalListSortingStrategy}>
                 <div className="grid gap-1.5">
-                  {chapter.scenes.map((scene, sceneIndex) => (
+                  {chapter.scenes.map((scene) => (
                     <SceneRow
                       key={scene.id}
                       scene={scene}
                       isSelected={selectedSceneId === scene.id}
                       deletePending={deleteScenePending}
                       reorderPending={reorderScenePending}
-                      canMoveUp={sceneIndex > 0}
-                      canMoveDown={sceneIndex < chapter.scenes.length - 1}
                       onSelect={onSelectScene}
                       onDelete={onDeleteScene}
-                      onMoveUp={(sceneId) => onMoveSceneUp(chapter, sceneId)}
-                      onMoveDown={(sceneId) => onMoveSceneDown(chapter, sceneId)}
                     />
                   ))}
                 </div>

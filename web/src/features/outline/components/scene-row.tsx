@@ -7,26 +7,11 @@ type SceneRowProps = {
   isSelected: boolean;
   deletePending: boolean;
   reorderPending: boolean;
-  canMoveUp: boolean;
-  canMoveDown: boolean;
   onSelect: (sceneId: string) => void;
   onDelete: (sceneId: string, sceneTitle: string) => void;
-  onMoveUp: (sceneId: string) => void;
-  onMoveDown: (sceneId: string) => void;
 };
 
-export function SceneRow({
-  scene,
-  isSelected,
-  deletePending,
-  reorderPending,
-  canMoveUp,
-  canMoveDown,
-  onSelect,
-  onDelete,
-  onMoveUp,
-  onMoveDown,
-}: SceneRowProps) {
+export function SceneRow({ scene, isSelected, deletePending, reorderPending, onSelect, onDelete }: SceneRowProps) {
   const { attributes, listeners, setActivatorNodeRef, setNodeRef, transform, transition, isDragging } = useSortable({
     id: scene.id,
     disabled: reorderPending,
@@ -60,46 +45,18 @@ export function SceneRow({
           <span className="tabular-nums">{scene.wordCount} palavras</span>
         </span>
       </button>
-      <div
-        className={`flex items-stretch transition ${
-          isSelected ? "opacity-100" : "opacity-0 group-hover/scene:opacity-100 group-focus-within/scene:opacity-100"
-        }`}
-      >
+      <div className="flex items-stretch transition">
         <button
           type="button"
           aria-label={`Reordenar cena ${scene.title}`}
           title="Reordenar cena"
           disabled={reorderPending}
-          className={`cursor-grab px-1.5 text-xs font-semibold transition active:cursor-grabbing ${
+          className={`cursor-grab px-1.5 text-xs font-semibold transition active:cursor-grabbing focus:outline-none focus:ring-2 focus:ring-zinc-800 focus:ring-offset-1 ${
             isSelected ? "text-emerald-800 hover:text-emerald-950" : "text-zinc-500 hover:text-zinc-900"
           } disabled:cursor-not-allowed disabled:opacity-40`}
           {...listeners}
         >
           ::
-        </button>
-        <button
-          type="button"
-          aria-label={`Mover cena ${scene.title} para cima`}
-          title="Mover para cima"
-          onClick={() => onMoveUp(scene.id)}
-          disabled={!canMoveUp || reorderPending}
-          className={`px-1.5 text-xs font-medium transition ${
-            isSelected ? "text-emerald-800 hover:text-emerald-950" : "text-zinc-500 hover:text-zinc-900"
-          } disabled:opacity-40`}
-        >
-          ↑
-        </button>
-        <button
-          type="button"
-          aria-label={`Mover cena ${scene.title} para baixo`}
-          title="Mover para baixo"
-          onClick={() => onMoveDown(scene.id)}
-          disabled={!canMoveDown || reorderPending}
-          className={`px-1.5 text-xs font-medium transition ${
-            isSelected ? "text-emerald-800 hover:text-emerald-950" : "text-zinc-500 hover:text-zinc-900"
-          } disabled:opacity-40`}
-        >
-          ↓
         </button>
         <button
           type="button"

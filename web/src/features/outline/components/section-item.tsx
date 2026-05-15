@@ -14,9 +14,9 @@ import { SortableContext, sortableKeyboardCoordinates, useSortable, verticalList
 import { CSS } from "@dnd-kit/utilities";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
+import { ChapterItem } from "@/features/outline/components/chapter-item";
 import { CollapseChevronButton } from "@/features/outline/components/collapse-chevron-button";
 import { InlineCreateForm } from "@/features/outline/components/inline-create-form";
-import { ChapterItem } from "@/features/outline/components/chapter-item";
 import { ChapterDragPreview } from "@/features/outline/components/outline-drag-overlay";
 import { Field, WordCount } from "@/features/outline/components/outline-sidebar-parts";
 import type { OutlineChapter, OutlineSection, SectionType } from "@/features/outline/types";
@@ -42,8 +42,6 @@ type SectionItemProps = {
   reorderSectionPending: boolean;
   reorderChapterPending: boolean;
   reorderScenePending: boolean;
-  canMoveUp: boolean;
-  canMoveDown: boolean;
   isCollapsed: boolean;
   collapsedChapterIds: Set<string>;
   onSectionTitleChange: (title: string) => void;
@@ -52,8 +50,6 @@ type SectionItemProps = {
   onCancelEditSection: () => void;
   onSubmitSection: (event: FormEvent<HTMLFormElement>, sectionId: string) => void;
   onDeleteSection: (section: OutlineSection) => void;
-  onMoveSectionUp: (sectionId: string) => void;
-  onMoveSectionDown: (sectionId: string) => void;
   onToggleSection: (sectionId: string) => void;
   onToggleChapter: (chapterId: string) => void;
   onCreateChapter: (sectionId: string, title: string) => void;
@@ -63,14 +59,10 @@ type SectionItemProps = {
   onCancelEditChapter: () => void;
   onSubmitChapter: (event: FormEvent<HTMLFormElement>, chapterId: string) => void;
   onDeleteChapter: (chapter: OutlineChapter) => void;
-  onMoveChapterUp: (section: OutlineSection, chapterId: string) => void;
-  onMoveChapterDown: (section: OutlineSection, chapterId: string) => void;
   onReorderChapters: (section: OutlineSection, orderedIds: string[]) => void;
   onCreateScene: (chapterId: string, title: string) => void;
   onSelectScene: (sceneId: string) => void;
   onDeleteScene: (sceneId: string, sceneTitle: string) => void;
-  onMoveSceneUp: (chapter: OutlineChapter, sceneId: string) => void;
-  onMoveSceneDown: (chapter: OutlineChapter, sceneId: string) => void;
   onReorderScenes: (chapter: OutlineChapter, orderedIds: string[]) => void;
 };
 
@@ -94,8 +86,6 @@ export function SectionItem({
   reorderSectionPending,
   reorderChapterPending,
   reorderScenePending,
-  canMoveUp,
-  canMoveDown,
   isCollapsed,
   collapsedChapterIds,
   onSectionTitleChange,
@@ -104,8 +94,6 @@ export function SectionItem({
   onCancelEditSection,
   onSubmitSection,
   onDeleteSection,
-  onMoveSectionUp,
-  onMoveSectionDown,
   onToggleSection,
   onToggleChapter,
   onCreateChapter,
@@ -115,14 +103,10 @@ export function SectionItem({
   onCancelEditChapter,
   onSubmitChapter,
   onDeleteChapter,
-  onMoveChapterUp,
-  onMoveChapterDown,
   onReorderChapters,
   onCreateScene,
   onSelectScene,
   onDeleteScene,
-  onMoveSceneUp,
-  onMoveSceneDown,
   onReorderScenes,
 }: SectionItemProps) {
   const { attributes, listeners, setActivatorNodeRef, setNodeRef, transform, transition, isDragging } = useSortable({
@@ -177,7 +161,7 @@ export function SectionItem({
       <div className="border-b border-zinc-100 bg-white px-3 py-3">
         {editingSectionId === section.id ? (
           <form onSubmit={(event) => onSubmitSection(event, section.id)} className="grid gap-2">
-            <Field label="Nome da secao">
+            <Field label="Nome da seção">
               <input
                 value={sectionTitle}
                 onChange={(event) => onSectionTitleChange(event.target.value)}
@@ -212,7 +196,7 @@ export function SectionItem({
               <div className="flex min-w-0 flex-1 items-center gap-2.5">
                 <CollapseChevronButton
                   isExpanded={!isCollapsed}
-                  label={`${isCollapsed ? "Expandir" : "Recolher"} secao ${section.title}`}
+                  label={`${isCollapsed ? "Expandir" : "Recolher"} seção ${section.title}`}
                   onClick={() => onToggleSection(section.id)}
                 />
                 <button
@@ -220,12 +204,12 @@ export function SectionItem({
                   ref={setActivatorNodeRef}
                   className="min-w-0 flex-1 cursor-grab rounded-md text-left transition hover:bg-zinc-50 active:cursor-grabbing focus:outline-none focus:ring-2 focus:ring-zinc-800 focus:ring-offset-2"
                   aria-expanded={!isCollapsed}
-                  aria-label={`${isCollapsed ? "Expandir" : "Recolher"} secao ${section.title}`}
+                  aria-label={`${isCollapsed ? "Expandir" : "Recolher"} seção ${section.title}`}
                   onClick={() => onToggleSection(section.id)}
                   {...attributes}
                   {...listeners}
                 >
-                  <p className="text-[11px] font-medium uppercase text-zinc-500">Secao · {section.type}</p>
+                  <p className="text-[11px] font-medium uppercase text-zinc-500">Seção · {section.type}</p>
                   <h2 className="truncate text-sm font-semibold text-zinc-900">{section.title}</h2>
                 </button>
               </div>
@@ -234,36 +218,14 @@ export function SectionItem({
             <div className="flex flex-wrap gap-1.5 opacity-70 transition group-hover/section:opacity-100 focus-within:opacity-100">
               <button
                 type="button"
-                aria-label={`Reordenar secao ${section.title}`}
-                title="Reordenar secao"
+                aria-label={`Reordenar seção ${section.title}`}
+                title="Reordenar seção"
                 disabled={reorderSectionPending}
-                className="inline-flex min-h-8 cursor-grab items-center justify-center rounded-md px-2 py-1 text-sm font-medium text-zinc-700 transition hover:bg-zinc-100 active:cursor-grabbing disabled:cursor-not-allowed disabled:opacity-70"
+                className="inline-flex min-h-8 cursor-grab items-center justify-center rounded-md px-2 py-1 text-sm font-medium text-zinc-700 transition hover:bg-zinc-100 active:cursor-grabbing focus:outline-none focus:ring-2 focus:ring-zinc-800 focus:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-70"
                 {...listeners}
               >
                 ::
               </button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                aria-label={`Mover secao ${section.title} para cima`}
-                title="Mover para cima"
-                disabled={!canMoveUp || reorderSectionPending}
-                onClick={() => onMoveSectionUp(section.id)}
-              >
-                ↑
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                aria-label={`Mover secao ${section.title} para baixo`}
-                title="Mover para baixo"
-                disabled={!canMoveDown || reorderSectionPending}
-                onClick={() => onMoveSectionDown(section.id)}
-              >
-                ↓
-              </Button>
               <Button type="button" variant="ghost" size="sm" onClick={() => onStartEditSection(section)}>
                 Editar
               </Button>
@@ -279,15 +241,15 @@ export function SectionItem({
         <div className="grid gap-3 bg-zinc-50/40 p-3">
           <InlineCreateForm
             compact
-            ariaLabel={`Novo capitulo em ${section.title}`}
-            placeholder="Novo capitulo"
+            ariaLabel={`Novo capítulo em ${section.title}`}
+            placeholder="Novo capítulo"
             buttonLabel="Cap."
             disabled={createChapterPending}
             onCreate={(title) => onCreateChapter(section.id, title)}
           />
 
           {section.chapters.length === 0 ? (
-            <EmptyState size="sm" title="Nenhum capitulo" description="Esta secao ainda nao tem capitulos." />
+            <EmptyState size="sm" title="Nenhum capítulo" description="Esta seção ainda não tem capítulos." />
           ) : (
             <DndContext
               sensors={chapterSensors}
@@ -298,12 +260,10 @@ export function SectionItem({
             >
               <SortableContext items={section.chapters.map((chapter) => chapter.id)} strategy={verticalListSortingStrategy}>
                 <div className="grid gap-4">
-                  {section.chapters.map((chapter, chapterIndex) => (
+                  {section.chapters.map((chapter) => (
                     <ChapterItem
                       key={chapter.id}
                       chapter={chapter}
-                      canMoveUp={chapterIndex > 0}
-                      canMoveDown={chapterIndex < section.chapters.length - 1}
                       isCollapsed={collapsedChapterIds.has(chapter.id)}
                       isEditing={editingChapterId === chapter.id}
                       chapterTitle={chapterTitle}
@@ -321,14 +281,10 @@ export function SectionItem({
                       onCancelEdit={onCancelEditChapter}
                       onSubmit={onSubmitChapter}
                       onDeleteChapter={onDeleteChapter}
-                      onMoveChapterUp={(chapterId) => onMoveChapterUp(section, chapterId)}
-                      onMoveChapterDown={(chapterId) => onMoveChapterDown(section, chapterId)}
                       onToggleChapter={onToggleChapter}
                       onCreateScene={onCreateScene}
                       onSelectScene={onSelectScene}
                       onDeleteScene={onDeleteScene}
-                      onMoveSceneUp={onMoveSceneUp}
-                      onMoveSceneDown={onMoveSceneDown}
                       onReorderScenes={onReorderScenes}
                     />
                   ))}
