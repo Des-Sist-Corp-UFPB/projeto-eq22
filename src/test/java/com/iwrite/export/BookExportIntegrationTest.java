@@ -15,6 +15,7 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.containsString;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
@@ -33,7 +34,7 @@ class BookExportIntegrationTest extends PostgresIntegrationTest {
         var chapter = createChapter(section, "Capitulo");
         createScene(chapter, "Cena secreta", SceneStatus.DRAFT, 0, "texto da cena");
 
-        mockMvc.perform(get("/api/books/{bookId}/export", book.id()))
+        mockMvc.perform(get("/api/books/{bookId}/export/markdown", book.id()))
                 .andExpect(status().isOk())
                 .andExpect(content().contentType("text/markdown;charset=UTF-8"))
                 .andExpect(header().string(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"livro-sem-titulos.md\""))
@@ -56,7 +57,7 @@ class BookExportIntegrationTest extends PostgresIntegrationTest {
         var chapter = chapterService.create(section.id(), new ChapterRequest("Capitulo", null, 0));
         createScene(chapter, "Cena visivel", SceneStatus.DRAFT, 0, "texto da cena");
 
-        mockMvc.perform(get("/api/books/{bookId}/export", book.id())
+        mockMvc.perform(get("/api/books/{bookId}/export/markdown", book.id())
                         .param("includeSceneTitles", "true"))
                 .andExpect(status().isOk())
                 .andExpect(content().string("""
@@ -83,11 +84,11 @@ class BookExportIntegrationTest extends PostgresIntegrationTest {
         createScene(chapter, "Cena preenchida", SceneStatus.DRAFT, 0, "texto");
         createScene(chapter, "Cena vazia", SceneStatus.DRAFT, 1, null);
 
-        mockMvc.perform(get("/api/books/{bookId}/export", book.id()))
+        mockMvc.perform(get("/api/books/{bookId}/export/markdown", book.id()))
                 .andExpect(status().isOk())
                 .andExpect(content().string(not(containsString("Cena vazia"))));
 
-        mockMvc.perform(get("/api/books/{bookId}/export", book.id())
+        mockMvc.perform(get("/api/books/{bookId}/export/markdown", book.id())
                         .param("includeSceneTitles", "true")
                         .param("includeEmptyScenes", "true"))
                 .andExpect(status().isOk())
@@ -116,7 +117,7 @@ class BookExportIntegrationTest extends PostgresIntegrationTest {
         sceneService.updateContent(scene.id(), new SceneContentRequest("""
                 {"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Antes"},{"type":"text","text":" marcado ","marks":[{"type":"bold"},{"type":"italic"}]},{"type":"text","text":"depois"}]}]}""", "fallback"));
 
-        mockMvc.perform(get("/api/books/{bookId}/export", book.id()))
+        mockMvc.perform(get("/api/books/{bookId}/export/markdown", book.id()))
                 .andExpect(status().isOk())
                 .andExpect(content().string("""
                         # Livro formatado
@@ -137,7 +138,7 @@ class BookExportIntegrationTest extends PostgresIntegrationTest {
         sceneService.updateContent(scene.id(), new SceneContentRequest("""
                 {"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Disse "},{"type":"text","text":"ola,","marks":[{"type":"bold"}]},{"type":"text","text":" e "},{"type":"text","text":"corra!","marks":[{"type":"italic"}]}]}]}""", "fallback"));
 
-        mockMvc.perform(get("/api/books/{bookId}/export", book.id()))
+        mockMvc.perform(get("/api/books/{bookId}/export/markdown", book.id()))
                 .andExpect(status().isOk())
                 .andExpect(content().string("""
                         # Livro com pontuacao
@@ -158,7 +159,7 @@ class BookExportIntegrationTest extends PostgresIntegrationTest {
         sceneService.updateContent(scene.id(), new SceneContentRequest("""
                 {"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Antes "},{"type":"text","text":"palavra ","marks":[{"type":"bold"}]},{"type":"text","text":"seguinte"}]}]}""", "fallback"));
 
-        mockMvc.perform(get("/api/books/{bookId}/export", book.id()))
+        mockMvc.perform(get("/api/books/{bookId}/export/markdown", book.id()))
                 .andExpect(status().isOk())
                 .andExpect(content().string("""
                         # Livro sem colar
@@ -179,7 +180,7 @@ class BookExportIntegrationTest extends PostgresIntegrationTest {
         sceneService.updateContent(scene.id(), new SceneContentRequest("""
                 {"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"*** texto comum"}]}]}""", "fallback"));
 
-        mockMvc.perform(get("/api/books/{bookId}/export", book.id()))
+        mockMvc.perform(get("/api/books/{bookId}/export/markdown", book.id()))
                 .andExpect(status().isOk())
                 .andExpect(content().string("""
                         # Livro com asteriscos
@@ -200,7 +201,7 @@ class BookExportIntegrationTest extends PostgresIntegrationTest {
         sceneService.updateContent(scene.id(), new SceneContentRequest("""
                 {"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"# titulo falso"},{"type":"hardBreak"},{"type":"text","text":"> citacao falsa"},{"type":"hardBreak"},{"type":"text","text":"- item falso"}]}]}""", "fallback"));
 
-        mockMvc.perform(get("/api/books/{bookId}/export", book.id()))
+        mockMvc.perform(get("/api/books/{bookId}/export/markdown", book.id()))
                 .andExpect(status().isOk())
                 .andExpect(content().string("""
                         # Livro com escapes
@@ -223,7 +224,7 @@ class BookExportIntegrationTest extends PostgresIntegrationTest {
         sceneService.updateContent(scene.id(), new SceneContentRequest("""
                 {"type":"doc","content":[{"type":"heading","attrs":{"level":1},"content":[{"type":"text","text":"Titulo interno"}]},{"type":"heading","attrs":{"level":3},"content":[{"type":"text","text":"Subtitulo interno"}]}]}""", "fallback"));
 
-        mockMvc.perform(get("/api/books/{bookId}/export", book.id()))
+        mockMvc.perform(get("/api/books/{bookId}/export/markdown", book.id()))
                 .andExpect(status().isOk())
                 .andExpect(content().string("""
                         # Livro com heading
@@ -246,7 +247,7 @@ class BookExportIntegrationTest extends PostgresIntegrationTest {
         sceneService.updateContent(scene.id(), new SceneContentRequest("""
                 {"type":"doc","content":[{"type":"heading","attrs":{"level":4},"content":[{"type":"text","text":"Titulo nivel quatro"}]},{"type":"heading","attrs":{"level":5},"content":[{"type":"text","text":"Titulo nivel cinco"}]},{"type":"heading","attrs":{"level":6},"content":[{"type":"text","text":"Titulo nivel seis"}]}]}""", "fallback"));
 
-        mockMvc.perform(get("/api/books/{bookId}/export", book.id()))
+        mockMvc.perform(get("/api/books/{bookId}/export/markdown", book.id()))
                 .andExpect(status().isOk())
                 .andExpect(content().string("""
                         # Livro com headings profundos
@@ -271,7 +272,7 @@ class BookExportIntegrationTest extends PostgresIntegrationTest {
         sceneService.updateContent(scene.id(), new SceneContentRequest("""
                 {"type":"doc","content":[{"type":"bulletList","content":[{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"Item um"}]}]},{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"Item dois","marks":[{"type":"bold"}]}]}]}]}]}""", "fallback"));
 
-        mockMvc.perform(get("/api/books/{bookId}/export", book.id()))
+        mockMvc.perform(get("/api/books/{bookId}/export/markdown", book.id()))
                 .andExpect(status().isOk())
                 .andExpect(content().string("""
                         # Livro com lista
@@ -293,7 +294,7 @@ class BookExportIntegrationTest extends PostgresIntegrationTest {
         sceneService.updateContent(scene.id(), new SceneContentRequest("""
                 {"type":"doc","content":[{"type":"blockquote","content":[{"type":"paragraph","content":[{"type":"text","text":"Texto citado"}]}]}]}""", "fallback"));
 
-        mockMvc.perform(get("/api/books/{bookId}/export", book.id()))
+        mockMvc.perform(get("/api/books/{bookId}/export/markdown", book.id()))
                 .andExpect(status().isOk())
                 .andExpect(content().string("""
                         # Livro com citacao
@@ -314,7 +315,7 @@ class BookExportIntegrationTest extends PostgresIntegrationTest {
         sceneService.updateContent(scene.id(), new SceneContentRequest("""
                 {"type":"doc","content":[{"type":"codeBlock","content":[{"type":"text","text":"linha 1\\nlinha 2"}]}]}""", "fallback"));
 
-        mockMvc.perform(get("/api/books/{bookId}/export", book.id()))
+        mockMvc.perform(get("/api/books/{bookId}/export/markdown", book.id()))
                 .andExpect(status().isOk())
                 .andExpect(content().string("""
                         # Livro com codigo
@@ -338,7 +339,7 @@ class BookExportIntegrationTest extends PostgresIntegrationTest {
         sceneService.updateContent(scene.id(), new SceneContentRequest("""
                 {"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"inicio json"}]},{"type":"unknownBlock","content":[{"type":"text","text":"texto importante"}]},{"type":"paragraph","content":[{"type":"text","text":"fim json"}]}]}""", "fallback completo"));
 
-        mockMvc.perform(get("/api/books/{bookId}/export", book.id()))
+        mockMvc.perform(get("/api/books/{bookId}/export/markdown", book.id()))
                 .andExpect(status().isOk())
                 .andExpect(content().string("""
                         # Livro fallback desconhecido
@@ -358,7 +359,7 @@ class BookExportIntegrationTest extends PostgresIntegrationTest {
         var scene = createScene(chapter, "Cena", SceneStatus.DRAFT, 0, "original");
         sceneService.updateContent(scene.id(), new SceneContentRequest("{invalid", "texto fallback"));
 
-        mockMvc.perform(get("/api/books/{bookId}/export", book.id()))
+        mockMvc.perform(get("/api/books/{bookId}/export/markdown", book.id()))
                 .andExpect(status().isOk())
                 .andExpect(content().string("""
                         # Livro fallback invalido
@@ -378,7 +379,7 @@ class BookExportIntegrationTest extends PostgresIntegrationTest {
         var scene = createScene(chapter, "Cena", SceneStatus.DRAFT, 0, "original");
         sceneService.updateContent(scene.id(), new SceneContentRequest("{\"type\":\"doc\",\"content\":[]}", "texto fallback"));
 
-        mockMvc.perform(get("/api/books/{bookId}/export", book.id()))
+        mockMvc.perform(get("/api/books/{bookId}/export/markdown", book.id()))
                 .andExpect(status().isOk())
                 .andExpect(content().string("""
                         # Livro fallback vazio
@@ -388,5 +389,13 @@ class BookExportIntegrationTest extends PostgresIntegrationTest {
                         ### Capitulo
 
                         texto fallback"""));
+    }
+
+    @Test
+    void legacyGenericExportEndpointNoLongerMaps() throws Exception {
+        var book = createBook("Livro legado");
+
+        mockMvc.perform(get("/api/books/{bookId}/export", book.id()))
+                .andExpect(result -> assertThat(result.getResponse().getStatus() / 100).isNotEqualTo(2));
     }
 }

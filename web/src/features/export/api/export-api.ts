@@ -9,7 +9,7 @@ export type BookExportOptions = {
 };
 
 const EXPORT_FORMAT_CONFIG: Record<BookExportFormat, { path: string; fallbackFileName: string }> = {
-  markdown: { path: "export", fallbackFileName: "manuscrito.md" },
+  markdown: { path: "export/markdown", fallbackFileName: "manuscrito.md" },
   docx: { path: "export/docx", fallbackFileName: "manuscrito.docx" },
 };
 

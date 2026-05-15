@@ -30,6 +30,28 @@ describe("ExportManuscriptButton", () => {
     expect(screen.getByRole("button", { name: "Baixar manuscrito" })).toBeInTheDocument();
   });
 
+  test("Markdown padrao chama o endpoint markdown com query params selecionados", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("conteudo markdown", {
+        status: 200,
+        headers: { "content-disposition": 'attachment; filename="livro.md"' },
+      })
+    );
+
+    renderWithClient(<ExportManuscriptButton bookId="book-1" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Exportar manuscrito" }));
+    fireEvent.click(screen.getByLabelText(/Incluir titulos das cenas/));
+    fireEvent.click(screen.getByLabelText(/Incluir cenas vazias/));
+    fireEvent.click(screen.getByRole("button", { name: "Baixar manuscrito" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "http://localhost:8085/api/books/book-1/export/markdown?includeSceneTitles=true&includeEmptyScenes=true"
+      );
+    });
+  });
+
   test("selecionar DOCX chama o endpoint docx com query params selecionados", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response("conteudo docx", {

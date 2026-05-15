@@ -25,7 +25,7 @@ public class BookExportController {
         this.bookExportService = bookExportService;
     }
 
-    @GetMapping("/{bookId}/export")
+    @GetMapping("/{bookId}/export/markdown")
     public ResponseEntity<String> exportMarkdown(
             @PathVariable UUID bookId,
             @RequestParam(defaultValue = "false") boolean includeSceneTitles,
