@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
@@ -15,19 +15,175 @@ import { SceneEditor } from "@/features/scenes/components/scene-editor";
 import { queryKeys } from "@/lib/query/keys";
 
 type WorkspaceMode = "overview" | "scenes" | "characters" | "locations" | "items";
+const FOCUS_MODE_STORAGE_KEY = "iwrite.focusMode.enabled";
+
+function readStoredFocusMode() {
+  if (typeof window === "undefined") {
+    return false;
+  }
+
+  try {
+    return window.localStorage.getItem(FOCUS_MODE_STORAGE_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
+function writeStoredFocusMode(isEnabled: boolean) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(FOCUS_MODE_STORAGE_KEY, String(isEnabled));
+  } catch {
+    // localStorage can be blocked; focus mode still works for the current session.
+  }
+}
+
+function isKeyboardEventFromInteractiveTarget(target: EventTarget | null, allowContentEditable: boolean) {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+
+  const tagName = target.tagName.toLowerCase();
+  const isFormControl = tagName === "input" || tagName === "textarea" || tagName === "select";
+  const isButtonLike = tagName === "button" || tagName === "a";
+  const isInModal = Boolean(target.closest('[role="dialog"], [aria-modal="true"]'));
+
+  return isFormControl || isButtonLike || isInModal || (!allowContentEditable && target.isContentEditable);
+}
 
 export function BookWorkspace({ bookId }: { bookId: string }) {
   const [selectedSceneId, setSelectedSceneId] = useState<string | null>(null);
   const [mode, setMode] = useState<WorkspaceMode>("scenes");
+  const [isFocusMode, setIsFocusMode] = useState(false);
+  const [isFullscreenAvailable, setIsFullscreenAvailable] = useState(false);
+  const [isFullscreenActive, setIsFullscreenActive] = useState(false);
   const outlineQuery = useQuery({
     queryKey: queryKeys.outline(bookId),
     queryFn: () => getOutline(bookId),
   });
 
   const outline = outlineQuery.data;
+  const isScenesFocusMode = mode === "scenes" && isFocusMode;
+
+  const exitNativeFullscreen = useCallback(() => {
+    if (typeof document === "undefined" || !document.fullscreenElement || !document.exitFullscreen) {
+      return;
+    }
+
+    void document.exitFullscreen().catch(() => undefined);
+  }, []);
+
+  const handleEnterFocusMode = useCallback(() => {
+    if (mode !== "scenes" || !selectedSceneId) {
+      return;
+    }
+
+    setIsFocusMode(true);
+    writeStoredFocusMode(true);
+  }, [mode, selectedSceneId]);
+
+  const handleExitFocusMode = useCallback(() => {
+    setIsFocusMode(false);
+    writeStoredFocusMode(false);
+    exitNativeFullscreen();
+  }, [exitNativeFullscreen]);
+
+  const handleToggleFocusMode = useCallback(() => {
+    if (mode !== "scenes" || !selectedSceneId) {
+      return;
+    }
+
+    if (isFocusMode) {
+      handleExitFocusMode();
+      return;
+    }
+
+    handleEnterFocusMode();
+  }, [handleEnterFocusMode, handleExitFocusMode, isFocusMode, mode, selectedSceneId]);
+
+  const handleToggleFullscreen = useCallback(() => {
+    if (typeof document === "undefined") {
+      return;
+    }
+
+    if (document.fullscreenElement) {
+      exitNativeFullscreen();
+      return;
+    }
+
+    const root = document.documentElement;
+    if (!root.requestFullscreen) {
+      return;
+    }
+
+    void root.requestFullscreen().catch(() => undefined);
+  }, [exitNativeFullscreen]);
+
+  function handleModeChange(nextMode: WorkspaceMode) {
+    setMode(nextMode);
+    if (nextMode !== "scenes") {
+      handleExitFocusMode();
+    }
+  }
+
+  function handleSceneDeleted() {
+    setSelectedSceneId(null);
+    handleExitFocusMode();
+  }
+
+  useEffect(() => {
+    if (mode === "scenes" && selectedSceneId && readStoredFocusMode()) {
+      setIsFocusMode(true);
+    }
+  }, [mode, selectedSceneId]);
+
+  useEffect(() => {
+    if (typeof document === "undefined") {
+      return;
+    }
+
+    setIsFullscreenAvailable(
+      typeof document.documentElement.requestFullscreen === "function" && typeof document.exitFullscreen === "function"
+    );
+
+    function handleFullscreenChange() {
+      setIsFullscreenActive(Boolean(document.fullscreenElement));
+    }
+
+    handleFullscreenChange();
+    document.addEventListener("fullscreenchange", handleFullscreenChange);
+    return () => document.removeEventListener("fullscreenchange", handleFullscreenChange);
+  }, []);
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      const isFocusShortcut =
+        event.ctrlKey && event.shiftKey && !event.altKey && !event.metaKey && event.key.toLowerCase() === "f";
+
+      if (isFocusShortcut) {
+        if (isKeyboardEventFromInteractiveTarget(event.target, true)) {
+          return;
+        }
+        event.preventDefault();
+        handleToggleFocusMode();
+        return;
+      }
+
+      if (event.key === "Escape" && isScenesFocusMode && !isKeyboardEventFromInteractiveTarget(event.target, false)) {
+        handleExitFocusMode();
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [handleExitFocusMode, handleToggleFocusMode, isScenesFocusMode]);
 
   return (
-    <main className="grid h-screen grid-rows-[64px_1fr] overflow-hidden bg-zinc-50 text-zinc-950">
+    <main className={`grid h-screen overflow-hidden bg-zinc-50 text-zinc-950 ${isScenesFocusMode ? "grid-rows-[1fr]" : "grid-rows-[64px_1fr]"}`}>
+      {isScenesFocusMode ? null : (
       <header className="flex min-w-0 items-center justify-between gap-4 border-b border-zinc-200 bg-white px-4 shadow-sm shadow-zinc-200/60 md:px-6">
         <div className="flex min-w-0 items-center gap-4">
           <Link
@@ -51,7 +207,7 @@ export function BookWorkspace({ bookId }: { bookId: string }) {
               type="button"
               size="sm"
               variant={mode === "overview" ? "primary" : "ghost"}
-              onClick={() => setMode("overview")}
+              onClick={() => handleModeChange("overview")}
             >
               Visão geral
             </Button>
@@ -59,7 +215,7 @@ export function BookWorkspace({ bookId }: { bookId: string }) {
               type="button"
               size="sm"
               variant={mode === "scenes" ? "primary" : "ghost"}
-              onClick={() => setMode("scenes")}
+              onClick={() => handleModeChange("scenes")}
             >
               Cenas
             </Button>
@@ -67,7 +223,7 @@ export function BookWorkspace({ bookId }: { bookId: string }) {
               type="button"
               size="sm"
               variant={mode === "characters" ? "primary" : "ghost"}
-              onClick={() => setMode("characters")}
+              onClick={() => handleModeChange("characters")}
             >
               Personagens
             </Button>
@@ -75,11 +231,11 @@ export function BookWorkspace({ bookId }: { bookId: string }) {
               type="button"
               size="sm"
               variant={mode === "locations" ? "primary" : "ghost"}
-              onClick={() => setMode("locations")}
+              onClick={() => handleModeChange("locations")}
             >
               Localizações
             </Button>
-            <Button type="button" size="sm" variant={mode === "items" ? "primary" : "ghost"} onClick={() => setMode("items")}>
+            <Button type="button" size="sm" variant={mode === "items" ? "primary" : "ghost"} onClick={() => handleModeChange("items")}>
               Itens
             </Button>
           </div>
@@ -89,19 +245,30 @@ export function BookWorkspace({ bookId }: { bookId: string }) {
           </Badge>
         </div>
       </header>
+      )}
 
-      <div className="grid min-h-0 grid-cols-1 overflow-hidden md:grid-cols-[340px_minmax(0,1fr)]">
-        {mode === "scenes" ? (
+      <div className={`grid min-h-0 grid-cols-1 overflow-hidden ${isScenesFocusMode ? "" : "md:grid-cols-[340px_minmax(0,1fr)]"}`}>
+        {mode === "scenes" && !isScenesFocusMode ? (
           <div className="min-h-0 overflow-hidden border-r border-zinc-200 bg-white">
             <OutlineSidebar bookId={bookId} selectedSceneId={selectedSceneId} onSelectScene={setSelectedSceneId} />
           </div>
         ) : null}
 
-        <div className={`min-h-0 overflow-hidden bg-zinc-100/70 ${mode !== "scenes" ? "md:col-span-2" : ""}`}>
+        <div className={`min-h-0 overflow-hidden bg-zinc-100/70 ${mode !== "scenes" || isScenesFocusMode ? "md:col-span-2" : ""}`}>
           {mode === "overview" ? (
             <BookDashboard bookId={bookId} />
           ) : mode === "scenes" ? (
-            <SceneEditor bookId={bookId} sceneId={selectedSceneId} onSceneDeleted={() => setSelectedSceneId(null)} />
+            <SceneEditor
+              bookId={bookId}
+              sceneId={selectedSceneId}
+              isFocusMode={isScenesFocusMode}
+              isFullscreenAvailable={isFullscreenAvailable}
+              isFullscreenActive={isFullscreenActive}
+              onEnterFocusMode={handleEnterFocusMode}
+              onExitFocusMode={handleExitFocusMode}
+              onToggleFullscreen={handleToggleFullscreen}
+              onSceneDeleted={handleSceneDeleted}
+            />
           ) : mode === "characters" ? (
             <CharactersPanel bookId={bookId} />
           ) : mode === "locations" ? (

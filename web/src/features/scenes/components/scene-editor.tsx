@@ -23,6 +23,12 @@ const PLANNING_PANEL_STORAGE_KEY = "iwrite.scenePlanningPanelOpen";
 type SceneEditorProps = {
   bookId: string;
   sceneId: string | null;
+  isFocusMode?: boolean;
+  isFullscreenAvailable?: boolean;
+  isFullscreenActive?: boolean;
+  onEnterFocusMode?: () => void;
+  onExitFocusMode?: () => void;
+  onToggleFullscreen?: () => void;
   onSceneDeleted: () => void;
 };
 
@@ -32,7 +38,17 @@ type SaveContentVariables = {
   contentText: string;
 };
 
-export function SceneEditor({ bookId, sceneId, onSceneDeleted }: SceneEditorProps) {
+export function SceneEditor({
+  bookId,
+  sceneId,
+  isFocusMode = false,
+  isFullscreenAvailable = false,
+  isFullscreenActive = false,
+  onEnterFocusMode,
+  onExitFocusMode,
+  onToggleFullscreen,
+  onSceneDeleted,
+}: SceneEditorProps) {
   const queryClient = useQueryClient();
   const activeSceneIdRef = useRef<string | null>(sceneId);
   const loadedSceneIdRef = useRef<string | null>(null);
@@ -310,8 +326,12 @@ export function SceneEditor({ bookId, sceneId, onSceneDeleted }: SceneEditorProp
           : "saved";
 
   return (
-    <section className="h-full overflow-y-auto bg-zinc-100/70 p-4 md:p-6 lg:p-8">
-      <Card className="mx-auto grid min-h-full max-w-7xl grid-rows-[auto_auto_auto_minmax(0,1fr)] overflow-hidden border-zinc-200 bg-white shadow-xl shadow-zinc-200/70">
+    <section className={`h-full overflow-y-auto bg-zinc-100/70 ${isFocusMode ? "p-2 md:p-4 lg:p-6" : "p-4 md:p-6 lg:p-8"}`}>
+      <Card
+        className={`mx-auto grid min-h-full grid-rows-[auto_auto_auto_minmax(0,1fr)] overflow-hidden border-zinc-200 bg-white ${
+          isFocusMode ? "max-w-6xl shadow-sm shadow-zinc-200/70" : "max-w-7xl shadow-xl shadow-zinc-200/70"
+        }`}
+      >
         <SceneEditorHeader
           scene={scene}
           metadataFormId={METADATA_FORM_ID}
@@ -321,6 +341,12 @@ export function SceneEditor({ bookId, sceneId, onSceneDeleted }: SceneEditorProp
           contentPending={contentMutation.isPending}
           deletePending={deleteMutation.isPending}
           deleteError={deleteMutation.isError}
+          isFocusMode={isFocusMode}
+          isFullscreenAvailable={isFullscreenAvailable}
+          isFullscreenActive={isFullscreenActive}
+          onEnterFocusMode={onEnterFocusMode}
+          onExitFocusMode={onExitFocusMode}
+          onToggleFullscreen={onToggleFullscreen}
           onSaveContent={() => handleSaveContent(scene.id)}
           onDeleteScene={handleDeleteScene}
         />
@@ -348,7 +374,7 @@ export function SceneEditor({ bookId, sceneId, onSceneDeleted }: SceneEditorProp
           }}
         />
 
-        <section className="border-b border-zinc-200 bg-white px-4 py-3 md:px-7">
+        <section className={`border-b border-zinc-200 bg-white px-4 py-3 md:px-7 ${isFocusMode ? "hidden" : ""}`}>
           <div className="rounded-lg border border-zinc-200 bg-zinc-50/70">
             <div className="flex flex-wrap items-center gap-3 px-3 py-3">
               <button
@@ -396,6 +422,7 @@ export function SceneEditor({ bookId, sceneId, onSceneDeleted }: SceneEditorProp
             isSuccess={contentMutation.isSuccess}
             isError={contentMutation.isError}
             saveStatus={contentSaveStatus}
+            isFocusMode={isFocusMode}
             onContentChange={(sourceSceneId, nextContentJson, nextContentText) => {
               if (sourceSceneId !== activeSceneIdRef.current) {
                 return;

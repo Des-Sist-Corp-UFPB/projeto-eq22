@@ -1,0 +1,228 @@
+import { fireEvent, screen, waitFor } from "@testing-library/react";
+import React from "react";
+import { beforeEach, describe, expect, test, vi } from "vitest";
+import { BookWorkspace } from "@/features/workspace/components/book-workspace";
+import type { BookOutline } from "@/features/outline/types";
+import { sceneForPlanning } from "@/test/fixtures";
+import { renderWithClient } from "@/test/test-utils";
+
+const outline: BookOutline = {
+  id: "book-1",
+  title: "Livro de teste",
+  status: "WRITING",
+  wordCount: 1200,
+  sections: [
+    {
+      id: "section-1",
+      title: "Parte 1",
+      type: "PART",
+      sortOrder: 0,
+      wordCount: 1200,
+      chapters: [
+        {
+          id: "chapter-1",
+          title: "Capitulo 1",
+          summary: null,
+          sortOrder: 0,
+          wordCount: 1200,
+          scenes: [
+            {
+              id: sceneForPlanning.id,
+              title: sceneForPlanning.title,
+              status: sceneForPlanning.status,
+              sortOrder: sceneForPlanning.sortOrder,
+              wordCount: sceneForPlanning.wordCount,
+            },
+          ],
+        },
+      ],
+    },
+  ],
+};
+
+const mocks = vi.hoisted(() => ({
+  getOutline: vi.fn(),
+  getScene: vi.fn(),
+  updateScene: vi.fn(),
+  updateSceneContent: vi.fn(),
+  deleteScene: vi.fn(),
+}));
+
+vi.mock("@/features/outline/api/outline-api", async () => {
+  const actual = await vi.importActual<typeof import("@/features/outline/api/outline-api")>("@/features/outline/api/outline-api");
+
+  return {
+    ...actual,
+    getOutline: mocks.getOutline,
+  };
+});
+
+vi.mock("@/features/scenes/api/scenes-api", () => ({
+  getScene: mocks.getScene,
+  updateScene: mocks.updateScene,
+  updateSceneContent: mocks.updateSceneContent,
+  deleteScene: mocks.deleteScene,
+}));
+
+vi.mock("@/features/scenes/editor/tiptap-editor", () => ({
+  TiptapEditor: ({ initialContentText }: { initialContentText?: string | null }) => (
+    <textarea aria-label="Editor de conteúdo" readOnly value={initialContentText ?? ""} />
+  ),
+}));
+
+describe("BookWorkspace focus mode", () => {
+  let fullscreenElement: Element | null;
+  let requestFullscreen: ReturnType<typeof vi.fn>;
+  let exitFullscreen: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    window.localStorage.clear();
+    fullscreenElement = null;
+    requestFullscreen = vi.fn(() => {
+      fullscreenElement = document.documentElement;
+      document.dispatchEvent(new Event("fullscreenchange"));
+      return Promise.resolve();
+    });
+    exitFullscreen = vi.fn(() => {
+      fullscreenElement = null;
+      document.dispatchEvent(new Event("fullscreenchange"));
+      return Promise.resolve();
+    });
+    Object.defineProperty(document, "fullscreenElement", {
+      configurable: true,
+      get: () => fullscreenElement,
+    });
+    Object.defineProperty(document.documentElement, "requestFullscreen", {
+      configurable: true,
+      value: requestFullscreen,
+    });
+    Object.defineProperty(document, "exitFullscreen", {
+      configurable: true,
+      value: exitFullscreen,
+    });
+    mocks.getOutline.mockResolvedValue(outline);
+    mocks.getScene.mockResolvedValue(sceneForPlanning);
+    mocks.updateScene.mockResolvedValue(sceneForPlanning);
+    mocks.updateSceneContent.mockResolvedValue(sceneForPlanning);
+    mocks.deleteScene.mockResolvedValue(undefined);
+  });
+
+  test("oculta o outline no foco e restaura mantendo a cena selecionada", async () => {
+    renderWithClient(<BookWorkspace bookId="book-1" />);
+
+    expect(await screen.findByText("Livro")).toBeInTheDocument();
+
+    const sceneRow = screen.getByText(sceneForPlanning.title).closest("button");
+    expect(sceneRow).not.toBeNull();
+    fireEvent.click(sceneRow as HTMLButtonElement);
+
+    expect(await screen.findByRole("heading", { name: sceneForPlanning.title })).toBeInTheDocument();
+    expect(screen.getAllByText(`${sceneForPlanning.wordCount} palavras`).length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Salvo").length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: /Salvar conte.do/ })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Modo foco" }));
+
+    await waitFor(() => {
+      expect(screen.queryByText("Livro")).not.toBeInTheDocument();
+    });
+    expect(screen.getByRole("heading", { name: sceneForPlanning.title })).toBeInTheDocument();
+    expect(screen.getAllByText(`${sceneForPlanning.wordCount} palavras`).length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Salvo").length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: /Salvar conte.do/ })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Sair do foco" }));
+
+    expect(await screen.findByText("Livro")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: sceneForPlanning.title })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Modo foco" })).toBeInTheDocument();
+  });
+
+  test("restaura foco via localStorage apenas depois que uma cena e selecionada", async () => {
+    window.localStorage.setItem("iwrite.focusMode.enabled", "true");
+    renderWithClient(<BookWorkspace bookId="book-1" />);
+
+    expect(await screen.findByText("Livro")).toBeInTheDocument();
+
+    selectScene();
+
+    await waitFor(() => {
+      expect(screen.queryByText("Livro")).not.toBeInTheDocument();
+    });
+    expect(await screen.findByRole("heading", { name: sceneForPlanning.title })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Sair do foco" })).toBeInTheDocument();
+  });
+
+  test("nao restaura foco sem cena selecionada", async () => {
+    window.localStorage.setItem("iwrite.focusMode.enabled", "true");
+    renderWithClient(<BookWorkspace bookId="book-1" />);
+
+    expect(await screen.findByText("Livro")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Sair do foco" })).not.toBeInTheDocument();
+  });
+
+  test("salva a preferencia ao entrar e sair do foco", async () => {
+    renderWithClient(<BookWorkspace bookId="book-1" />);
+
+    await screen.findByText("Livro");
+    selectScene();
+    expect(await screen.findByRole("heading", { name: sceneForPlanning.title })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Modo foco" }));
+    expect(window.localStorage.getItem("iwrite.focusMode.enabled")).toBe("true");
+
+    fireEvent.click(screen.getByRole("button", { name: "Sair do foco" }));
+    expect(window.localStorage.getItem("iwrite.focusMode.enabled")).toBe("false");
+    expect(await screen.findByText("Livro")).toBeInTheDocument();
+  });
+
+  test("Ctrl+Shift+F alterna foco e Esc sai do foco", async () => {
+    renderWithClient(<BookWorkspace bookId="book-1" />);
+
+    await screen.findByText("Livro");
+    selectScene();
+    expect(await screen.findByRole("heading", { name: sceneForPlanning.title })).toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: "F", ctrlKey: true, shiftKey: true });
+    await waitFor(() => {
+      expect(screen.queryByText("Livro")).not.toBeInTheDocument();
+    });
+
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(await screen.findByText("Livro")).toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: "F", ctrlKey: true, shiftKey: true });
+    await waitFor(() => {
+      expect(screen.queryByText("Livro")).not.toBeInTheDocument();
+    });
+
+    fireEvent.keyDown(window, { key: "F", ctrlKey: true, shiftKey: true });
+    expect(await screen.findByText("Livro")).toBeInTheDocument();
+  });
+
+  test("mostra tela cheia em foco e sai da tela cheia ao sair do foco", async () => {
+    renderWithClient(<BookWorkspace bookId="book-1" />);
+
+    await screen.findByText("Livro");
+    selectScene();
+    expect(await screen.findByRole("heading", { name: sceneForPlanning.title })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Modo foco" }));
+    expect(await screen.findByRole("button", { name: "Tela cheia" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Tela cheia" }));
+    expect(requestFullscreen).toHaveBeenCalled();
+    expect(await screen.findByRole("button", { name: "Sair da tela cheia" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Sair do foco" }));
+    expect(exitFullscreen).toHaveBeenCalled();
+    expect(await screen.findByText("Livro")).toBeInTheDocument();
+  });
+});
+
+function selectScene() {
+  const sceneRow = screen.getByText(sceneForPlanning.title).closest("button");
+  expect(sceneRow).not.toBeNull();
+  fireEvent.click(sceneRow as HTMLButtonElement);
+}

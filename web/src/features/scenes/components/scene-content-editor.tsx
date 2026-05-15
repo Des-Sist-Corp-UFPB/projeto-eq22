@@ -10,6 +10,7 @@ type SceneContentEditorProps = {
   isSuccess: boolean;
   isError: boolean;
   saveStatus: ContentSaveStatus;
+  isFocusMode?: boolean;
   onContentChange: (sourceSceneId: string, contentJson: string, contentText: string) => void;
 };
 
@@ -35,11 +36,12 @@ export function SceneContentEditor({
   isSuccess,
   isError,
   saveStatus,
+  isFocusMode = false,
   onContentChange,
 }: SceneContentEditorProps) {
   return (
-    <div className="grid h-full min-h-0 gap-4 overflow-y-auto bg-white px-4 py-6 md:px-7">
-      <div className="mx-auto grid w-full max-w-5xl gap-4">
+    <div className={`grid h-full min-h-0 gap-4 overflow-y-auto bg-white ${isFocusMode ? "px-4 py-5 md:px-8 md:py-7" : "px-4 py-6 md:px-7"}`}>
+      <div className={`mx-auto grid w-full gap-4 ${isFocusMode ? "max-w-4xl" : "max-w-5xl"}`}>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h2 className="text-sm font-semibold text-zinc-950">Conteúdo textual</h2>
