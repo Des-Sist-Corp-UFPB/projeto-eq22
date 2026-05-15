@@ -39,7 +39,7 @@ public class BookExportService {
     }
 
     @Transactional(readOnly = true)
-    public String exportMarkdown(UUID bookId) {
+    public String exportMarkdown(UUID bookId, boolean includeSceneTitles, boolean includeEmptyScenes) {
         Book book = bookService.getBook(bookId);
         List<BookSection> sections = sectionRepository.findByBookIdOrderBySortOrderAsc(bookId);
         List<Chapter> chapters = chapterRepository.findByBookIdOrderBySortOrderAsc(bookId);
@@ -60,7 +60,7 @@ public class BookExportService {
 
             for (Chapter chapter : chaptersBySection.getOrDefault(section.getId(), List.of())) {
                 appendHeading(markdown, "###", chapter.getTitle());
-                appendChapterScenes(markdown, scenesByChapter.getOrDefault(chapter.getId(), List.of()));
+                appendChapterScenes(markdown, scenesByChapter.getOrDefault(chapter.getId(), List.of()), includeSceneTitles, includeEmptyScenes);
             }
         }
 
@@ -94,12 +94,17 @@ public class BookExportService {
         appendBlock(markdown, text);
     }
 
-    private void appendChapterScenes(StringBuilder markdown, List<Scene> scenes) {
+    private void appendChapterScenes(
+            StringBuilder markdown,
+            List<Scene> scenes,
+            boolean includeSceneTitles,
+            boolean includeEmptyScenes
+    ) {
         boolean hasPreviousSceneContent = false;
 
         for (Scene scene : scenes) {
-            String contentText = scene.getContentText();
-            if (contentText == null || contentText.isBlank()) {
+            String sceneBlock = buildSceneBlock(scene, includeSceneTitles, includeEmptyScenes);
+            if (sceneBlock == null) {
                 continue;
             }
 
@@ -107,9 +112,31 @@ public class BookExportService {
                 appendBlock(markdown, "---");
             }
 
-            appendBlock(markdown, contentText);
+            appendBlock(markdown, sceneBlock);
             hasPreviousSceneContent = true;
         }
+    }
+
+    private String buildSceneBlock(Scene scene, boolean includeSceneTitles, boolean includeEmptyScenes) {
+        String contentText = scene.getContentText();
+        boolean hasContent = contentText != null && !contentText.isBlank();
+
+        if (!hasContent && !includeEmptyScenes) {
+            return null;
+        }
+
+        StringBuilder sceneBlock = new StringBuilder();
+        if (includeSceneTitles) {
+            sceneBlock.append("#### ").append(scene.getTitle());
+        }
+        if (hasContent) {
+            if (!sceneBlock.isEmpty()) {
+                sceneBlock.append("\n\n");
+            }
+            sceneBlock.append(contentText);
+        }
+
+        return sceneBlock.isEmpty() ? null : sceneBlock.toString();
     }
 
     private void appendBlock(StringBuilder markdown, String block) {

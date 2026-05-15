@@ -7,6 +7,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.UUID;
@@ -24,8 +25,12 @@ public class BookExportController {
     }
 
     @GetMapping("/{bookId}/export")
-    public ResponseEntity<String> exportMarkdown(@PathVariable UUID bookId) {
-        String markdown = bookExportService.exportMarkdown(bookId);
+    public ResponseEntity<String> exportMarkdown(
+            @PathVariable UUID bookId,
+            @RequestParam(defaultValue = "false") boolean includeSceneTitles,
+            @RequestParam(defaultValue = "false") boolean includeEmptyScenes
+    ) {
+        String markdown = bookExportService.exportMarkdown(bookId, includeSceneTitles, includeEmptyScenes);
         String fileName = bookExportService.getMarkdownFileName(bookId);
 
         return ResponseEntity.ok()

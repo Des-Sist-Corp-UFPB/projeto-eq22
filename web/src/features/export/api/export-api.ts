@@ -1,8 +1,17 @@
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8085";
 const DEFAULT_EXPORT_FILE_NAME = "manuscrito.md";
 
-export async function downloadBookMarkdownExport(bookId: string) {
-  const response = await fetch(`${API_URL}/api/books/${bookId}/export`);
+export type BookMarkdownExportOptions = {
+  includeSceneTitles: boolean;
+  includeEmptyScenes: boolean;
+};
+
+export async function downloadBookMarkdownExport(bookId: string, options: BookMarkdownExportOptions) {
+  const params = new URLSearchParams({
+    includeSceneTitles: String(options.includeSceneTitles),
+    includeEmptyScenes: String(options.includeEmptyScenes),
+  });
+  const response = await fetch(`${API_URL}/api/books/${bookId}/export?${params.toString()}`);
 
   if (!response.ok) {
     throw new Error(await readExportErrorMessage(response));

@@ -2,10 +2,8 @@ package com.iwrite.export;
 
 import com.iwrite.book.dto.BookRequest;
 import com.iwrite.chapter.dto.ChapterRequest;
-import com.iwrite.chapter.dto.ChapterResponse;
 import com.iwrite.scene.entity.SceneStatus;
 import com.iwrite.section.dto.BookSectionRequest;
-import com.iwrite.section.dto.BookSectionResponse;
 import com.iwrite.section.entity.SectionType;
 import com.iwrite.support.PostgresIntegrationTest;
 import org.junit.jupiter.api.Test;
@@ -14,6 +12,8 @@ import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMock
 import org.springframework.http.HttpHeaders;
 import org.springframework.test.web.servlet.MockMvc;
 
+import static org.hamcrest.Matchers.not;
+import static org.hamcrest.Matchers.containsString;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
@@ -26,100 +26,83 @@ class BookExportIntegrationTest extends PostgresIntegrationTest {
     private MockMvc mockMvc;
 
     @Test
-    void fileNameUsesSanitizedBookTitle() throws Exception {
-        var book = createBook("A Garota da Biblioteca");
+    void exportOmitsSceneTitlesByDefault() throws Exception {
+        var book = createBook("Livro sem titulos");
+        var section = createSection(book, "Parte");
+        var chapter = createChapter(section, "Capitulo");
+        createScene(chapter, "Cena secreta", SceneStatus.DRAFT, 0, "texto da cena");
 
         mockMvc.perform(get("/api/books/{bookId}/export", book.id()))
                 .andExpect(status().isOk())
                 .andExpect(content().contentType("text/markdown;charset=UTF-8"))
-                .andExpect(header().string(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"a-garota-da-biblioteca.md\""))
-                .andExpect(header().string(HttpHeaders.ACCESS_CONTROL_EXPOSE_HEADERS, HttpHeaders.CONTENT_DISPOSITION));
-    }
-
-    @Test
-    void exportIncludesBookMetadataSectionsAndChapters() throws Exception {
-        var book = bookService.create(new BookRequest("Livro", "Subtitulo do livro", "Descricao do livro", null, null));
-        BookSectionResponse section = sectionService.create(book.id(), new BookSectionRequest("Parte 1", SectionType.PART, 0));
-        ChapterResponse chapter = chapterService.create(section.id(), new ChapterRequest("Capitulo 1", null, 0));
-        createScene(chapter, "Cena", SceneStatus.DRAFT, 0, "texto da cena");
-
-        mockMvc.perform(get("/api/books/{bookId}/export", book.id()))
-                .andExpect(status().isOk())
+                .andExpect(header().string(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"livro-sem-titulos.md\""))
+                .andExpect(header().string(HttpHeaders.ACCESS_CONTROL_EXPOSE_HEADERS, HttpHeaders.CONTENT_DISPOSITION))
+                .andExpect(content().string(not(containsString("Cena secreta"))))
                 .andExpect(content().string("""
-                        # Livro
-
-                        Subtitulo do livro
-
-                        Descricao do livro
-
-                        ## Parte 1
-
-                        ### Capitulo 1
-
-                        texto da cena"""));
-    }
-
-    @Test
-    void scenesInSameChapterAreSeparatedByDivider() throws Exception {
-        var book = createBook("Livro com cenas");
-        var section = createSection(book, "Parte");
-        var chapter = createChapter(section, "Capitulo");
-        createScene(chapter, "Cena 1", SceneStatus.DRAFT, 0, "primeira cena");
-        createScene(chapter, "Cena 2", SceneStatus.DRAFT, 1, "segunda cena");
-
-        mockMvc.perform(get("/api/books/{bookId}/export", book.id()))
-                .andExpect(status().isOk())
-                .andExpect(content().string("""
-                        # Livro com cenas
+                        # Livro sem titulos
 
                         ## Parte
 
                         ### Capitulo
 
-                        primeira cena
-
-                        ---
-
-                        segunda cena"""));
+                        texto da cena"""));
     }
 
     @Test
-    void contentFollowsSectionChapterAndSceneSortOrder() throws Exception {
-        var book = createBook("Livro ordenado");
-        BookSectionResponse secondSection = sectionService.create(book.id(), new BookSectionRequest("Segunda parte", SectionType.PART, 1));
-        BookSectionResponse firstSection = sectionService.create(book.id(), new BookSectionRequest("Primeira parte", SectionType.PART, 0));
-        ChapterResponse laterChapter = chapterService.create(firstSection.id(), new ChapterRequest("Capitulo depois", null, 1));
-        ChapterResponse earlierChapter = chapterService.create(firstSection.id(), new ChapterRequest("Capitulo antes", null, 0));
-        ChapterResponse secondSectionChapter = chapterService.create(secondSection.id(), new ChapterRequest("Capitulo outra parte", null, 0));
+    void exportIncludesSceneTitlesWhenRequested() throws Exception {
+        var book = bookService.create(new BookRequest("Livro com titulos", "Subtitulo", "Descricao", null, null));
+        var section = sectionService.create(book.id(), new BookSectionRequest("Parte", SectionType.PART, 0));
+        var chapter = chapterService.create(section.id(), new ChapterRequest("Capitulo", null, 0));
+        createScene(chapter, "Cena visivel", SceneStatus.DRAFT, 0, "texto da cena");
 
-        createScene(laterChapter, "Cena depois", SceneStatus.DRAFT, 0, "texto do capitulo depois");
-        createScene(earlierChapter, "Cena 2", SceneStatus.DRAFT, 1, "segunda cena do primeiro capitulo");
-        createScene(earlierChapter, "Cena 1", SceneStatus.DRAFT, 0, "primeira cena do primeiro capitulo");
-        createScene(secondSectionChapter, "Cena outra parte", SceneStatus.DRAFT, 0, "texto da outra parte");
+        mockMvc.perform(get("/api/books/{bookId}/export", book.id())
+                        .param("includeSceneTitles", "true"))
+                .andExpect(status().isOk())
+                .andExpect(content().string("""
+                        # Livro com titulos
+
+                        Subtitulo
+
+                        Descricao
+
+                        ## Parte
+
+                        ### Capitulo
+
+                        #### Cena visivel
+
+                        texto da cena"""));
+    }
+
+    @Test
+    void emptyScenesAppearOnlyWhenRequested() throws Exception {
+        var book = createBook("Livro com vazias");
+        var section = createSection(book, "Parte");
+        var chapter = createChapter(section, "Capitulo");
+        createScene(chapter, "Cena preenchida", SceneStatus.DRAFT, 0, "texto");
+        createScene(chapter, "Cena vazia", SceneStatus.DRAFT, 1, null);
 
         mockMvc.perform(get("/api/books/{bookId}/export", book.id()))
                 .andExpect(status().isOk())
+                .andExpect(content().string(not(containsString("Cena vazia"))));
+
+        mockMvc.perform(get("/api/books/{bookId}/export", book.id())
+                        .param("includeSceneTitles", "true")
+                        .param("includeEmptyScenes", "true"))
+                .andExpect(status().isOk())
                 .andExpect(content().string("""
-                        # Livro ordenado
+                        # Livro com vazias
 
-                        ## Primeira parte
+                        ## Parte
 
-                        ### Capitulo antes
+                        ### Capitulo
 
-                        primeira cena do primeiro capitulo
+                        #### Cena preenchida
+
+                        texto
 
                         ---
 
-                        segunda cena do primeiro capitulo
-
-                        ### Capitulo depois
-
-                        texto do capitulo depois
-
-                        ## Segunda parte
-
-                        ### Capitulo outra parte
-
-                        texto da outra parte"""));
+                        #### Cena vazia"""));
     }
 }
