@@ -49,10 +49,14 @@ describe("TiptapEditor toolbar", () => {
     expect(screen.getByRole("button", { name: "I" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Par.grafo/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /T.tulo/ })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Alinhar paragrafo a esquerda" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Centralizar paragrafo" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Alinhar paragrafo a direita" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Justificar paragrafo" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Alinhar à esquerda" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Centralizar" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Alinhar à direita" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Justificar" })).toBeInTheDocument();
+    expect(screen.queryByText("Esquerda")).not.toBeInTheDocument();
+    expect(screen.queryByText("Centro")).not.toBeInTheDocument();
+    expect(screen.queryByText("Direita")).not.toBeInTheDocument();
+    expect(screen.queryByText("Justificar")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Desfazer" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Refazer" })).toBeInTheDocument();
   });
@@ -60,7 +64,7 @@ describe("TiptapEditor toolbar", () => {
   test("aciona comando de alinhamento ao clicar em um botao", () => {
     renderEditor();
 
-    fireEvent.click(screen.getByRole("button", { name: "Centralizar paragrafo" }));
+    fireEvent.click(screen.getByRole("button", { name: "Centralizar" }));
 
     expect(mocks.setTextAlign).toHaveBeenCalledWith("center");
   });

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, type ReactNode } from "react";
 import type { Editor } from "@tiptap/react";
 import { EditorContent, useEditor, type JSONContent } from "@tiptap/react";
 import TextAlign from "@tiptap/extension-text-align";
@@ -45,18 +45,20 @@ function parseContentJson(contentJson: JSONContent | string | null | undefined):
 }
 
 type ToolbarButtonProps = {
-  label: string;
+  label: ReactNode;
   ariaLabel?: string;
+  title?: string;
   active?: boolean;
   disabled?: boolean;
   onClick: () => void;
 };
 
-function ToolbarButton({ label, ariaLabel, active, disabled, onClick }: ToolbarButtonProps) {
+function ToolbarButton({ label, ariaLabel, title, active, disabled, onClick }: ToolbarButtonProps) {
   return (
     <button
       type="button"
       aria-label={ariaLabel}
+      title={title}
       disabled={disabled}
       onClick={onClick}
       className={`inline-flex min-h-8 items-center justify-center rounded-md border px-2.5 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-50 ${
@@ -67,6 +69,47 @@ function ToolbarButton({ label, ariaLabel, active, disabled, onClick }: ToolbarB
     >
       {label}
     </button>
+  );
+}
+
+type AlignIconProps = {
+  align: "left" | "center" | "right" | "justify";
+};
+
+function AlignIcon({ align }: AlignIconProps) {
+  const lines: Record<AlignIconProps["align"], Array<{ x1: number; x2: number; y: number }>> = {
+    left: [
+      { x1: 3, x2: 21, y: 5 },
+      { x1: 3, x2: 15, y: 10 },
+      { x1: 3, x2: 21, y: 15 },
+      { x1: 3, x2: 13, y: 20 },
+    ],
+    center: [
+      { x1: 3, x2: 21, y: 5 },
+      { x1: 6, x2: 18, y: 10 },
+      { x1: 3, x2: 21, y: 15 },
+      { x1: 7, x2: 17, y: 20 },
+    ],
+    right: [
+      { x1: 3, x2: 21, y: 5 },
+      { x1: 9, x2: 21, y: 10 },
+      { x1: 3, x2: 21, y: 15 },
+      { x1: 11, x2: 21, y: 20 },
+    ],
+    justify: [
+      { x1: 3, x2: 21, y: 5 },
+      { x1: 3, x2: 21, y: 10 },
+      { x1: 3, x2: 21, y: 15 },
+      { x1: 3, x2: 21, y: 20 },
+    ],
+  };
+
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+      {lines[align].map((line) => (
+        <line key={`${line.x1}-${line.x2}-${line.y}`} x1={line.x1} x2={line.x2} y1={line.y} y2={line.y} />
+      ))}
+    </svg>
   );
 }
 
@@ -88,29 +131,33 @@ function TiptapToolbar({ editor }: { editor: Editor | null }) {
         onClick={() => editor?.chain().focus().toggleHeading({ level: 2 }).run()}
       />
       <ToolbarButton
-        label="Esquerda"
-        ariaLabel="Alinhar paragrafo a esquerda"
+        label={<AlignIcon align="left" />}
+        ariaLabel={"Alinhar \u00e0 esquerda"}
+        title="Alinhar a esquerda"
         active={editor?.isActive({ textAlign: "left" })}
         disabled={!editor}
         onClick={() => editor?.chain().focus().setTextAlign("left").run()}
       />
       <ToolbarButton
-        label="Centro"
-        ariaLabel="Centralizar paragrafo"
+        label={<AlignIcon align="center" />}
+        ariaLabel="Centralizar"
+        title="Centralizar"
         active={editor?.isActive({ textAlign: "center" })}
         disabled={!editor}
         onClick={() => editor?.chain().focus().setTextAlign("center").run()}
       />
       <ToolbarButton
-        label="Direita"
-        ariaLabel="Alinhar paragrafo a direita"
+        label={<AlignIcon align="right" />}
+        ariaLabel={"Alinhar \u00e0 direita"}
+        title="Alinhar a direita"
         active={editor?.isActive({ textAlign: "right" })}
         disabled={!editor}
         onClick={() => editor?.chain().focus().setTextAlign("right").run()}
       />
       <ToolbarButton
-        label="Justificar"
-        ariaLabel="Justificar paragrafo"
+        label={<AlignIcon align="justify" />}
+        ariaLabel="Justificar"
+        title="Justificar"
         active={editor?.isActive({ textAlign: "justify" })}
         disabled={!editor}
         onClick={() => editor?.chain().focus().setTextAlign("justify").run()}
