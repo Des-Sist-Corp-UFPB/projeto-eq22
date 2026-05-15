@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { CharactersPanel } from "@/features/characters/components/characters-panel";
 import { BookDashboard } from "@/features/dashboard/components/book-dashboard";
+import { ExportManuscriptButton } from "@/features/export/components/export-manuscript-button";
 import { ItemsPanel } from "@/features/items/components/items-panel";
 import { LocationsPanel } from "@/features/locations/components/locations-panel";
 import { getOutline } from "@/features/outline/api/outline-api";
@@ -240,6 +241,7 @@ export function BookWorkspace({ bookId }: { bookId: string }) {
             </Button>
           </div>
           {typeof outline?.wordCount === "number" ? <Badge>{outline.wordCount} palavras</Badge> : null}
+          <ExportManuscriptButton bookId={bookId} />
           <Badge variant="outline" className="hidden sm:inline-flex">
             Backend: localhost:8085
           </Badge>
