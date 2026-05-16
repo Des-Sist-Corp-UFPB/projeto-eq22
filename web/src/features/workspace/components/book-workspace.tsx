@@ -1,8 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -63,6 +63,8 @@ function isKeyboardEventFromInteractiveTarget(target: EventTarget | null, allowC
 
 export function BookWorkspace({ bookId, initialSceneId }: BookWorkspaceProps) {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const hasObservedInitialSearchParamsRef = useRef(false);
   const [selectedSceneId, setSelectedSceneId] = useState<string | null>(initialSceneId ?? null);
   const [mode, setMode] = useState<WorkspaceMode>("scenes");
   const [isFocusMode, setIsFocusMode] = useState(false);
@@ -151,6 +153,16 @@ export function BookWorkspace({ bookId, initialSceneId }: BookWorkspaceProps) {
     handleSelectScene(null);
     handleExitFocusMode();
   }
+
+  useEffect(() => {
+    if (!hasObservedInitialSearchParamsRef.current) {
+      hasObservedInitialSearchParamsRef.current = true;
+      return;
+    }
+
+    const nextSceneId = searchParams.get("sceneId");
+    setSelectedSceneId(nextSceneId && nextSceneId.trim() ? nextSceneId : null);
+  }, [searchParams]);
 
   useEffect(() => {
     if (mode === "scenes" && selectedSceneId && readStoredFocusMode()) {
