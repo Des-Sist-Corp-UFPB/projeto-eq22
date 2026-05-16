@@ -221,6 +221,33 @@ describe("BookWorkspace focus mode", () => {
   });
 });
 
+describe("BookWorkspace initial scene selection", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    window.localStorage.clear();
+    mocks.getOutline.mockResolvedValue(outline);
+    mocks.getScene.mockResolvedValue(sceneForPlanning);
+    mocks.updateScene.mockResolvedValue(sceneForPlanning);
+    mocks.updateSceneContent.mockResolvedValue(sceneForPlanning);
+    mocks.deleteScene.mockResolvedValue(undefined);
+  });
+
+  test("carrega a cena inicial sem clicar no outline", async () => {
+    renderWithClient(<BookWorkspace bookId="book-1" initialSceneId={sceneForPlanning.id} />);
+
+    expect(await screen.findByRole("heading", { name: sceneForPlanning.title })).toBeInTheDocument();
+    expect(mocks.getScene).toHaveBeenCalledWith(sceneForPlanning.id);
+  });
+
+  test("mantem a selecao vazia quando nao ha cena inicial", async () => {
+    renderWithClient(<BookWorkspace bookId="book-1" />);
+
+    expect(await screen.findByText("Selecione uma cena")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: sceneForPlanning.title })).not.toBeInTheDocument();
+    expect(mocks.getScene).not.toHaveBeenCalled();
+  });
+});
+
 function selectScene() {
   const sceneRow = screen.getByText(sceneForPlanning.title).closest("button");
   expect(sceneRow).not.toBeNull();

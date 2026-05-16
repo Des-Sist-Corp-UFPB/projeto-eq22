@@ -18,6 +18,11 @@ import { queryKeys } from "@/lib/query/keys";
 type WorkspaceMode = "overview" | "scenes" | "characters" | "locations" | "items";
 const FOCUS_MODE_STORAGE_KEY = "iwrite.focusMode.enabled";
 
+type BookWorkspaceProps = {
+  bookId: string;
+  initialSceneId?: string;
+};
+
 function readStoredFocusMode() {
   if (typeof window === "undefined") {
     return false;
@@ -55,8 +60,8 @@ function isKeyboardEventFromInteractiveTarget(target: EventTarget | null, allowC
   return isFormControl || isButtonLike || isInModal || (!allowContentEditable && target.isContentEditable);
 }
 
-export function BookWorkspace({ bookId }: { bookId: string }) {
-  const [selectedSceneId, setSelectedSceneId] = useState<string | null>(null);
+export function BookWorkspace({ bookId, initialSceneId }: BookWorkspaceProps) {
+  const [selectedSceneId, setSelectedSceneId] = useState<string | null>(initialSceneId ?? null);
   const [mode, setMode] = useState<WorkspaceMode>("scenes");
   const [isFocusMode, setIsFocusMode] = useState(false);
   const [isFullscreenAvailable, setIsFullscreenAvailable] = useState(false);
