@@ -46,6 +46,13 @@ const mocks = vi.hoisted(() => ({
   updateScene: vi.fn(),
   updateSceneContent: vi.fn(),
   deleteScene: vi.fn(),
+  routerReplace: vi.fn(),
+}));
+
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({
+    replace: mocks.routerReplace,
+  }),
 }));
 
 vi.mock("@/features/outline/api/outline-api", async () => {
@@ -237,6 +244,27 @@ describe("BookWorkspace initial scene selection", () => {
 
     expect(await screen.findByRole("heading", { name: sceneForPlanning.title })).toBeInTheDocument();
     expect(mocks.getScene).toHaveBeenCalledWith(sceneForPlanning.id);
+  });
+
+  test("atualiza a URL ao selecionar uma cena", async () => {
+    renderWithClient(<BookWorkspace bookId="book-1" />);
+
+    await screen.findByText("Livro");
+    selectScene();
+
+    expect(mocks.routerReplace).toHaveBeenCalledWith(`/books/book-1?sceneId=${sceneForPlanning.id}`, { scroll: false });
+  });
+
+  test("remove sceneId da URL ao excluir a cena selecionada", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    renderWithClient(<BookWorkspace bookId="book-1" initialSceneId={sceneForPlanning.id} />);
+
+    expect(await screen.findByRole("heading", { name: sceneForPlanning.title })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Excluir cena" }));
+
+    await waitFor(() => {
+      expect(mocks.routerReplace).toHaveBeenCalledWith("/books/book-1", { scroll: false });
+    });
   });
 
   test("mantem a selecao vazia quando nao ha cena inicial", async () => {

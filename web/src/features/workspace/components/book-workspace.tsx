@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -61,6 +62,7 @@ function isKeyboardEventFromInteractiveTarget(target: EventTarget | null, allowC
 }
 
 export function BookWorkspace({ bookId, initialSceneId }: BookWorkspaceProps) {
+  const router = useRouter();
   const [selectedSceneId, setSelectedSceneId] = useState<string | null>(initialSceneId ?? null);
   const [mode, setMode] = useState<WorkspaceMode>("scenes");
   const [isFocusMode, setIsFocusMode] = useState(false);
@@ -135,8 +137,18 @@ export function BookWorkspace({ bookId, initialSceneId }: BookWorkspaceProps) {
     }
   }
 
+  const handleSelectScene = useCallback(
+    (sceneId: string | null) => {
+      setSelectedSceneId(sceneId);
+
+      const href = sceneId ? `/books/${bookId}?sceneId=${encodeURIComponent(sceneId)}` : `/books/${bookId}`;
+      router.replace(href, { scroll: false });
+    },
+    [bookId, router]
+  );
+
   function handleSceneDeleted() {
-    setSelectedSceneId(null);
+    handleSelectScene(null);
     handleExitFocusMode();
   }
 
@@ -257,7 +269,7 @@ export function BookWorkspace({ bookId, initialSceneId }: BookWorkspaceProps) {
       <div className={`grid min-h-0 grid-cols-1 overflow-hidden ${isScenesFocusMode ? "" : "md:grid-cols-[340px_minmax(0,1fr)]"}`}>
         {mode === "scenes" && !isScenesFocusMode ? (
           <div className="min-h-0 overflow-hidden border-r border-zinc-200 bg-white">
-            <OutlineSidebar bookId={bookId} selectedSceneId={selectedSceneId} onSelectScene={setSelectedSceneId} />
+            <OutlineSidebar bookId={bookId} selectedSceneId={selectedSceneId} onSelectScene={handleSelectScene} />
           </div>
         ) : null}
 
