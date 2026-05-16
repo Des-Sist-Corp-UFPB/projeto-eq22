@@ -226,6 +226,7 @@ public class BookExportService {
             boolean includeEmptyScenes,
             boolean hasPreviousScene
     ) {
+        int initialBodyElementCount = document.getBodyElements().size();
         boolean hasJsonContent = tipTapDocxRenderer.canRender(scene.getContentJson());
         boolean hasTextContent = scene.getContentText() != null && !scene.getContentText().isBlank();
 
@@ -245,15 +246,29 @@ public class BookExportService {
         }
 
         if (hasJsonContent) {
-            tipTapDocxRenderer.renderInto(document, scene.getContentJson());
-            return true;
+            boolean renderedJsonContent = tipTapDocxRenderer.renderInto(document, scene.getContentJson());
+            if (renderedJsonContent) {
+                return true;
+            }
         }
 
         if (hasTextContent) {
             appendDocxParagraph(document, scene.getContentText());
+            return true;
         }
 
-        return true;
+        if (includeSceneTitles) {
+            return true;
+        }
+
+        removeDocxBodyElementsFrom(document, initialBodyElementCount);
+        return false;
+    }
+
+    private void removeDocxBodyElementsFrom(XWPFDocument document, int firstIndexToRemove) {
+        for (int index = document.getBodyElements().size() - 1; index >= firstIndexToRemove; index--) {
+            document.removeBodyElement(index);
+        }
     }
 
     private void appendDocxSceneSeparator(XWPFDocument document) {

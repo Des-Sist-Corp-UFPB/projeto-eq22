@@ -147,6 +147,7 @@ class BookDocxExportIntegrationTest extends PostgresIntegrationTest {
 
             assertThat(runWithText(paragraph, "negrito")).matches(XWPFRun::isBold);
             assertThat(runWithText(paragraph, "italico")).matches(XWPFRun::isItalic);
+            assertThat(documentText(document)).doesNotContain("fallback");
         }
     }
 
@@ -211,6 +212,23 @@ class BookDocxExportIntegrationTest extends PostgresIntegrationTest {
             assertThat(documentText(document))
                     .contains("texto fallback")
                     .doesNotContain("original");
+        }
+    }
+
+    @Test
+    void renderableContentJsonThatWritesNoDocxContentFallsBackToContentText() throws Exception {
+        var book = createBook("Livro fallback render");
+        var section = createSection(book, "Parte");
+        var chapter = createChapter(section, "Capitulo");
+        var scene = createScene(chapter, "Cena", SceneStatus.DRAFT, 0, "original");
+        sceneService.updateContent(scene.id(), new SceneContentRequest("""
+                {"type":"doc","content":[{"type":"bulletList","content":[{"type":"paragraph","content":[{"type":"text","text":"json ignorado"}]}]}]}""", "fallback apos render vazio"));
+
+        try (XWPFDocument document = openExport(book.id(), false, false)) {
+            assertThat(documentText(document))
+                    .contains("fallback apos render vazio")
+                    .doesNotContain("json ignorado")
+                    .doesNotContain("***");
         }
     }
 
