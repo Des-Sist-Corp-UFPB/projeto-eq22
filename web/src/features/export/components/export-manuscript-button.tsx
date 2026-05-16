@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { FeedbackMessage } from "@/components/ui/feedback-message";
-import { downloadBookMarkdownExport } from "@/features/export/api/export-api";
+import { BookExportFormat, downloadBookExport } from "@/features/export/api/export-api";
 
 type ExportManuscriptButtonProps = {
   bookId: string;
@@ -11,6 +11,7 @@ type ExportManuscriptButtonProps = {
 
 export function ExportManuscriptButton({ bookId }: ExportManuscriptButtonProps) {
   const [isOptionsOpen, setIsOptionsOpen] = useState(false);
+  const [format, setFormat] = useState<BookExportFormat>("markdown");
   const [includeSceneTitles, setIncludeSceneTitles] = useState(false);
   const [includeEmptyScenes, setIncludeEmptyScenes] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
@@ -21,7 +22,7 @@ export function ExportManuscriptButton({ bookId }: ExportManuscriptButtonProps) 
     setErrorMessage(null);
 
     try {
-      await downloadBookMarkdownExport(bookId, { includeSceneTitles, includeEmptyScenes });
+      await downloadBookExport(bookId, { format, includeSceneTitles, includeEmptyScenes });
       setIsOptionsOpen(false);
     } catch {
       setErrorMessage("Nao foi possivel exportar o manuscrito agora. Tente novamente.");
@@ -48,6 +49,30 @@ export function ExportManuscriptButton({ bookId }: ExportManuscriptButtonProps) 
       {isOptionsOpen ? (
         <div className="absolute right-0 top-10 z-10 w-80 rounded-md border border-zinc-200 bg-white p-4 shadow-lg shadow-zinc-200/80">
           <div className="grid gap-3">
+            <fieldset className="grid gap-2">
+              <legend className="text-sm font-medium text-zinc-950">Formato</legend>
+              <label className="flex items-center gap-3 text-sm text-zinc-700">
+                <input
+                  type="radio"
+                  name="manuscript-export-format"
+                  value="markdown"
+                  checked={format === "markdown"}
+                  onChange={() => setFormat("markdown")}
+                />
+                Markdown (.md)
+              </label>
+              <label className="flex items-center gap-3 text-sm text-zinc-700">
+                <input
+                  type="radio"
+                  name="manuscript-export-format"
+                  value="docx"
+                  checked={format === "docx"}
+                  onChange={() => setFormat("docx")}
+                />
+                Word (.docx)
+              </label>
+            </fieldset>
+
             <label className="flex items-start gap-3 text-sm text-zinc-700">
               <input
                 type="checkbox"
@@ -75,7 +100,7 @@ export function ExportManuscriptButton({ bookId }: ExportManuscriptButtonProps) 
             </label>
 
             <Button type="button" size="sm" disabled={isExporting} onClick={handleExport}>
-              {isExporting ? "Exportando..." : "Baixar Markdown"}
+              {isExporting ? "Exportando..." : "Baixar manuscrito"}
             </Button>
           </div>
 
