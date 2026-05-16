@@ -1,12 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 
-test.use({
-  launchOptions: {
-    args: ["--disable-web-security"],
-  },
-});
-
 test("creates, saves, reloads, and exports a Markdown manuscript", async ({ page }) => {
   test.setTimeout(90_000);
 
@@ -50,7 +44,7 @@ test("creates, saves, reloads, and exports a Markdown manuscript", async ({ page
   await expect(page.getByText(sceneTitle, { exact: true }).first()).toBeVisible();
   await page.getByRole("button").filter({ hasText: sceneTitle }).click();
 
-  const editor = page.locator(".ProseMirror").first();
+  const editor = page.getByTestId("scene-content-editor");
   await expect(editor).toBeVisible();
 
   await editor.fill(sceneContent);

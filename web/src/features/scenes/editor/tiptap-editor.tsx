@@ -187,6 +187,8 @@ export function TiptapEditor({
     editorProps: {
       attributes: {
         class: `min-h-[320px] whitespace-pre-wrap rounded-lg border border-zinc-200 bg-white px-4 py-4 text-base leading-7 text-zinc-900 outline-none [tab-size:4] focus:border-zinc-800 ${className}`,
+        "aria-label": "Scene content editor",
+        "data-testid": "scene-content-editor",
       },
       handleKeyDown: handleTiptapTabKey,
     },
