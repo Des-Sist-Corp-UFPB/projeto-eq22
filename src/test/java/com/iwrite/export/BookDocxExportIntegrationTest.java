@@ -62,9 +62,19 @@ class BookDocxExportIntegrationTest extends PostgresIntegrationTest {
         createChapter(section, "Capitulo inicial");
 
         try (XWPFDocument document = openExport(book.id(), false, false)) {
-            assertThat(paragraphContaining(document, "Livro com estilos").getStyle()).isEqualTo("Title");
-            assertThat(paragraphContaining(document, "Parte principal").getStyle()).isEqualTo("Heading1");
-            assertThat(paragraphContaining(document, "Capitulo inicial").getStyle()).isEqualTo("Heading2");
+            XWPFParagraph bookTitle = paragraphContaining(document, "Livro com estilos");
+            XWPFParagraph sectionTitle = paragraphContaining(document, "Parte principal");
+            XWPFParagraph chapterTitle = paragraphContaining(document, "Capitulo inicial");
+
+            assertThat(bookTitle.getStyle()).isEqualTo("Title");
+            assertThat(bookTitle.getAlignment()).isEqualTo(ParagraphAlignment.CENTER);
+            assertHeadingRun(bookTitle, "Livro com estilos", 24);
+
+            assertThat(sectionTitle.getStyle()).isEqualTo("Heading1");
+            assertHeadingRun(sectionTitle, "Parte principal", 18);
+
+            assertThat(chapterTitle.getStyle()).isEqualTo("Heading2");
+            assertHeadingRun(chapterTitle, "Capitulo inicial", 16);
         }
     }
 
@@ -117,6 +127,8 @@ class BookDocxExportIntegrationTest extends PostgresIntegrationTest {
                     .contains("texto seguinte");
             assertThat(paragraphContaining(document, "Cena visivel").getStyle()).isEqualTo("Heading3");
             assertThat(paragraphContaining(document, "Cena seguinte").getStyle()).isEqualTo("Heading3");
+            assertHeadingRun(paragraphContaining(document, "Cena visivel"), "Cena visivel", 13);
+            assertHeadingRun(paragraphContaining(document, "Cena seguinte"), "Cena seguinte", 13);
             assertThat(paragraphTexts(document)).doesNotContain("***");
         }
     }
@@ -145,12 +157,27 @@ class BookDocxExportIntegrationTest extends PostgresIntegrationTest {
         var chapter = createChapter(section, "Capitulo");
         var scene = createScene(chapter, "Cena", SceneStatus.DRAFT, 0, "fallback");
         sceneService.updateContent(scene.id(), new SceneContentRequest("""
-                {"type":"doc","content":[{"type":"heading","attrs":{"level":1},"content":[{"type":"text","text":"Heading de cena"}]},{"type":"heading","attrs":{"level":2},"content":[{"type":"text","text":"Subheading de cena"}]},{"type":"heading","attrs":{"level":3},"content":[{"type":"text","text":"Detalhe de cena"}]}]}""", "fallback"));
+                {"type":"doc","content":[{"type":"heading","attrs":{"level":1},"content":[{"type":"text","text":"Heading de cena"}]},{"type":"paragraph","content":[{"type":"text","text":"Paragrafo normal"}]},{"type":"heading","attrs":{"level":2},"content":[{"type":"text","text":"Subheading de cena"}]},{"type":"heading","attrs":{"level":3},"content":[{"type":"text","text":"Detalhe de cena"}]}]}""", "fallback"));
 
         try (XWPFDocument document = openExport(book.id(), false, false)) {
-            assertThat(paragraphContaining(document, "Heading de cena").getStyle()).isEqualTo("Heading3");
-            assertThat(paragraphContaining(document, "Subheading de cena").getStyle()).isEqualTo("Heading4");
-            assertThat(paragraphContaining(document, "Detalhe de cena").getStyle()).isEqualTo("Heading4");
+            XWPFParagraph heading = paragraphContaining(document, "Heading de cena");
+            XWPFParagraph body = paragraphContaining(document, "Paragrafo normal");
+            XWPFParagraph subheading = paragraphContaining(document, "Subheading de cena");
+            XWPFParagraph detailHeading = paragraphContaining(document, "Detalhe de cena");
+
+            assertThat(heading.getStyle()).isEqualTo("Heading3");
+            assertHeadingRun(heading, "Heading de cena", 13);
+
+            assertThat(subheading.getStyle()).isEqualTo("Heading4");
+            assertHeadingRun(subheading, "Subheading de cena", 12);
+
+            assertThat(detailHeading.getStyle()).isEqualTo("Heading4");
+            assertHeadingRun(detailHeading, "Detalhe de cena", 12);
+
+            assertThat(body.getStyle()).isNull();
+            XWPFRun bodyRun = runWithText(body, "Paragrafo normal");
+            assertThat(bodyRun.isBold()).isFalse();
+            assertThat(bodyRun.getFontSize()).isEqualTo(-1);
         }
     }
 
@@ -231,5 +258,11 @@ class BookDocxExportIntegrationTest extends PostgresIntegrationTest {
                 .filter(run -> text.equals(run.text()))
                 .findFirst()
                 .orElseThrow();
+    }
+
+    private void assertHeadingRun(XWPFParagraph paragraph, String text, int fontSize) {
+        XWPFRun run = runWithText(paragraph, text);
+        assertThat(run.isBold()).isTrue();
+        assertThat(run.getFontSize()).isEqualTo(fontSize);
     }
 }

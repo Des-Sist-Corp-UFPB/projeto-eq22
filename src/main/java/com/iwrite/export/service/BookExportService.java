@@ -265,7 +265,59 @@ public class BookExportService {
     private void appendDocxHeading(XWPFDocument document, String style, String text) {
         XWPFParagraph paragraph = document.createParagraph();
         paragraph.setStyle(style);
-        paragraph.createRun().setText(text);
+        applyDocxHeadingParagraphFormat(paragraph, style);
+
+        XWPFRun run = paragraph.createRun();
+        run.setText(text);
+        applyDocxHeadingRunFormat(run, style);
+    }
+
+    private void applyDocxHeadingParagraphFormat(XWPFParagraph paragraph, String style) {
+        if ("Title".equals(style)) {
+            paragraph.setAlignment(ParagraphAlignment.CENTER);
+            paragraph.setSpacingAfter(360);
+            return;
+        }
+
+        if ("Heading1".equals(style)) {
+            paragraph.setSpacingBefore(360);
+            paragraph.setSpacingAfter(180);
+            return;
+        }
+
+        if ("Heading2".equals(style)) {
+            paragraph.setSpacingBefore(280);
+            paragraph.setSpacingAfter(140);
+            return;
+        }
+
+        if ("Heading3".equals(style)) {
+            paragraph.setSpacingBefore(180);
+            paragraph.setSpacingAfter(100);
+        }
+    }
+
+    private void applyDocxHeadingRunFormat(XWPFRun run, String style) {
+        run.setBold(true);
+
+        if ("Title".equals(style)) {
+            run.setFontSize(24);
+            return;
+        }
+
+        if ("Heading1".equals(style)) {
+            run.setFontSize(18);
+            return;
+        }
+
+        if ("Heading2".equals(style)) {
+            run.setFontSize(16);
+            return;
+        }
+
+        if ("Heading3".equals(style)) {
+            run.setFontSize(13);
+        }
     }
 
     private void appendDocxOptionalParagraph(XWPFDocument document, String text) {

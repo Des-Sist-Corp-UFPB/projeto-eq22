@@ -112,9 +112,12 @@ public class TipTapDocxRenderer {
         }
 
         int tipTapLevel = node.path("attrs").path("level").asInt(1);
+        int headingLevel = internalHeadingLevel(tipTapLevel);
         XWPFParagraph paragraph = document.createParagraph();
-        paragraph.setStyle("Heading" + internalHeadingLevel(tipTapLevel));
+        paragraph.setStyle("Heading" + headingLevel);
+        applyInternalHeadingParagraphFormat(paragraph, headingLevel);
         renderInlineContent(paragraph, node);
+        applyInternalHeadingRunFormat(paragraph, headingLevel);
         return true;
     }
 
@@ -239,6 +242,25 @@ public class TipTapDocxRenderer {
             return 3;
         }
         return 4;
+    }
+
+    private void applyInternalHeadingParagraphFormat(XWPFParagraph paragraph, int headingLevel) {
+        if (headingLevel == 3) {
+            paragraph.setSpacingBefore(160);
+            paragraph.setSpacingAfter(80);
+            return;
+        }
+
+        paragraph.setSpacingBefore(120);
+        paragraph.setSpacingAfter(60);
+    }
+
+    private void applyInternalHeadingRunFormat(XWPFParagraph paragraph, int headingLevel) {
+        int fontSize = headingLevel == 3 ? 13 : 12;
+        for (XWPFRun run : paragraph.getRuns()) {
+            run.setBold(true);
+            run.setFontSize(fontSize);
+        }
     }
 
     private Optional<String> plainInlineText(JsonNode node) {
