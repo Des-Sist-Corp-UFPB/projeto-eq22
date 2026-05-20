@@ -57,6 +57,14 @@ vi.mock("next/navigation", () => ({
   useSearchParams: () => mocks.searchParams,
 }));
 
+vi.mock("@/features/dashboard/components/book-dashboard", () => ({
+  BookDashboard: ({ onOpenSceneInEditor }: { onOpenSceneInEditor?: (sceneId: string) => void }) => (
+    <button type="button" onClick={() => onOpenSceneInEditor?.("scene-1")}>
+      Abrir cena do dashboard
+    </button>
+  ),
+}));
+
 vi.mock("@/features/outline/api/outline-api", async () => {
   const actual = await vi.importActual<typeof import("@/features/outline/api/outline-api")>("@/features/outline/api/outline-api");
 
@@ -353,6 +361,17 @@ describe("BookWorkspace initial scene selection", () => {
     expect(await screen.findByText("Selecione uma cena")).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: sceneForPlanning.title })).not.toBeInTheDocument();
     expect(mocks.getScene).not.toHaveBeenCalled();
+  });
+
+  test("abre cena do dashboard no editor e atualiza a URL", async () => {
+    renderWithClient(<BookWorkspace bookId="book-1" />);
+
+    fireEvent.click(screen.getByRole("button", { name: /Vis.o geral/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Abrir cena do dashboard" }));
+
+    expect(await screen.findByRole("heading", { name: sceneForPlanning.title })).toBeInTheDocument();
+    expect(screen.getByText("Livro")).toBeInTheDocument();
+    expect(mocks.routerReplace).toHaveBeenCalledWith(`/books/book-1?sceneId=${sceneForPlanning.id}`, { scroll: false });
   });
 });
 

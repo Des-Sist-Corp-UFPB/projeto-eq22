@@ -156,6 +156,14 @@ export function BookWorkspace({ bookId, initialSceneId }: BookWorkspaceProps) {
     [bookId, router]
   );
 
+  const handleOpenSceneInEditor = useCallback(
+    (sceneId: string) => {
+      setMode("scenes");
+      handleSelectScene(sceneId);
+    },
+    [handleSelectScene]
+  );
+
   function handleSceneDeleted() {
     handleSelectScene(null);
     handleExitFocusMode();
@@ -303,7 +311,7 @@ export function BookWorkspace({ bookId, initialSceneId }: BookWorkspaceProps) {
 
         <div className={`min-h-0 overflow-hidden bg-zinc-100/70 ${mode !== "scenes" || isScenesFocusMode ? "md:col-span-2" : ""}`}>
           {mode === "overview" ? (
-            <BookDashboard bookId={bookId} />
+            <BookDashboard bookId={bookId} onOpenSceneInEditor={handleOpenSceneInEditor} />
           ) : mode === "scenes" ? (
             <SceneEditor
               bookId={bookId}

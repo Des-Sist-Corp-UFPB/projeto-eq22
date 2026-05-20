@@ -24,9 +24,10 @@ import { queryKeys } from "@/lib/query/keys";
 
 type BookDashboardProps = {
   bookId: string;
+  onOpenSceneInEditor?: (sceneId: string) => void;
 };
 
-export function BookDashboard({ bookId }: BookDashboardProps) {
+export function BookDashboard({ bookId, onOpenSceneInEditor }: BookDashboardProps) {
   const dashboardQuery = useBookDashboard(bookId);
 
   return (
@@ -45,15 +46,26 @@ export function BookDashboard({ bookId }: BookDashboardProps) {
           <ErrorState message="Não foi possível carregar a visão geral. Verifique o backend e tente novamente." />
         ) : null}
 
-        {dashboardQuery.data ? <DashboardContent dashboard={dashboardQuery.data} /> : null}
+        {dashboardQuery.data ? <DashboardContent dashboard={dashboardQuery.data} onOpenSceneInEditor={onOpenSceneInEditor} /> : null}
       </div>
     </section>
   );
 }
 
-function DashboardContent({ dashboard }: { dashboard: BookDashboardResponse }) {
+function DashboardContent({
+  dashboard,
+  onOpenSceneInEditor,
+}: {
+  dashboard: BookDashboardResponse;
+  onOpenSceneInEditor?: (sceneId: string) => void;
+}) {
   const planningPercent = clampPercent(dashboard.planningProgress.plannedScenesPercent);
   const [detailTarget, setDetailTarget] = useState<DashboardDetailTarget | null>(null);
+
+  function handleOpenSceneInEditor(sceneId: string) {
+    onOpenSceneInEditor?.(sceneId);
+    setDetailTarget(null);
+  }
 
   return (
     <div className="grid gap-4">
@@ -185,6 +197,7 @@ function DashboardContent({ dashboard }: { dashboard: BookDashboardResponse }) {
           target={detailTarget}
           onClose={() => setDetailTarget(null)}
           onTargetChange={setDetailTarget}
+          onOpenSceneInEditor={handleOpenSceneInEditor}
         />
       ) : null}
     </div>

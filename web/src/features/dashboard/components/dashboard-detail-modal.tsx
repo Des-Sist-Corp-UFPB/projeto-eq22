@@ -30,6 +30,7 @@ type DashboardDetailModalProps = {
   target: DashboardDetailTarget;
   onClose: () => void;
   onTargetChange: (target: DashboardDetailTarget) => void;
+  onOpenSceneInEditor: (sceneId: string) => void;
 };
 
 const statusLabels: Record<SceneStatus, string> = {
@@ -68,7 +69,7 @@ const gapLabels: Record<DashboardGapKind, { title: string; description: string }
   },
 };
 
-export function DashboardDetailModal({ dashboard, target, onClose, onTargetChange }: DashboardDetailModalProps) {
+export function DashboardDetailModal({ dashboard, target, onClose, onTargetChange, onOpenSceneInEditor }: DashboardDetailModalProps) {
   const scenes = getAllScenes(dashboard);
   const characterQuery = useCharacter(target.type === "character" ? target.id : null);
   const locationQuery = useLocation(target.type === "location" ? target.id : null);
@@ -95,7 +96,7 @@ export function DashboardDetailModal({ dashboard, target, onClose, onTargetChang
 
         <div className="overflow-y-auto p-4">
           {target.type === "scene" ? (
-            <SceneDetailView scene={scenes.find((scene) => scene.sceneId === target.sceneId) ?? null} />
+            <SceneDetailView scene={scenes.find((scene) => scene.sceneId === target.sceneId) ?? null} onOpenSceneInEditor={onOpenSceneInEditor} />
           ) : target.type === "status" ? (
             <SceneListView scenes={getScenesForStatus(dashboard, target.status)} onSelectScene={(sceneId) => onTargetChange({ type: "scene", sceneId })} />
           ) : target.type === "gap" ? (
@@ -168,7 +169,13 @@ function GapDetailView({
   );
 }
 
-function SceneDetailView({ scene }: { scene: DashboardSceneSummaryResponse | null }) {
+function SceneDetailView({
+  scene,
+  onOpenSceneInEditor,
+}: {
+  scene: DashboardSceneSummaryResponse | null;
+  onOpenSceneInEditor: (sceneId: string) => void;
+}) {
   if (!scene) {
     return <EmptyState title="Cena não encontrada no dashboard." size="sm" />;
   }
@@ -186,6 +193,13 @@ function SceneDetailView({ scene }: { scene: DashboardSceneSummaryResponse | nul
           <Badge variant="outline">{statusLabels[scene.status]}</Badge>
         </div>
         <p className="mt-3 text-sm text-zinc-500">{formatNumber(scene.wordCount)} palavras</p>
+        <button
+          type="button"
+          onClick={() => onOpenSceneInEditor(scene.sceneId)}
+          className="mt-4 rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm font-medium text-zinc-800 transition hover:bg-zinc-100"
+        >
+          Abrir no editor
+        </button>
       </div>
 
       {hasText(scene.summary) ? <DetailBlock label="Resumo" value={scene.summary} /> : null}

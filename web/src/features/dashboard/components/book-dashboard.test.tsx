@@ -97,6 +97,7 @@ describe("BookDashboard", () => {
     expect(screen.getAllByRole("dialog")).toHaveLength(1);
     expect(within(dialog).getAllByRole("heading", { name: "A chave aparece" })).toHaveLength(2);
     expect(within(dialog).getByText("Encontrar a chave")).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Abrir no editor" })).toBeInTheDocument();
   });
 
   test("clicar em lacuna abre lista de cenas afetadas", () => {
