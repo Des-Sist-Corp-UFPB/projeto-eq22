@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -12,11 +13,17 @@ import { ItemsPanel } from "@/features/items/components/items-panel";
 import { LocationsPanel } from "@/features/locations/components/locations-panel";
 import { getOutline } from "@/features/outline/api/outline-api";
 import { OutlineSidebar } from "@/features/outline/components/outline-sidebar";
+import type { BookOutline } from "@/features/outline/types";
 import { SceneEditor } from "@/features/scenes/components/scene-editor";
 import { queryKeys } from "@/lib/query/keys";
 
 type WorkspaceMode = "overview" | "scenes" | "characters" | "locations" | "items";
 const FOCUS_MODE_STORAGE_KEY = "iwrite.focusMode.enabled";
+
+type BookWorkspaceProps = {
+  bookId: string;
+  initialSceneId?: string;
+};
 
 function readStoredFocusMode() {
   if (typeof window === "undefined") {
@@ -55,8 +62,17 @@ function isKeyboardEventFromInteractiveTarget(target: EventTarget | null, allowC
   return isFormControl || isButtonLike || isInModal || (!allowContentEditable && target.isContentEditable);
 }
 
-export function BookWorkspace({ bookId }: { bookId: string }) {
-  const [selectedSceneId, setSelectedSceneId] = useState<string | null>(null);
+function outlineHasScene(outline: BookOutline, sceneId: string) {
+  return outline.sections.some((section) =>
+    section.chapters.some((chapter) => chapter.scenes.some((scene) => scene.id === sceneId))
+  );
+}
+
+export function BookWorkspace({ bookId, initialSceneId }: BookWorkspaceProps) {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const hasObservedInitialSearchParamsRef = useRef(false);
+  const [selectedSceneId, setSelectedSceneId] = useState<string | null>(initialSceneId ?? null);
   const [mode, setMode] = useState<WorkspaceMode>("scenes");
   const [isFocusMode, setIsFocusMode] = useState(false);
   const [isFullscreenAvailable, setIsFullscreenAvailable] = useState(false);
@@ -130,10 +146,39 @@ export function BookWorkspace({ bookId }: { bookId: string }) {
     }
   }
 
+  const handleSelectScene = useCallback(
+    (sceneId: string | null) => {
+      setSelectedSceneId(sceneId);
+
+      const href = sceneId ? `/books/${bookId}?sceneId=${encodeURIComponent(sceneId)}` : `/books/${bookId}`;
+      router.replace(href, { scroll: false });
+    },
+    [bookId, router]
+  );
+
   function handleSceneDeleted() {
-    setSelectedSceneId(null);
+    handleSelectScene(null);
     handleExitFocusMode();
   }
+
+  useEffect(() => {
+    if (!hasObservedInitialSearchParamsRef.current) {
+      hasObservedInitialSearchParamsRef.current = true;
+      return;
+    }
+
+    const nextSceneId = searchParams.get("sceneId");
+    setSelectedSceneId(nextSceneId && nextSceneId.trim() ? nextSceneId : null);
+  }, [searchParams]);
+
+  useEffect(() => {
+    if (!outline || !selectedSceneId || outlineHasScene(outline, selectedSceneId)) {
+      return;
+    }
+
+    setSelectedSceneId(null);
+    router.replace(`/books/${bookId}`, { scroll: false });
+  }, [bookId, outline, router, selectedSceneId]);
 
   useEffect(() => {
     if (mode === "scenes" && selectedSceneId && readStoredFocusMode()) {
@@ -252,7 +297,7 @@ export function BookWorkspace({ bookId }: { bookId: string }) {
       <div className={`grid min-h-0 grid-cols-1 overflow-hidden ${isScenesFocusMode ? "" : "md:grid-cols-[340px_minmax(0,1fr)]"}`}>
         {mode === "scenes" && !isScenesFocusMode ? (
           <div className="min-h-0 overflow-hidden border-r border-zinc-200 bg-white">
-            <OutlineSidebar bookId={bookId} selectedSceneId={selectedSceneId} onSelectScene={setSelectedSceneId} />
+            <OutlineSidebar bookId={bookId} selectedSceneId={selectedSceneId} onSelectScene={handleSelectScene} />
           </div>
         ) : null}
 
