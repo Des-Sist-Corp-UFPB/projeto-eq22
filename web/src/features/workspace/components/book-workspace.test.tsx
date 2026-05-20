@@ -85,6 +85,26 @@ const alternateSceneForPlanning = {
   title: "Cena alternativa",
 };
 
+const outlineWithAlternateScene: BookOutline = {
+  ...outline,
+  sections: outline.sections.map((section) => ({
+    ...section,
+    chapters: section.chapters.map((chapter) => ({
+      ...chapter,
+      scenes: [
+        ...chapter.scenes,
+        {
+          id: alternateSceneForPlanning.id,
+          title: alternateSceneForPlanning.title,
+          status: alternateSceneForPlanning.status,
+          sortOrder: alternateSceneForPlanning.sortOrder,
+          wordCount: alternateSceneForPlanning.wordCount,
+        },
+      ],
+    })),
+  })),
+};
+
 describe("BookWorkspace focus mode", () => {
   let fullscreenElement: Element | null;
   let requestFullscreen: ReturnType<typeof vi.fn>;
@@ -254,6 +274,7 @@ describe("BookWorkspace initial scene selection", () => {
 
     expect(await screen.findByRole("heading", { name: sceneForPlanning.title })).toBeInTheDocument();
     expect(mocks.getScene).toHaveBeenCalledWith(sceneForPlanning.id);
+    expect(mocks.routerReplace).not.toHaveBeenCalled();
   });
 
   test("atualiza a URL ao selecionar uma cena", async () => {
@@ -278,6 +299,7 @@ describe("BookWorkspace initial scene selection", () => {
   });
 
   test("atualiza a cena selecionada quando sceneId muda na URL", async () => {
+    mocks.getOutline.mockResolvedValue(outlineWithAlternateScene);
     mocks.searchParams = new URLSearchParams(`sceneId=${sceneForPlanning.id}`);
     mocks.getScene.mockImplementation((sceneId: string) =>
       Promise.resolve(sceneId === alternateSceneForPlanning.id ? alternateSceneForPlanning : sceneForPlanning)
@@ -291,6 +313,26 @@ describe("BookWorkspace initial scene selection", () => {
 
     expect(await screen.findByRole("heading", { name: alternateSceneForPlanning.title })).toBeInTheDocument();
     expect(mocks.getScene).toHaveBeenCalledWith(alternateSceneForPlanning.id);
+  });
+
+  test("limpa sceneId invalido da URL depois que o outline carrega", async () => {
+    mocks.searchParams = new URLSearchParams("sceneId=scene-inexistente");
+    renderWithClient(<BookWorkspace bookId="book-1" initialSceneId="scene-inexistente" />);
+
+    await waitFor(() => {
+      expect(mocks.routerReplace).toHaveBeenCalledWith("/books/book-1", { scroll: false });
+    });
+    expect(await screen.findByText("Selecione uma cena")).toBeInTheDocument();
+  });
+
+  test("nao seleciona sceneId que nao pertence ao outline do livro", async () => {
+    mocks.searchParams = new URLSearchParams("sceneId=scene-de-outro-livro");
+    renderWithClient(<BookWorkspace bookId="book-1" initialSceneId="scene-de-outro-livro" />);
+
+    await waitFor(() => {
+      expect(mocks.routerReplace).toHaveBeenCalledWith("/books/book-1", { scroll: false });
+    });
+    expect(screen.queryByRole("heading", { name: sceneForPlanning.title })).not.toBeInTheDocument();
   });
 
   test("limpa a selecao quando sceneId e removido da URL", async () => {

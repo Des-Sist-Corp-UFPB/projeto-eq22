@@ -13,6 +13,7 @@ import { ItemsPanel } from "@/features/items/components/items-panel";
 import { LocationsPanel } from "@/features/locations/components/locations-panel";
 import { getOutline } from "@/features/outline/api/outline-api";
 import { OutlineSidebar } from "@/features/outline/components/outline-sidebar";
+import type { BookOutline } from "@/features/outline/types";
 import { SceneEditor } from "@/features/scenes/components/scene-editor";
 import { queryKeys } from "@/lib/query/keys";
 
@@ -59,6 +60,12 @@ function isKeyboardEventFromInteractiveTarget(target: EventTarget | null, allowC
   const isInModal = Boolean(target.closest('[role="dialog"], [aria-modal="true"]'));
 
   return isFormControl || isButtonLike || isInModal || (!allowContentEditable && target.isContentEditable);
+}
+
+function outlineHasScene(outline: BookOutline, sceneId: string) {
+  return outline.sections.some((section) =>
+    section.chapters.some((chapter) => chapter.scenes.some((scene) => scene.id === sceneId))
+  );
 }
 
 export function BookWorkspace({ bookId, initialSceneId }: BookWorkspaceProps) {
@@ -163,6 +170,15 @@ export function BookWorkspace({ bookId, initialSceneId }: BookWorkspaceProps) {
     const nextSceneId = searchParams.get("sceneId");
     setSelectedSceneId(nextSceneId && nextSceneId.trim() ? nextSceneId : null);
   }, [searchParams]);
+
+  useEffect(() => {
+    if (!outline || !selectedSceneId || outlineHasScene(outline, selectedSceneId)) {
+      return;
+    }
+
+    setSelectedSceneId(null);
+    router.replace(`/books/${bookId}`, { scroll: false });
+  }, [bookId, outline, router, selectedSceneId]);
 
   useEffect(() => {
     if (mode === "scenes" && selectedSceneId && readStoredFocusMode()) {
