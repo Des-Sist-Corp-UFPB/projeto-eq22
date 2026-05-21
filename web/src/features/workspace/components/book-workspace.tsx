@@ -7,6 +7,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { CharactersPanel } from "@/features/characters/components/characters-panel";
+import type { DashboardWorkspaceTab } from "@/features/dashboard/components/dashboard-detail-modal";
 import { BookDashboard } from "@/features/dashboard/components/book-dashboard";
 import { ExportManuscriptButton } from "@/features/export/components/export-manuscript-button";
 import { ItemsPanel } from "@/features/items/components/items-panel";
@@ -156,6 +157,22 @@ export function BookWorkspace({ bookId, initialSceneId }: BookWorkspaceProps) {
     [bookId, router]
   );
 
+  const handleOpenSceneInEditor = useCallback(
+    (sceneId: string) => {
+      setMode("scenes");
+      handleSelectScene(sceneId);
+    },
+    [handleSelectScene]
+  );
+
+  const handleOpenWorkspaceTab = useCallback(
+    (tab: DashboardWorkspaceTab) => {
+      setMode(tab);
+      handleExitFocusMode();
+    },
+    [handleExitFocusMode]
+  );
+
   function handleSceneDeleted() {
     handleSelectScene(null);
     handleExitFocusMode();
@@ -303,7 +320,11 @@ export function BookWorkspace({ bookId, initialSceneId }: BookWorkspaceProps) {
 
         <div className={`min-h-0 overflow-hidden bg-zinc-100/70 ${mode !== "scenes" || isScenesFocusMode ? "md:col-span-2" : ""}`}>
           {mode === "overview" ? (
-            <BookDashboard bookId={bookId} />
+            <BookDashboard
+              bookId={bookId}
+              onOpenSceneInEditor={handleOpenSceneInEditor}
+              onOpenWorkspaceTab={handleOpenWorkspaceTab}
+            />
           ) : mode === "scenes" ? (
             <SceneEditor
               bookId={bookId}

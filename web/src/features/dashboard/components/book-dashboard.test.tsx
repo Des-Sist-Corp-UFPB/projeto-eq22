@@ -97,6 +97,7 @@ describe("BookDashboard", () => {
     expect(screen.getAllByRole("dialog")).toHaveLength(1);
     expect(within(dialog).getAllByRole("heading", { name: "A chave aparece" })).toHaveLength(2);
     expect(within(dialog).getByText("Encontrar a chave")).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Abrir no editor" })).toBeInTheDocument();
   });
 
   test("clicar em lacuna abre lista de cenas afetadas", () => {
@@ -118,17 +119,22 @@ describe("BookDashboard", () => {
     renderWithClient(<BookDashboard bookId="book-1" />);
 
     fireEvent.click(screen.getAllByRole("button", { name: /Ada/ })[0]);
-    expect(within(screen.getByRole("dialog")).getByText("Cenas como POV")).toBeInTheDocument();
+    let dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByText("Cenas como POV")).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Ver em Personagens" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Fechar" }));
 
     fireEvent.click(screen.getByRole("button", { name: /Biblioteca/ }));
-    expect(within(screen.getByRole("dialog")).getByText(/Cenas como localiza/)).toBeInTheDocument();
+    dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByText(/Cenas como localiza/)).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Ver em Localizações" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Fechar" }));
 
     fireEvent.click(screen.getByRole("button", { name: /Chave de prata/ }));
     const itemDialog = screen.getByRole("dialog");
     expect(within(itemDialog).getByText("Dono atual")).toBeInTheDocument();
     expect(within(itemDialog).getByText("Ada")).toBeInTheDocument();
+    expect(within(itemDialog).getByRole("button", { name: "Ver em Itens" })).toBeInTheDocument();
     expect(within(itemDialog).queryByText(characterAda.id)).not.toBeInTheDocument();
   });
 });

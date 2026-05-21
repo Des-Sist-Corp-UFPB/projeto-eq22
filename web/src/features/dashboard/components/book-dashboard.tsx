@@ -11,7 +11,11 @@ import { FeedbackMessage } from "@/components/ui/feedback-message";
 import { Input } from "@/components/ui/input";
 import { updateBook } from "@/features/books/api/books-api";
 import { useBookDashboard } from "@/features/dashboard/api/dashboard-hooks";
-import { DashboardDetailModal, type DashboardDetailTarget } from "@/features/dashboard/components/dashboard-detail-modal";
+import {
+  DashboardDetailModal,
+  type DashboardDetailTarget,
+  type DashboardWorkspaceTab,
+} from "@/features/dashboard/components/dashboard-detail-modal";
 import { DashboardMetricCard } from "@/features/dashboard/components/dashboard-metric-card";
 import { DashboardStatusCard } from "@/features/dashboard/components/dashboard-status-card";
 import type {
@@ -24,9 +28,11 @@ import { queryKeys } from "@/lib/query/keys";
 
 type BookDashboardProps = {
   bookId: string;
+  onOpenSceneInEditor?: (sceneId: string) => void;
+  onOpenWorkspaceTab?: (tab: DashboardWorkspaceTab) => void;
 };
 
-export function BookDashboard({ bookId }: BookDashboardProps) {
+export function BookDashboard({ bookId, onOpenSceneInEditor, onOpenWorkspaceTab }: BookDashboardProps) {
   const dashboardQuery = useBookDashboard(bookId);
 
   return (
@@ -45,15 +51,39 @@ export function BookDashboard({ bookId }: BookDashboardProps) {
           <ErrorState message="Não foi possível carregar a visão geral. Verifique o backend e tente novamente." />
         ) : null}
 
-        {dashboardQuery.data ? <DashboardContent dashboard={dashboardQuery.data} /> : null}
+        {dashboardQuery.data ? (
+          <DashboardContent
+            dashboard={dashboardQuery.data}
+            onOpenSceneInEditor={onOpenSceneInEditor}
+            onOpenWorkspaceTab={onOpenWorkspaceTab}
+          />
+        ) : null}
       </div>
     </section>
   );
 }
 
-function DashboardContent({ dashboard }: { dashboard: BookDashboardResponse }) {
+function DashboardContent({
+  dashboard,
+  onOpenSceneInEditor,
+  onOpenWorkspaceTab,
+}: {
+  dashboard: BookDashboardResponse;
+  onOpenSceneInEditor?: (sceneId: string) => void;
+  onOpenWorkspaceTab?: (tab: DashboardWorkspaceTab) => void;
+}) {
   const planningPercent = clampPercent(dashboard.planningProgress.plannedScenesPercent);
   const [detailTarget, setDetailTarget] = useState<DashboardDetailTarget | null>(null);
+
+  function handleOpenSceneInEditor(sceneId: string) {
+    onOpenSceneInEditor?.(sceneId);
+    setDetailTarget(null);
+  }
+
+  function handleOpenWorkspaceTab(tab: DashboardWorkspaceTab) {
+    onOpenWorkspaceTab?.(tab);
+    setDetailTarget(null);
+  }
 
   return (
     <div className="grid gap-4">
@@ -185,6 +215,8 @@ function DashboardContent({ dashboard }: { dashboard: BookDashboardResponse }) {
           target={detailTarget}
           onClose={() => setDetailTarget(null)}
           onTargetChange={setDetailTarget}
+          onOpenSceneInEditor={handleOpenSceneInEditor}
+          onOpenWorkspaceTab={handleOpenWorkspaceTab}
         />
       ) : null}
     </div>

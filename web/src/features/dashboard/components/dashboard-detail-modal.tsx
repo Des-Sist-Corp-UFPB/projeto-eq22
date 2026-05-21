@@ -30,7 +30,11 @@ type DashboardDetailModalProps = {
   target: DashboardDetailTarget;
   onClose: () => void;
   onTargetChange: (target: DashboardDetailTarget) => void;
+  onOpenSceneInEditor: (sceneId: string) => void;
+  onOpenWorkspaceTab: (tab: DashboardWorkspaceTab) => void;
 };
+
+export type DashboardWorkspaceTab = "characters" | "locations" | "items";
 
 const statusLabels: Record<SceneStatus, string> = {
   IDEA: "Ideia",
@@ -68,7 +72,14 @@ const gapLabels: Record<DashboardGapKind, { title: string; description: string }
   },
 };
 
-export function DashboardDetailModal({ dashboard, target, onClose, onTargetChange }: DashboardDetailModalProps) {
+export function DashboardDetailModal({
+  dashboard,
+  target,
+  onClose,
+  onTargetChange,
+  onOpenSceneInEditor,
+  onOpenWorkspaceTab,
+}: DashboardDetailModalProps) {
   const scenes = getAllScenes(dashboard);
   const characterQuery = useCharacter(target.type === "character" ? target.id : null);
   const locationQuery = useLocation(target.type === "location" ? target.id : null);
@@ -95,17 +106,17 @@ export function DashboardDetailModal({ dashboard, target, onClose, onTargetChang
 
         <div className="overflow-y-auto p-4">
           {target.type === "scene" ? (
-            <SceneDetailView scene={scenes.find((scene) => scene.sceneId === target.sceneId) ?? null} />
+            <SceneDetailView scene={scenes.find((scene) => scene.sceneId === target.sceneId) ?? null} onOpenSceneInEditor={onOpenSceneInEditor} />
           ) : target.type === "status" ? (
             <SceneListView scenes={getScenesForStatus(dashboard, target.status)} onSelectScene={(sceneId) => onTargetChange({ type: "scene", sceneId })} />
           ) : target.type === "gap" ? (
             <GapDetailView gap={target.gap} scenes={getScenesForGap(scenes, target.gap)} onSelectScene={(sceneId) => onTargetChange({ type: "scene", sceneId })} />
           ) : target.type === "character" ? (
-            <CharacterDetailView dashboard={dashboard} characterId={target.id} query={characterQuery} />
+            <CharacterDetailView dashboard={dashboard} characterId={target.id} query={characterQuery} onOpenWorkspaceTab={onOpenWorkspaceTab} />
           ) : target.type === "location" ? (
-            <LocationDetailView dashboard={dashboard} locationId={target.id} query={locationQuery} />
+            <LocationDetailView dashboard={dashboard} locationId={target.id} query={locationQuery} onOpenWorkspaceTab={onOpenWorkspaceTab} />
           ) : (
-            <ItemDetailView dashboard={dashboard} itemId={target.id} query={itemQuery} />
+            <ItemDetailView dashboard={dashboard} itemId={target.id} query={itemQuery} onOpenWorkspaceTab={onOpenWorkspaceTab} />
           )}
         </div>
       </div>
@@ -168,7 +179,13 @@ function GapDetailView({
   );
 }
 
-function SceneDetailView({ scene }: { scene: DashboardSceneSummaryResponse | null }) {
+function SceneDetailView({
+  scene,
+  onOpenSceneInEditor,
+}: {
+  scene: DashboardSceneSummaryResponse | null;
+  onOpenSceneInEditor: (sceneId: string) => void;
+}) {
   if (!scene) {
     return <EmptyState title="Cena não encontrada no dashboard." size="sm" />;
   }
@@ -186,6 +203,13 @@ function SceneDetailView({ scene }: { scene: DashboardSceneSummaryResponse | nul
           <Badge variant="outline">{statusLabels[scene.status]}</Badge>
         </div>
         <p className="mt-3 text-sm text-zinc-500">{formatNumber(scene.wordCount)} palavras</p>
+        <button
+          type="button"
+          onClick={() => onOpenSceneInEditor(scene.sceneId)}
+          className="mt-4 rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm font-medium text-zinc-800 transition hover:bg-zinc-100"
+        >
+          Abrir no editor
+        </button>
       </div>
 
       {hasText(scene.summary) ? <DetailBlock label="Resumo" value={scene.summary} /> : null}
@@ -226,10 +250,12 @@ function CharacterDetailView({
   dashboard,
   characterId,
   query,
+  onOpenWorkspaceTab,
 }: {
   dashboard: BookDashboardResponse;
   characterId: string;
   query: ReturnType<typeof useCharacter>;
+  onOpenWorkspaceTab: (tab: DashboardWorkspaceTab) => void;
 }) {
   if (query.isLoading) {
     return <LoadingState label="Carregando personagem..." />;
@@ -246,7 +272,12 @@ function CharacterDetailView({
 
   return (
     <div className="grid gap-4">
-      <EntitySummary title={query.data.name} subtitle={query.data.nickname ? `Apelido: ${query.data.nickname}` : null} />
+      <EntitySummary
+        title={query.data.name}
+        subtitle={query.data.nickname ? `Apelido: ${query.data.nickname}` : null}
+        actionLabel="Ver em Personagens"
+        onAction={() => onOpenWorkspaceTab("characters")}
+      />
       <div className="grid gap-3 sm:grid-cols-3">
         <MetricBox label="Cenas vinculadas" value={formatNumber(usage?.scenesCount ?? 0)} />
         <MetricBox label="Cenas como POV" value={formatNumber(povStats?.scenesCount ?? 0)} />
@@ -272,10 +303,12 @@ function LocationDetailView({
   dashboard,
   locationId,
   query,
+  onOpenWorkspaceTab,
 }: {
   dashboard: BookDashboardResponse;
   locationId: string;
   query: ReturnType<typeof useLocation>;
+  onOpenWorkspaceTab: (tab: DashboardWorkspaceTab) => void;
 }) {
   if (query.isLoading) {
     return <LoadingState label="Carregando localização..." />;
@@ -291,7 +324,12 @@ function LocationDetailView({
 
   return (
     <div className="grid gap-4">
-      <EntitySummary title={query.data.name} subtitle={query.data.type} />
+      <EntitySummary
+        title={query.data.name}
+        subtitle={query.data.type}
+        actionLabel="Ver em Localizações"
+        onAction={() => onOpenWorkspaceTab("locations")}
+      />
       <MetricBox label="Cenas como localização principal" value={formatNumber(usage?.scenesCount ?? 0)} />
       <DetailBlock label="Descrição" value={query.data.description} fallback="Sem descrição" />
       <DetailBlock label="Contexto histórico" value={query.data.historyContext} fallback="Sem contexto histórico" />
@@ -305,10 +343,12 @@ function ItemDetailView({
   dashboard,
   itemId,
   query,
+  onOpenWorkspaceTab,
 }: {
   dashboard: BookDashboardResponse;
   itemId: string;
   query: ReturnType<typeof useItem>;
+  onOpenWorkspaceTab: (tab: DashboardWorkspaceTab) => void;
 }) {
   if (query.isLoading) {
     return <LoadingState label="Carregando item..." />;
@@ -324,7 +364,12 @@ function ItemDetailView({
 
   return (
     <div className="grid gap-4">
-      <EntitySummary title={query.data.name} subtitle={query.data.type} />
+      <EntitySummary
+        title={query.data.name}
+        subtitle={query.data.type}
+        actionLabel="Ver em Itens"
+        onAction={() => onOpenWorkspaceTab("items")}
+      />
       <div className="grid gap-3 sm:grid-cols-2">
         <MetricBox label="Cenas vinculadas" value={formatNumber(usage?.scenesCount ?? 0)} />
         <DetailLine label="Dono atual" value={query.data.currentOwnerCharacter?.name ?? null} fallback="Sem dono" />
@@ -337,11 +382,32 @@ function ItemDetailView({
   );
 }
 
-function EntitySummary({ title, subtitle }: { title: string; subtitle?: string | null }) {
+function EntitySummary({
+  title,
+  subtitle,
+  actionLabel,
+  onAction,
+}: {
+  title: string;
+  subtitle?: string | null;
+  actionLabel?: string;
+  onAction?: () => void;
+}) {
   return (
-    <div className="rounded-md border border-zinc-200 bg-zinc-50 p-4">
-      <h3 className="text-lg font-semibold text-zinc-950">{title}</h3>
-      {hasText(subtitle) ? <p className="mt-1 text-sm text-zinc-500">{subtitle}</p> : null}
+    <div className="flex flex-wrap items-start justify-between gap-3 rounded-md border border-zinc-200 bg-zinc-50 p-4">
+      <div className="min-w-0">
+        <h3 className="text-lg font-semibold text-zinc-950">{title}</h3>
+        {hasText(subtitle) ? <p className="mt-1 text-sm text-zinc-500">{subtitle}</p> : null}
+      </div>
+      {actionLabel && onAction ? (
+        <button
+          type="button"
+          onClick={onAction}
+          className="rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm font-medium text-zinc-800 transition hover:bg-zinc-100"
+        >
+          {actionLabel}
+        </button>
+      ) : null}
     </div>
   );
 }
