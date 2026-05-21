@@ -57,11 +57,40 @@ vi.mock("next/navigation", () => ({
   useSearchParams: () => mocks.searchParams,
 }));
 
+vi.mock("@/features/characters/components/characters-panel", () => ({
+  CharactersPanel: () => <h1>Personagens</h1>,
+}));
+
+vi.mock("@/features/locations/components/locations-panel", () => ({
+  LocationsPanel: () => <h1>Localizações</h1>,
+}));
+
+vi.mock("@/features/items/components/items-panel", () => ({
+  ItemsPanel: () => <h1>Itens</h1>,
+}));
+
 vi.mock("@/features/dashboard/components/book-dashboard", () => ({
-  BookDashboard: ({ onOpenSceneInEditor }: { onOpenSceneInEditor?: (sceneId: string) => void }) => (
-    <button type="button" onClick={() => onOpenSceneInEditor?.("scene-1")}>
-      Abrir cena do dashboard
-    </button>
+  BookDashboard: ({
+    onOpenSceneInEditor,
+    onOpenWorkspaceTab,
+  }: {
+    onOpenSceneInEditor?: (sceneId: string) => void;
+    onOpenWorkspaceTab?: (tab: "characters" | "locations" | "items") => void;
+  }) => (
+    <div>
+      <button type="button" onClick={() => onOpenSceneInEditor?.("scene-1")}>
+        Abrir cena do dashboard
+      </button>
+      <button type="button" onClick={() => onOpenWorkspaceTab?.("characters")}>
+        Ver em Personagens
+      </button>
+      <button type="button" onClick={() => onOpenWorkspaceTab?.("locations")}>
+        Ver em Localizações
+      </button>
+      <button type="button" onClick={() => onOpenWorkspaceTab?.("items")}>
+        Ver em Itens
+      </button>
+    </div>
   ),
 }));
 
@@ -372,6 +401,22 @@ describe("BookWorkspace initial scene selection", () => {
     expect(await screen.findByRole("heading", { name: sceneForPlanning.title })).toBeInTheDocument();
     expect(screen.getByText("Livro")).toBeInTheDocument();
     expect(mocks.routerReplace).toHaveBeenCalledWith(`/books/book-1?sceneId=${sceneForPlanning.id}`, { scroll: false });
+  });
+
+  test("abre abas de entidades a partir do dashboard", async () => {
+    renderWithClient(<BookWorkspace bookId="book-1" />);
+
+    fireEvent.click(screen.getByRole("button", { name: /Vis.o geral/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Ver em Personagens" }));
+    expect(await screen.findByRole("heading", { name: "Personagens" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /Vis.o geral/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Ver em Localizações" }));
+    expect(await screen.findByRole("heading", { name: "Localizações" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /Vis.o geral/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Ver em Itens" }));
+    expect(await screen.findByRole("heading", { name: "Itens" })).toBeInTheDocument();
   });
 });
 
