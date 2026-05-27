@@ -78,6 +78,22 @@ class NotebookControllerIntegrationTest extends PostgresIntegrationTest {
     }
 
     @Test
+    void creatingCategoryWithDefaultNameBeforeListingIsRejectedAndDefaultStillExists() throws Exception {
+        var book = createBook("Notebook default name collision");
+
+        mockMvc.perform(post("/api/books/{bookId}/notebook/categories", book.id())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of("name", "Ideia"))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.messages", hasItem(containsString("Notebook category name must be unique within the book"))));
+
+        mockMvc.perform(get("/api/books/{bookId}/notebook/categories", book.id()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[?(@.name == 'Ideia' && @.isDefault == true)]", hasSize(1)))
+                .andExpect(jsonPath("$[?(@.name == 'Ideia' && @.isDefault == false)]", hasSize(0)));
+    }
+
+    @Test
     void deletingCategorySetsExistingNoteCategoryToNull() throws Exception {
         var book = createBook("Notebook category delete");
         UUID categoryId = createCategory(book.id(), "Pesquisa sensivel");
@@ -202,7 +218,7 @@ class NotebookControllerIntegrationTest extends PostgresIntegrationTest {
     @Test
     void filtersNotesByCategory() throws Exception {
         var book = createBook("Notebook filter");
-        UUID categoryId = createCategory(book.id(), "Pesquisa");
+        UUID categoryId = createCategory(book.id(), "Pesquisa externa");
         UUID matchingNoteId = createNote(book.id(), "Nota filtrada", "A", categoryId, "RESOLVED");
         createNote(book.id(), "Nota solta", "B", null);
 

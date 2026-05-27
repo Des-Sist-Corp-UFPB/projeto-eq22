@@ -63,6 +63,7 @@ public class NotebookService {
     @Transactional
     public NotebookCategoryResponse createCategory(UUID bookId, NotebookCategoryRequest request) {
         Book book = bookService.getBook(bookId);
+        ensureDefaultCategories(book);
         rejectDuplicateCategoryName(bookId, request.name());
 
         NotebookCategory category = new NotebookCategory();
