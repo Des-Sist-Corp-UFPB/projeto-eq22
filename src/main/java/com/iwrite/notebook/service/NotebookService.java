@@ -13,6 +13,7 @@ import com.iwrite.notebook.dto.NotebookNoteResponse;
 import com.iwrite.notebook.dto.NotebookNoteUpdateRequest;
 import com.iwrite.notebook.entity.NotebookCategory;
 import com.iwrite.notebook.entity.NotebookNote;
+import com.iwrite.notebook.entity.NotebookNoteStatus;
 import com.iwrite.notebook.repository.NotebookCategoryRepository;
 import com.iwrite.notebook.repository.NotebookNoteRepository;
 import org.springframework.stereotype.Service;
@@ -128,6 +129,7 @@ public class NotebookService {
         note.setTitle(request.title());
         note.setContent(request.content());
         note.setCategory(findCategoryForBook(bookId, request.categoryId()));
+        note.setStatus(request.status() == null ? NotebookNoteStatus.OPEN : request.status());
 
         return NotebookNoteResponse.fromEntity(noteRepository.save(note));
     }
@@ -150,6 +152,9 @@ public class NotebookService {
         }
         if (request.isCategoryIdPresent()) {
             note.setCategory(findCategoryForBook(note.getBook().getId(), request.categoryId()));
+        }
+        if (request.status() != null) {
+            note.setStatus(request.status());
         }
 
         return NotebookNoteResponse.fromEntity(note);

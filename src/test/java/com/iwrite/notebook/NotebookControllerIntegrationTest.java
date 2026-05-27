@@ -103,14 +103,20 @@ class NotebookControllerIntegrationTest extends PostgresIntegrationTest {
                 .andExpect(jsonPath("$", hasSize(1)))
                 .andExpect(jsonPath("$[0].id").value(noteId.toString()))
                 .andExpect(jsonPath("$[0].title").value("Ideia inicial"))
-                .andExpect(jsonPath("$[0].content").value("Primeiro conteudo"));
+                .andExpect(jsonPath("$[0].content").value("Primeiro conteudo"))
+                .andExpect(jsonPath("$[0].status").value("OPEN"));
 
         mockMvc.perform(patch("/api/notebook/notes/{noteId}", noteId)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(json(Map.of("title", "Ideia revisada", "content", "Conteudo revisado"))))
+                        .content(json(Map.of(
+                                "title", "Ideia revisada",
+                                "content", "Conteudo revisado",
+                                "status", "RESOLVED"
+                        ))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.title").value("Ideia revisada"))
-                .andExpect(jsonPath("$.content").value("Conteudo revisado"));
+                .andExpect(jsonPath("$.content").value("Conteudo revisado"))
+                .andExpect(jsonPath("$.status").value("RESOLVED"));
 
         mockMvc.perform(delete("/api/notebook/notes/{noteId}", noteId))
                 .andExpect(status().isNoContent());
@@ -121,10 +127,26 @@ class NotebookControllerIntegrationTest extends PostgresIntegrationTest {
     }
 
     @Test
+    void createNoteWithResolvedStatus() throws Exception {
+        var book = createBook("Notebook note resolved");
+
+        mockMvc.perform(post("/api/books/{bookId}/notebook/notes", book.id())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of(
+                                "title", "Pergunta respondida",
+                                "content", "Resposta anotada",
+                                "status", "RESOLVED"
+                        ))))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.title").value("Pergunta respondida"))
+                .andExpect(jsonPath("$.status").value("RESOLVED"));
+    }
+
+    @Test
     void filtersNotesByCategory() throws Exception {
         var book = createBook("Notebook filter");
         UUID categoryId = createCategory(book.id(), "Pesquisa");
-        UUID matchingNoteId = createNote(book.id(), "Nota filtrada", "A", categoryId);
+        UUID matchingNoteId = createNote(book.id(), "Nota filtrada", "A", categoryId, "RESOLVED");
         createNote(book.id(), "Nota solta", "B", null);
 
         mockMvc.perform(get("/api/books/{bookId}/notebook/notes", book.id())
@@ -132,7 +154,8 @@ class NotebookControllerIntegrationTest extends PostgresIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$", hasSize(1)))
                 .andExpect(jsonPath("$[0].id").value(matchingNoteId.toString()))
-                .andExpect(jsonPath("$[0].categoryId").value(categoryId.toString()));
+                .andExpect(jsonPath("$[0].categoryId").value(categoryId.toString()))
+                .andExpect(jsonPath("$[0].status").value("RESOLVED"));
     }
 
     @Test
@@ -199,9 +222,18 @@ class NotebookControllerIntegrationTest extends PostgresIntegrationTest {
     }
 
     private UUID createNote(UUID bookId, String title, String content, UUID categoryId) throws Exception {
+        return createNote(bookId, title, content, categoryId, null);
+    }
+
+    private UUID createNote(UUID bookId, String title, String content, UUID categoryId, String status) throws Exception {
         String body = categoryId == null
                 ? json(Map.of("title", title, "content", content))
                 : json(Map.of("title", title, "content", content, "categoryId", categoryId));
+        if (status != null) {
+            body = categoryId == null
+                    ? json(Map.of("title", title, "content", content, "status", status))
+                    : json(Map.of("title", title, "content", content, "categoryId", categoryId, "status", status));
+        }
         String response = mockMvc.perform(post("/api/books/{bookId}/notebook/notes", bookId)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(body))

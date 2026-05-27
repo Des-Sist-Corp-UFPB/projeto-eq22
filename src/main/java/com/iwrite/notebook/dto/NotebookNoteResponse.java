@@ -2,6 +2,7 @@ package com.iwrite.notebook.dto;
 
 import com.iwrite.notebook.entity.NotebookCategory;
 import com.iwrite.notebook.entity.NotebookNote;
+import com.iwrite.notebook.entity.NotebookNoteStatus;
 
 import java.time.OffsetDateTime;
 import java.util.UUID;
@@ -13,6 +14,7 @@ public record NotebookNoteResponse(
         NotebookCategoryResponse category,
         String title,
         String content,
+        NotebookNoteStatus status,
         OffsetDateTime createdAt,
         OffsetDateTime updatedAt
 ) {
@@ -26,6 +28,7 @@ public record NotebookNoteResponse(
                 category == null ? null : NotebookCategoryResponse.fromEntity(category),
                 note.getTitle(),
                 note.getContent(),
+                note.getStatus(),
                 note.getCreatedAt(),
                 note.getUpdatedAt()
         );

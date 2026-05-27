@@ -3,6 +3,8 @@ package com.iwrite.notebook.entity;
 import com.iwrite.book.entity.Book;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
@@ -37,6 +39,10 @@ public class NotebookNote {
 
     @Column(columnDefinition = "text")
     private String content;
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    private NotebookNoteStatus status = NotebookNoteStatus.OPEN;
 
     @Column(nullable = false, updatable = false)
     private OffsetDateTime createdAt;
@@ -90,6 +96,14 @@ public class NotebookNote {
 
     public void setContent(String content) {
         this.content = content;
+    }
+
+    public NotebookNoteStatus getStatus() {
+        return status;
+    }
+
+    public void setStatus(NotebookNoteStatus status) {
+        this.status = status;
     }
 
     public OffsetDateTime getCreatedAt() {
