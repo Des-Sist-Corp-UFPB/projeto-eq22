@@ -69,6 +69,10 @@ vi.mock("@/features/items/components/items-panel", () => ({
   ItemsPanel: () => <h1>Itens</h1>,
 }));
 
+vi.mock("@/features/notebook/components/notebook-panel", () => ({
+  NotebookPanel: () => <h1>Caderno</h1>,
+}));
+
 vi.mock("@/features/dashboard/components/book-dashboard", () => ({
   BookDashboard: ({
     onOpenSceneInEditor,
@@ -464,6 +468,15 @@ describe("BookWorkspace initial scene selection", () => {
     fireEvent.click(screen.getByRole("button", { name: /Vis.o geral/ }));
     fireEvent.click(await screen.findByRole("button", { name: "Ver em Itens" }));
     expect(await screen.findByRole("heading", { name: "Itens" })).toBeInTheDocument();
+  });
+
+  test("mostra a aba Caderno e abre o painel de notas", async () => {
+    renderWithClient(<BookWorkspace bookId="book-1" />);
+
+    await screen.findByText("Livro");
+    fireEvent.click(screen.getByRole("button", { name: "Caderno" }));
+
+    expect(await screen.findByRole("heading", { name: "Caderno" })).toBeInTheDocument();
   });
 });
 
