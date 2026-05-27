@@ -83,8 +83,10 @@ public class NotebookService {
         if (request.name() != null && category.isDefault()) {
             throw new BadRequestException("Default notebook categories cannot be renamed");
         }
-        if (request.name() != null && !category.getName().equalsIgnoreCase(request.name())) {
-            rejectDuplicateCategoryName(category.getBook().getId(), request.name());
+        if (request.name() != null && !category.getName().equals(request.name())) {
+            if (!category.getName().equalsIgnoreCase(request.name())) {
+                rejectDuplicateCategoryName(category.getBook().getId(), request.name());
+            }
             category.setName(request.name());
         }
         if (request.sortOrder() != null) {

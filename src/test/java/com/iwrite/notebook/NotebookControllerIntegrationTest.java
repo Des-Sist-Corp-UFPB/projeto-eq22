@@ -100,6 +100,35 @@ class NotebookControllerIntegrationTest extends PostgresIntegrationTest {
     }
 
     @Test
+    void renamingCustomCategoryCanOnlyChangeLetterCasing() throws Exception {
+        var book = createBook("Notebook category case rename");
+        UUID categoryId = createCategory(book.id(), "cronologia");
+
+        mockMvc.perform(patch("/api/notebook/categories/{categoryId}", categoryId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of("name", "Cronologia"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.name").value("Cronologia"));
+
+        mockMvc.perform(get("/api/books/{bookId}/notebook/categories", book.id()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[?(@.id == '" + categoryId + "')].name").value(hasItem("Cronologia")));
+    }
+
+    @Test
+    void renamingCustomCategoryToAnotherCategoryNameWithDifferentCasingIsRejected() throws Exception {
+        var book = createBook("Notebook category duplicate case rename");
+        createCategory(book.id(), "Personagens extras");
+        UUID categoryId = createCategory(book.id(), "Cronologia externa");
+
+        mockMvc.perform(patch("/api/notebook/categories/{categoryId}", categoryId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of("name", "personagens extras"))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.messages", hasItem(containsString("Notebook category name must be unique within the book"))));
+    }
+
+    @Test
     void creatingCategoryWithDefaultNameBeforeListingIsRejectedAndDefaultStillExists() throws Exception {
         var book = createBook("Notebook default name collision");
 
