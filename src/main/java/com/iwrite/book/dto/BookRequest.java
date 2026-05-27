@@ -9,6 +9,11 @@ public record BookRequest(
         String subtitle,
         String description,
         BookStatus status,
-        @Positive Integer targetWordCount
+        @Positive Integer targetWordCount,
+        @Positive Integer dailyTargetWordCount
 ) {
+
+    public BookRequest(String title, String subtitle, String description, BookStatus status, Integer targetWordCount) {
+        this(title, subtitle, description, status, targetWordCount, null);
+    }
 }

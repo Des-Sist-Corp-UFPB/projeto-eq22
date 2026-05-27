@@ -15,6 +15,10 @@ public class BookUpdateRequest {
     private Integer targetWordCount;
     private boolean targetWordCountPresent;
 
+    @Positive
+    private Integer dailyTargetWordCount;
+    private boolean dailyTargetWordCountPresent;
+
     public String title() {
         return title;
     }
@@ -39,6 +43,14 @@ public class BookUpdateRequest {
         return targetWordCountPresent;
     }
 
+    public Integer dailyTargetWordCount() {
+        return dailyTargetWordCount;
+    }
+
+    public boolean isDailyTargetWordCountPresent() {
+        return dailyTargetWordCountPresent;
+    }
+
     public void setTitle(String title) {
         this.title = title;
     }
@@ -59,5 +71,11 @@ public class BookUpdateRequest {
     public void setTargetWordCount(Integer targetWordCount) {
         this.targetWordCount = targetWordCount;
         this.targetWordCountPresent = true;
+    }
+
+    @JsonSetter("dailyTargetWordCount")
+    public void setDailyTargetWordCount(Integer dailyTargetWordCount) {
+        this.dailyTargetWordCount = dailyTargetWordCount;
+        this.dailyTargetWordCountPresent = true;
     }
 }

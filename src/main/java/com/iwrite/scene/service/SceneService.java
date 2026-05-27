@@ -21,6 +21,7 @@ import com.iwrite.scene.dto.SceneUpdateRequest;
 import com.iwrite.scene.entity.Scene;
 import com.iwrite.scene.entity.SceneStatus;
 import com.iwrite.scene.repository.SceneRepository;
+import com.iwrite.writingprogress.service.DailyWritingProgressService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -42,6 +43,7 @@ public class SceneService {
     private final CharacterService characterService;
     private final LocationService locationService;
     private final ItemService itemService;
+    private final DailyWritingProgressService dailyWritingProgressService;
 
     public SceneService(
             SceneRepository sceneRepository,
@@ -49,7 +51,8 @@ public class SceneService {
             WordCountService wordCountService,
             CharacterService characterService,
             LocationService locationService,
-            ItemService itemService
+            ItemService itemService,
+            DailyWritingProgressService dailyWritingProgressService
     ) {
         this.sceneRepository = sceneRepository;
         this.chapterService = chapterService;
@@ -57,6 +60,7 @@ public class SceneService {
         this.characterService = characterService;
         this.locationService = locationService;
         this.itemService = itemService;
+        this.dailyWritingProgressService = dailyWritingProgressService;
     }
 
     @Transactional(readOnly = true)
@@ -67,6 +71,9 @@ public class SceneService {
     @Transactional
     public SceneResponse create(UUID chapterId, SceneRequest request) {
         Chapter chapter = chapterService.getChapter(chapterId);
+        UUID bookId = chapter.getBook().getId();
+        int totalBefore = Math.toIntExact(sceneRepository.sumWordCountByBookId(bookId));
+        int newWordCount = wordCountService.countWords(request.contentText());
 
         Scene scene = new Scene();
         scene.setBook(chapter.getBook());
@@ -77,9 +84,12 @@ public class SceneService {
         scene.setSortOrder(request.sortOrder() == null ? sceneRepository.countByChapterId(chapterId) : request.sortOrder());
         scene.setContentJson(request.contentJson());
         scene.setContentText(request.contentText());
-        scene.setWordCount(wordCountService.countWords(request.contentText()));
+        scene.setWordCount(newWordCount);
 
-        return SceneResponse.fromEntity(sceneRepository.save(scene));
+        Scene savedScene = sceneRepository.save(scene);
+        dailyWritingProgressService.recordWordCountChange(bookId, totalBefore, totalBefore + newWordCount);
+
+        return SceneResponse.fromEntity(savedScene);
     }
 
     @Transactional
@@ -106,9 +116,15 @@ public class SceneService {
     @Transactional
     public SceneResponse updateContent(UUID sceneId, SceneContentRequest request) {
         Scene scene = getScene(sceneId);
+        UUID bookId = scene.getBook().getId();
+        int totalBefore = Math.toIntExact(sceneRepository.sumWordCountByBookId(bookId));
+        int oldWordCount = wordCount(scene);
+        int newWordCount = wordCountService.countWords(request.contentText());
+
         scene.setContentJson(request.contentJson());
         scene.setContentText(request.contentText());
-        scene.setWordCount(wordCountService.countWords(request.contentText()));
+        scene.setWordCount(newWordCount);
+        dailyWritingProgressService.recordWordCountChange(bookId, totalBefore, totalBefore - oldWordCount + newWordCount);
 
         return SceneResponse.fromEntity(scene);
     }
@@ -133,7 +149,11 @@ public class SceneService {
     @Transactional
     public void delete(UUID sceneId) {
         Scene scene = getScene(sceneId);
+        UUID bookId = scene.getBook().getId();
+        int totalBefore = Math.toIntExact(sceneRepository.sumWordCountByBookId(bookId));
+        int totalAfter = totalBefore - wordCount(scene);
         sceneRepository.delete(scene);
+        dailyWritingProgressService.recordWordCountChange(bookId, totalBefore, totalAfter);
     }
 
     @Transactional
@@ -239,6 +259,10 @@ public class SceneService {
 
             orderSetter.setSortOrder(child, index);
         }
+    }
+
+    private int wordCount(Scene scene) {
+        return scene.getWordCount() == null ? 0 : scene.getWordCount();
     }
 
     @FunctionalInterface

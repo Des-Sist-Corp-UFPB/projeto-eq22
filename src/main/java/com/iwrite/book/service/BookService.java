@@ -44,6 +44,7 @@ public class BookService {
         book.setDescription(request.description());
         book.setStatus(request.status() == null ? BookStatus.PLANNING : request.status());
         book.setTargetWordCount(request.targetWordCount());
+        book.setDailyTargetWordCount(request.dailyTargetWordCount());
 
         return BookResponse.fromEntity(bookRepository.save(book));
     }
@@ -67,6 +68,9 @@ public class BookService {
         }
         if (request.isTargetWordCountPresent()) {
             book.setTargetWordCount(request.targetWordCount());
+        }
+        if (request.isDailyTargetWordCountPresent()) {
+            book.setDailyTargetWordCount(request.dailyTargetWordCount());
         }
 
         return BookResponse.fromEntity(book);
