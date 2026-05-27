@@ -2,6 +2,7 @@ package com.iwrite.notebook;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.iwrite.notebook.repository.NotebookCategoryRepository;
 import com.iwrite.support.PostgresIntegrationTest;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -32,6 +33,9 @@ class NotebookControllerIntegrationTest extends PostgresIntegrationTest {
     @Autowired
     private ObjectMapper objectMapper;
 
+    @Autowired
+    private NotebookCategoryRepository categoryRepository;
+
     @Test
     void getCategoriesLazilyCreatesDefaultsForExistingBook() throws Exception {
         var book = createBook("Notebook defaults");
@@ -46,7 +50,25 @@ class NotebookControllerIntegrationTest extends PostgresIntegrationTest {
 
         mockMvc.perform(get("/api/books/{bookId}/notebook/categories", book.id()))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$", hasSize(8)));
+                .andExpect(jsonPath("$", hasSize(8)))
+                .andExpect(jsonPath("$[?(@.name == 'Ideia' && @.isDefault == true)]", hasSize(1)))
+                .andExpect(jsonPath("$[?(@.name == 'Pesquisa' && @.isDefault == true)]", hasSize(1)))
+                .andExpect(jsonPath("$[?(@.name == 'Mundo' && @.isDefault == true)]", hasSize(1)))
+                .andExpect(jsonPath("$[?(@.name == 'Pergunta' && @.isDefault == true)]", hasSize(1)))
+                .andExpect(jsonPath("$[?(@.name == 'Trecho' && @.isDefault == true)]", hasSize(1)))
+                .andExpect(jsonPath("$[?(@.name == 'Outro' && @.isDefault == true)]", hasSize(1)));
+    }
+
+    @Test
+    void defaultCategorySeedingIgnoresExistingDefaultNameAndReturnsCategories() throws Exception {
+        var book = createBook("Notebook default race");
+
+        categoryRepository.insertDefaultCategoryIfMissing(UUID.randomUUID(), book.id(), "Ideia", 0);
+
+        mockMvc.perform(get("/api/books/{bookId}/notebook/categories", book.id()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(8)))
+                .andExpect(jsonPath("$[?(@.name == 'Ideia' && @.isDefault == true)]", hasSize(1)));
     }
 
     @Test

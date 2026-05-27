@@ -189,17 +189,9 @@ public class NotebookService {
         UUID bookId = book.getId();
         int sortOrder = 0;
         for (String name : DEFAULT_CATEGORY_NAMES) {
-            if (!categoryRepository.existsByBookIdAndNameIgnoreCase(bookId, name)) {
-                NotebookCategory category = new NotebookCategory();
-                category.setBook(book);
-                category.setName(name);
-                category.setSortOrder(sortOrder);
-                category.setDefault(true);
-                categoryRepository.save(category);
-            }
+            categoryRepository.insertDefaultCategoryIfMissing(UUID.randomUUID(), bookId, name, sortOrder);
             sortOrder++;
         }
-        categoryRepository.flush();
     }
 
     private NotebookCategory findCategoryForBook(UUID bookId, UUID categoryId) {
