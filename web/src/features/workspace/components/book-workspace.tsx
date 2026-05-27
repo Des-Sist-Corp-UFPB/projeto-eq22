@@ -12,13 +12,14 @@ import { BookDashboard } from "@/features/dashboard/components/book-dashboard";
 import { ExportManuscriptButton } from "@/features/export/components/export-manuscript-button";
 import { ItemsPanel } from "@/features/items/components/items-panel";
 import { LocationsPanel } from "@/features/locations/components/locations-panel";
+import { NotebookPanel } from "@/features/notebook/components/notebook-panel";
 import { getOutline } from "@/features/outline/api/outline-api";
 import { OutlineSidebar } from "@/features/outline/components/outline-sidebar";
 import type { BookOutline } from "@/features/outline/types";
 import { SceneEditor } from "@/features/scenes/components/scene-editor";
 import { queryKeys } from "@/lib/query/keys";
 
-type WorkspaceMode = "overview" | "scenes" | "characters" | "locations" | "items";
+type WorkspaceMode = "overview" | "scenes" | "characters" | "locations" | "items" | "notebook";
 const FOCUS_MODE_STORAGE_KEY = "iwrite.focusMode.enabled";
 
 type BookWorkspaceProps = {
@@ -324,6 +325,14 @@ export function BookWorkspace({ bookId, initialSceneId }: BookWorkspaceProps) {
             <Button type="button" size="sm" variant={mode === "items" ? "primary" : "ghost"} onClick={() => handleModeChange("items")}>
               Itens
             </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant={mode === "notebook" ? "primary" : "ghost"}
+              onClick={() => handleModeChange("notebook")}
+            >
+              Caderno
+            </Button>
           </div>
           {typeof outline?.wordCount === "number" ? <Badge>{outline.wordCount} palavras</Badge> : null}
           <ExportManuscriptButton bookId={bookId} />
@@ -364,8 +373,10 @@ export function BookWorkspace({ bookId, initialSceneId }: BookWorkspaceProps) {
             <CharactersPanel bookId={bookId} />
           ) : mode === "locations" ? (
             <LocationsPanel bookId={bookId} />
-          ) : (
+          ) : mode === "items" ? (
             <ItemsPanel bookId={bookId} />
+          ) : (
+            <NotebookPanel bookId={bookId} />
           )}
         </div>
       </div>
