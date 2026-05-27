@@ -486,7 +486,12 @@ function CategoryManagerPanel({
             const isPending = updatePendingCategoryId === category.id || deletePendingCategoryId === category.id;
 
             return (
-              <div key={category.id} className="grid gap-2 rounded-md border border-zinc-200 bg-zinc-50/70 p-2">
+              <div
+                key={category.id}
+                className="grid gap-2 rounded-md border border-zinc-200 bg-zinc-50/70 p-2"
+                role="group"
+                aria-label={`Categoria ${category.name}`}
+              >
                 {isEditing ? (
                   <label className="grid gap-1 text-sm">
                     <span className="font-medium text-zinc-700">Renomear categoria</span>
@@ -501,47 +506,52 @@ function CategoryManagerPanel({
                     />
                   </label>
                 ) : (
-                  <p className="truncate text-sm font-medium text-zinc-800">{category.name}</p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="truncate text-sm font-medium text-zinc-800">{category.name}</p>
+                    {category.isDefault ? <Badge variant="outline">Padrão</Badge> : null}
+                  </div>
                 )}
 
-                <div className="flex flex-wrap gap-1">
-                  {isEditing ? (
-                    <>
+                {category.isDefault ? null : (
+                  <div className="flex flex-wrap gap-1">
+                    {isEditing ? (
+                      <>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="secondary"
+                          disabled={isPending}
+                          onClick={() => submitRename(category)}
+                        >
+                          Salvar
+                        </Button>
+                        <Button type="button" size="sm" variant="ghost" disabled={isPending} onClick={cancelRename}>
+                          Cancelar
+                        </Button>
+                      </>
+                    ) : (
                       <Button
                         type="button"
                         size="sm"
-                        variant="secondary"
+                        variant="ghost"
                         disabled={isPending}
-                        onClick={() => submitRename(category)}
+                        onClick={() => startRename(category)}
                       >
-                        Salvar
+                        Renomear
                       </Button>
-                      <Button type="button" size="sm" variant="ghost" disabled={isPending} onClick={cancelRename}>
-                        Cancelar
-                      </Button>
-                    </>
-                  ) : (
+                    )}
                     <Button
                       type="button"
                       size="sm"
                       variant="ghost"
+                      className="text-red-700 hover:bg-red-50"
                       disabled={isPending}
-                      onClick={() => startRename(category)}
+                      onClick={() => onDeleteCategory(category)}
                     >
-                      Renomear
+                      {deletePendingCategoryId === category.id ? "..." : "Excluir"}
                     </Button>
-                  )}
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="ghost"
-                    className="text-red-700 hover:bg-red-50"
-                    disabled={isPending}
-                    onClick={() => onDeleteCategory(category)}
-                  >
-                    {deletePendingCategoryId === category.id ? "..." : "Excluir"}
-                  </Button>
-                </div>
+                  </div>
+                )}
               </div>
             );
           })}

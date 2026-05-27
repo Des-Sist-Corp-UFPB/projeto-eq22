@@ -94,6 +94,38 @@ class NotebookControllerIntegrationTest extends PostgresIntegrationTest {
     }
 
     @Test
+    void deletingDefaultCategoryIsRejectedAndNotesRemainLinked() throws Exception {
+        var book = createBook("Notebook default category delete");
+        UUID defaultCategoryId = findDefaultCategoryId(book.id(), "Pesquisa");
+        UUID noteId = createNote(book.id(), "Nota padrao", "Conteudo", defaultCategoryId);
+
+        mockMvc.perform(delete("/api/notebook/categories/{categoryId}", defaultCategoryId))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.messages", hasItem(containsString("Default notebook categories cannot be deleted"))));
+
+        mockMvc.perform(get("/api/notebook/notes/{noteId}", noteId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.categoryId").value(defaultCategoryId.toString()))
+                .andExpect(jsonPath("$.category.name").value("Pesquisa"));
+    }
+
+    @Test
+    void renamingDefaultCategoryIsRejected() throws Exception {
+        var book = createBook("Notebook default category rename");
+        UUID defaultCategoryId = findDefaultCategoryId(book.id(), "Pesquisa");
+
+        mockMvc.perform(patch("/api/notebook/categories/{categoryId}", defaultCategoryId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of("name", "Pesquisa editada"))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.messages", hasItem(containsString("Default notebook categories cannot be renamed"))));
+
+        mockMvc.perform(get("/api/books/{bookId}/notebook/categories", book.id()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[?(@.id == '" + defaultCategoryId + "')].name").value(hasItem("Pesquisa")));
+    }
+
+    @Test
     void createListUpdateAndDeleteNote() throws Exception {
         var book = createBook("Notebook note");
         UUID noteId = createNote(book.id(), "Ideia inicial", "Primeiro conteudo", null);
@@ -244,6 +276,20 @@ class NotebookControllerIntegrationTest extends PostgresIntegrationTest {
                 201
         );
         return UUID.fromString(category.get("id").asText());
+    }
+
+    private UUID findDefaultCategoryId(UUID bookId, String name) throws Exception {
+        String response = mockMvc.perform(get("/api/books/{bookId}/notebook/categories", bookId))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        for (JsonNode category : objectMapper.readTree(response)) {
+            if (name.equals(category.get("name").asText()) && category.get("isDefault").asBoolean()) {
+                return UUID.fromString(category.get("id").asText());
+            }
+        }
+        throw new IllegalStateException("Default category not found: " + name);
     }
 
     private UUID createNote(UUID bookId, String title, String content, UUID categoryId) throws Exception {

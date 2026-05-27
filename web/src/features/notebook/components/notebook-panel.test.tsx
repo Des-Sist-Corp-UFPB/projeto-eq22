@@ -170,6 +170,27 @@ describe("NotebookPanel writing layout and status", () => {
     expect(await screen.findByRole("heading", { name: "Editar nota" })).toBeInTheDocument();
     expect(screen.getByDisplayValue(pesquisaNote.title)).toBeInTheDocument();
   });
+
+  test("categorias padrao nao exibem acoes de renomear ou excluir", async () => {
+    renderWithClient(<NotebookPanel bookId="book-1" />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Gerenciar categorias" }));
+    const defaultCategoryRow = screen.getByRole("group", { name: "Categoria Pesquisa" });
+
+    expect(within(defaultCategoryRow).queryByRole("button", { name: "Renomear" })).not.toBeInTheDocument();
+    expect(within(defaultCategoryRow).queryByRole("button", { name: "Excluir" })).not.toBeInTheDocument();
+    expect(within(defaultCategoryRow).getByText("Padrão")).toBeInTheDocument();
+  });
+
+  test("categorias customizadas continuam exibindo acoes de renomear e excluir", async () => {
+    renderWithClient(<NotebookPanel bookId="book-1" />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Gerenciar categorias" }));
+    const customCategoryRow = screen.getByRole("group", { name: "Categoria Cronologia" });
+
+    expect(within(customCategoryRow).getByRole("button", { name: "Renomear" })).toBeInTheDocument();
+    expect(within(customCategoryRow).getByRole("button", { name: "Excluir" })).toBeInTheDocument();
+  });
 });
 
 function categoryFixture(id: string, name: string, isDefault: boolean, sortOrder: number): NotebookCategory {

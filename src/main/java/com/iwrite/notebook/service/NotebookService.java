@@ -79,6 +79,9 @@ public class NotebookService {
         NotebookCategory category = getCategory(categoryId);
         RequestValidation.rejectBlankWhenPresent("name", request.name());
 
+        if (request.name() != null && category.isDefault()) {
+            throw new BadRequestException("Default notebook categories cannot be renamed");
+        }
         if (request.name() != null && !category.getName().equalsIgnoreCase(request.name())) {
             rejectDuplicateCategoryName(category.getBook().getId(), request.name());
             category.setName(request.name());
@@ -93,6 +96,9 @@ public class NotebookService {
     @Transactional
     public void deleteCategory(UUID categoryId) {
         NotebookCategory category = getCategory(categoryId);
+        if (category.isDefault()) {
+            throw new BadRequestException("Default notebook categories cannot be deleted");
+        }
         noteRepository.findByCategoryId(categoryId)
                 .forEach(note -> note.setCategory(null));
         categoryRepository.delete(category);
