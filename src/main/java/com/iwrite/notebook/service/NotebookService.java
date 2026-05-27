@@ -147,7 +147,7 @@ public class NotebookService {
         if (request.title() != null) {
             note.setTitle(request.title());
         }
-        if (request.content() != null) {
+        if (request.isContentPresent()) {
             note.setContent(request.content());
         }
         if (request.isCategoryIdPresent()) {

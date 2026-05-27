@@ -11,6 +11,7 @@ public class NotebookNoteUpdateRequest {
     private String content;
     private UUID categoryId;
     private NotebookNoteStatus status;
+    private boolean contentPresent;
     private boolean categoryIdPresent;
 
     public String title() {
@@ -29,6 +30,10 @@ public class NotebookNoteUpdateRequest {
         return status;
     }
 
+    public boolean isContentPresent() {
+        return contentPresent;
+    }
+
     public boolean isCategoryIdPresent() {
         return categoryIdPresent;
     }
@@ -37,8 +42,10 @@ public class NotebookNoteUpdateRequest {
         this.title = title;
     }
 
+    @JsonSetter("content")
     public void setContent(String content) {
         this.content = content;
+        this.contentPresent = true;
     }
 
     public void setStatus(NotebookNoteStatus status) {

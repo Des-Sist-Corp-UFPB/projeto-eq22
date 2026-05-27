@@ -143,6 +143,31 @@ class NotebookControllerIntegrationTest extends PostgresIntegrationTest {
     }
 
     @Test
+    void patchContentPresenceControlsPreserveClearAndReplace() throws Exception {
+        var book = createBook("Notebook patch content");
+        UUID noteId = createNote(book.id(), "Nota editavel", "Conteudo original", null);
+
+        mockMvc.perform(patch("/api/notebook/notes/{noteId}", noteId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of("status", "RESOLVED"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content").value("Conteudo original"))
+                .andExpect(jsonPath("$.status").value("RESOLVED"));
+
+        mockMvc.perform(patch("/api/notebook/notes/{noteId}", noteId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"content\":null}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content").value(nullValue()));
+
+        mockMvc.perform(patch("/api/notebook/notes/{noteId}", noteId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of("content", "Conteudo novo"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content").value("Conteudo novo"));
+    }
+
+    @Test
     void filtersNotesByCategory() throws Exception {
         var book = createBook("Notebook filter");
         UUID categoryId = createCategory(book.id(), "Pesquisa");
