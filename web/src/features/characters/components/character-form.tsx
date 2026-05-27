@@ -1,0 +1,287 @@
+"use client";
+
+import { type FormEvent, type ReactNode, useEffect, useMemo, useState } from "react";
+import { Button } from "@/components/ui/button";
+import { FeedbackMessage } from "@/components/ui/feedback-message";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import type { CharacterRequest, CharacterResponse } from "@/features/characters/types";
+
+type CharacterFormProps = {
+  character: CharacterResponse | null;
+  isPending: boolean;
+  errorMessage: string | null;
+  successMessage: string | null;
+  onCancelEdit: () => void;
+  onSubmit: (payload: CharacterRequest) => void;
+};
+
+type CharacterFormState = {
+  name: string;
+  nickname: string;
+  age: string;
+  sex: string;
+  narrativeFunction: string;
+  goal: string;
+  conflict: string;
+  arc: string;
+  physicalDescription: string;
+  personality: string;
+  biography: string;
+  notes: string;
+};
+
+const emptyForm: CharacterFormState = {
+  name: "",
+  nickname: "",
+  age: "",
+  sex: "",
+  narrativeFunction: "",
+  goal: "",
+  conflict: "",
+  arc: "",
+  physicalDescription: "",
+  personality: "",
+  biography: "",
+  notes: "",
+};
+
+export function CharacterForm({
+  character,
+  isPending,
+  errorMessage,
+  successMessage,
+  onCancelEdit,
+  onSubmit,
+}: CharacterFormProps) {
+  const [form, setForm] = useState<CharacterFormState>(emptyForm);
+  const [validationMessage, setValidationMessage] = useState<string | null>(null);
+  const isEditing = Boolean(character);
+
+  useEffect(() => {
+    setForm(character ? toFormState(character) : emptyForm);
+    setValidationMessage(null);
+  }, [character]);
+
+  const title = useMemo(() => (isEditing ? "Editar personagem" : "Novo personagem"), [isEditing]);
+
+  function updateField(field: keyof CharacterFormState, value: string) {
+    setValidationMessage(null);
+    setForm((current) => ({ ...current, [field]: value }));
+  }
+
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!form.name.trim()) {
+      setValidationMessage("Informe o nome do personagem.");
+      return;
+    }
+
+    const age = form.age.trim() ? Number(form.age) : null;
+    if (age !== null && (!Number.isInteger(age) || age < 0)) {
+      setValidationMessage("A idade deve ser zero ou maior.");
+      return;
+    }
+
+    onSubmit({
+      name: form.name.trim(),
+      nickname: nullableText(form.nickname),
+      age,
+      sex: nullableText(form.sex),
+      narrativeFunction: nullableText(form.narrativeFunction),
+      goal: nullableText(form.goal),
+      conflict: nullableText(form.conflict),
+      arc: nullableText(form.arc),
+      physicalDescription: nullableText(form.physicalDescription),
+      personality: nullableText(form.personality),
+      biography: nullableText(form.biography),
+      notes: nullableText(form.notes),
+    });
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="grid gap-4 rounded-md border border-zinc-200 bg-white p-4 shadow-sm">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-200 pb-4">
+        <div>
+          <h2 className="text-base font-semibold text-zinc-950">{title}</h2>
+          <p className="text-sm text-zinc-500">Edite a ficha narrativa completa do personagem.</p>
+        </div>
+
+        <Button type="button" variant="ghost" onClick={onCancelEdit}>
+          Cancelar
+        </Button>
+      </div>
+
+      <FormSection title="Dados básicos">
+        <div className="grid gap-3 md:grid-cols-2">
+          <Field label="Nome" className="md:col-span-2">
+            <Input
+              value={form.name}
+              onChange={(event) => updateField("name", event.target.value)}
+              disabled={isPending}
+              placeholder="Nome do personagem"
+            />
+          </Field>
+
+          <Field label="Apelido">
+            <Input
+              value={form.nickname}
+              onChange={(event) => updateField("nickname", event.target.value)}
+              disabled={isPending}
+            />
+          </Field>
+
+          <Field label="Idade">
+            <Input
+              type="number"
+              min={0}
+              value={form.age}
+              onChange={(event) => updateField("age", event.target.value)}
+              disabled={isPending}
+            />
+          </Field>
+
+          <Field label="Sexo">
+            <Input value={form.sex} onChange={(event) => updateField("sex", event.target.value)} disabled={isPending} />
+          </Field>
+
+          <Field label="Função narrativa">
+            <Input
+              value={form.narrativeFunction}
+              onChange={(event) => updateField("narrativeFunction", event.target.value)}
+              disabled={isPending}
+            />
+          </Field>
+        </div>
+      </FormSection>
+
+      <FormSection title="Motivação narrativa">
+        <TextAreaField
+          label="Objetivo"
+          value={form.goal}
+          onChange={(value) => updateField("goal", value)}
+          disabled={isPending}
+        />
+        <TextAreaField
+          label="Conflito"
+          value={form.conflict}
+          onChange={(value) => updateField("conflict", value)}
+          disabled={isPending}
+        />
+        <TextAreaField
+          label="Arco"
+          value={form.arc}
+          onChange={(value) => updateField("arc", value)}
+          disabled={isPending}
+        />
+      </FormSection>
+
+      <FormSection title="Descrição">
+        <TextAreaField
+          label="Descrição física"
+          value={form.physicalDescription}
+          onChange={(value) => updateField("physicalDescription", value)}
+          disabled={isPending}
+        />
+        <TextAreaField
+          label="Personalidade"
+          value={form.personality}
+          onChange={(value) => updateField("personality", value)}
+          disabled={isPending}
+        />
+        <TextAreaField
+          label="Biografia"
+          value={form.biography}
+          onChange={(value) => updateField("biography", value)}
+          disabled={isPending}
+        />
+      </FormSection>
+
+      <FormSection title="Notas">
+        <TextAreaField
+          label="Notas"
+          value={form.notes}
+          onChange={(value) => updateField("notes", value)}
+          disabled={isPending}
+          rows={4}
+        />
+      </FormSection>
+
+      {validationMessage ? <FeedbackMessage variant="error">{validationMessage}</FeedbackMessage> : null}
+      {errorMessage ? <FeedbackMessage variant="error">{errorMessage}</FeedbackMessage> : null}
+      {successMessage ? <FeedbackMessage variant="success">{successMessage}</FeedbackMessage> : null}
+
+      <div className="border-t border-zinc-200 pt-4">
+        <Button type="submit" disabled={isPending}>
+          {isPending ? "Salvando..." : isEditing ? "Salvar personagem" : "Criar personagem"}
+        </Button>
+      </div>
+    </form>
+  );
+}
+
+function FormSection({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <section className="grid gap-3 rounded-md border border-zinc-200 bg-zinc-50/70 p-4">
+      <h3 className="text-sm font-semibold text-zinc-950">{title}</h3>
+      <div className="grid gap-3">{children}</div>
+    </section>
+  );
+}
+
+function Field({ label, className = "", children }: { label: string; className?: string; children: ReactNode }) {
+  return (
+    <label className={`grid gap-1 text-sm ${className}`}>
+      <span className="font-medium text-zinc-700">{label}</span>
+      {children}
+    </label>
+  );
+}
+
+function TextAreaField({
+  label,
+  value,
+  disabled,
+  rows = 3,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  disabled: boolean;
+  rows?: number;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <Field label={label}>
+      <Textarea
+        value={value}
+        rows={rows}
+        onChange={(event) => onChange(event.target.value)}
+        disabled={disabled}
+        className="resize-y"
+      />
+    </Field>
+  );
+}
+
+function nullableText(value: string) {
+  return value.trim() ? value.trim() : null;
+}
+
+function toFormState(character: CharacterResponse): CharacterFormState {
+  return {
+    name: character.name,
+    nickname: character.nickname ?? "",
+    age: character.age === null ? "" : String(character.age),
+    sex: character.sex ?? "",
+    narrativeFunction: character.narrativeFunction ?? "",
+    goal: character.goal ?? "",
+    conflict: character.conflict ?? "",
+    arc: character.arc ?? "",
+    physicalDescription: character.physicalDescription ?? "",
+    personality: character.personality ?? "",
+    biography: character.biography ?? "",
+    notes: character.notes ?? "",
+  };
+}
