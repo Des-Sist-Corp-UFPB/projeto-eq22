@@ -62,6 +62,7 @@ export function useUpdateNotebookCategory(bookId: string) {
       updateNotebookCategory(categoryId, payload),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: notebookQueryKeys.categories(bookId) });
+      void queryClient.invalidateQueries({ queryKey: notebookQueryKeys.notesRoot(bookId) });
     },
   });
 }

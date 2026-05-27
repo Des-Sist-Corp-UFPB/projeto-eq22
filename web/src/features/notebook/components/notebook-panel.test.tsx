@@ -192,6 +192,31 @@ describe("NotebookPanel writing layout and status", () => {
     expect(within(customCategoryRow).getByRole("button", { name: "Excluir" })).toBeInTheDocument();
   });
 
+  test("renomear categoria atualiza categorias e notas", async () => {
+    mocks.updateNotebookCategory.mockResolvedValue({ ...customCategory, name: "Cronologia revisada" });
+    renderWithClient(<NotebookPanel bookId="book-1" />);
+
+    await screen.findByLabelText("Notas do caderno");
+    expect(mocks.listNotebookCategories).toHaveBeenCalledTimes(1);
+    expect(mocks.listNotebookNotes).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "Gerenciar categorias" }));
+    const customCategoryRow = screen.getByRole("group", { name: "Categoria Cronologia" });
+    fireEvent.click(within(customCategoryRow).getByRole("button", { name: "Renomear" }));
+    fireEvent.change(within(customCategoryRow).getByLabelText("Renomear categoria"), {
+      target: { value: "Cronologia revisada" },
+    });
+    fireEvent.click(within(customCategoryRow).getByRole("button", { name: "Salvar" }));
+
+    await waitFor(() => {
+      expect(mocks.updateNotebookCategory).toHaveBeenCalledWith(customCategory.id, { name: "Cronologia revisada" });
+    });
+    await waitFor(() => {
+      expect(mocks.listNotebookCategories).toHaveBeenCalledTimes(2);
+      expect(mocks.listNotebookNotes).toHaveBeenCalledTimes(2);
+    });
+  });
+
   test("excluir categoria da nota selecionada atualiza o editor para Sem categoria", async () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
     renderWithClient(<NotebookPanel bookId="book-1" />);
