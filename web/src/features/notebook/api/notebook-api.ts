@@ -1,5 +1,7 @@
 import type {
   NotebookCategory,
+  NotebookCategoryRequest,
+  NotebookCategoryUpdateRequest,
   NotebookNote,
   NotebookNoteRequest,
   NotebookNoteUpdateRequest,
@@ -8,6 +10,26 @@ import { apiRequest } from "@/lib/api/client";
 
 export function listNotebookCategories(bookId: string) {
   return apiRequest<NotebookCategory[]>(`/api/books/${bookId}/notebook/categories`);
+}
+
+export function createNotebookCategory(bookId: string, payload: NotebookCategoryRequest) {
+  return apiRequest<NotebookCategory>(`/api/books/${bookId}/notebook/categories`, {
+    method: "POST",
+    body: payload,
+  });
+}
+
+export function updateNotebookCategory(categoryId: string, payload: NotebookCategoryUpdateRequest) {
+  return apiRequest<NotebookCategory>(`/api/notebook/categories/${categoryId}`, {
+    method: "PATCH",
+    body: payload,
+  });
+}
+
+export function deleteNotebookCategory(categoryId: string) {
+  return apiRequest<void>(`/api/notebook/categories/${categoryId}`, {
+    method: "DELETE",
+  });
 }
 
 export function listNotebookNotes(bookId: string, categoryId?: string | null) {

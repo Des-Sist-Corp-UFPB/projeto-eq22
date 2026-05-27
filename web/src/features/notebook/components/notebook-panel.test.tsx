@@ -29,6 +29,9 @@ const note: NotebookNote = {
 const mocks = vi.hoisted(() => ({
   listNotebookCategories: vi.fn(),
   listNotebookNotes: vi.fn(),
+  createNotebookCategory: vi.fn(),
+  updateNotebookCategory: vi.fn(),
+  deleteNotebookCategory: vi.fn(),
   createNotebookNote: vi.fn(),
   updateNotebookNote: vi.fn(),
   deleteNotebookNote: vi.fn(),
@@ -37,59 +40,104 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/features/notebook/api/notebook-api", () => ({
   listNotebookCategories: mocks.listNotebookCategories,
   listNotebookNotes: mocks.listNotebookNotes,
+  createNotebookCategory: mocks.createNotebookCategory,
+  updateNotebookCategory: mocks.updateNotebookCategory,
+  deleteNotebookCategory: mocks.deleteNotebookCategory,
   createNotebookNote: mocks.createNotebookNote,
   updateNotebookNote: mocks.updateNotebookNote,
   deleteNotebookNote: mocks.deleteNotebookNote,
 }));
 
-describe("NotebookPanel", () => {
+describe("NotebookPanel category management", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.listNotebookCategories.mockResolvedValue([category]);
     mocks.listNotebookNotes.mockResolvedValue([]);
+    mocks.createNotebookCategory.mockResolvedValue({ ...category, id: "category-2", name: "Mundo" });
+    mocks.updateNotebookCategory.mockResolvedValue({ ...category, name: "Pesquisa revisada" });
+    mocks.deleteNotebookCategory.mockResolvedValue(undefined);
     mocks.createNotebookNote.mockResolvedValue(note);
     mocks.updateNotebookNote.mockResolvedValue(note);
     mocks.deleteNotebookNote.mockResolvedValue(undefined);
   });
 
-  test("mostra estado vazio quando nao ha notas", async () => {
+  test("cria categoria e atualiza categorias", async () => {
+    mocks.listNotebookCategories.mockResolvedValueOnce([category]).mockResolvedValueOnce([
+      category,
+      { ...category, id: "category-2", name: "Mundo" },
+    ]);
     renderWithClient(<NotebookPanel bookId="book-1" />);
 
     expect(await screen.findByRole("heading", { name: "Caderno" })).toBeInTheDocument();
-    expect(await screen.findByText("Nenhuma nota no caderno")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Todas" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Sem categoria" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Pesquisa" })).toBeInTheDocument();
-  });
-
-  test("cria nota e atualiza a lista", async () => {
-    mocks.listNotebookNotes.mockResolvedValueOnce([]).mockResolvedValueOnce([note]);
-    renderWithClient(<NotebookPanel bookId="book-1" />);
-
-    fireEvent.click(await screen.findByRole("button", { name: "Nova nota" }));
-    fireEvent.change(screen.getByLabelText("Título"), { target: { value: "Mapa de referencias" } });
-    fireEvent.change(screen.getByLabelText("Conteúdo"), { target: { value: "Pesquisar mapas antigos." } });
-    fireEvent.change(screen.getByLabelText("Categoria"), { target: { value: category.id } });
-    fireEvent.click(screen.getByRole("button", { name: "Criar nota" }));
+    fireEvent.change(await screen.findByLabelText("Nova categoria"), { target: { value: "Mundo" } });
+    fireEvent.click(screen.getByRole("button", { name: "Criar categoria" }));
 
     await waitFor(() => {
-      expect(mocks.createNotebookNote).toHaveBeenCalledWith("book-1", {
-        title: "Mapa de referencias",
-        content: "Pesquisar mapas antigos.",
-        categoryId: category.id,
+      expect(mocks.createNotebookCategory).toHaveBeenCalledWith("book-1", { name: "Mundo" });
+    });
+    await waitFor(() => {
+      expect(mocks.listNotebookCategories).toHaveBeenCalledTimes(2);
+    });
+    expect(await screen.findByText("Categoria criada com sucesso.")).toBeInTheDocument();
+  });
+
+  test("renomeia categoria e atualiza categorias", async () => {
+    mocks.listNotebookCategories
+      .mockResolvedValueOnce([category])
+      .mockResolvedValueOnce([{ ...category, name: "Pesquisa revisada" }]);
+    renderWithClient(<NotebookPanel bookId="book-1" />);
+
+    await screen.findByRole("heading", { name: "Caderno" });
+    fireEvent.click(await screen.findByRole("button", { name: "Renomear" }));
+    fireEvent.change(screen.getByLabelText("Renomear categoria"), { target: { value: "Pesquisa revisada" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar" }));
+
+    await waitFor(() => {
+      expect(mocks.updateNotebookCategory).toHaveBeenCalledWith(category.id, {
+        name: "Pesquisa revisada",
       });
+    });
+    await waitFor(() => {
+      expect(mocks.listNotebookCategories).toHaveBeenCalledTimes(2);
+    });
+    expect(await screen.findByText("Categoria atualizada com sucesso.")).toBeInTheDocument();
+  });
+
+  test("exclui categoria com confirmacao e atualiza categorias e notas", async () => {
+    const uncategorizedNote = {
+      ...note,
+      categoryId: null,
+      category: null,
+    };
+    mocks.listNotebookCategories.mockResolvedValueOnce([category]).mockResolvedValueOnce([]);
+    mocks.listNotebookNotes.mockResolvedValueOnce([note]).mockResolvedValueOnce([uncategorizedNote]);
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    renderWithClient(<NotebookPanel bookId="book-1" />);
+
+    await screen.findByText("Mapa de referencias");
+    fireEvent.click(screen.getAllByRole("button", { name: "Excluir" })[0]);
+
+    expect(window.confirm).toHaveBeenCalledWith(
+      'Excluir a categoria "Pesquisa"? As notas desta categoria continuarão no caderno sem categoria.'
+    );
+    await waitFor(() => {
+      expect(mocks.deleteNotebookCategory).toHaveBeenCalledWith(category.id);
+    });
+    await waitFor(() => {
+      expect(mocks.listNotebookCategories).toHaveBeenCalledTimes(2);
     });
     await waitFor(() => {
       expect(mocks.listNotebookNotes).toHaveBeenCalledTimes(2);
     });
-    expect(await screen.findByText("Nota criada com sucesso.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Sem categoria" }));
+    expect(await screen.findByText("Mapa de referencias")).toBeInTheDocument();
   });
 
-  test("filtra notas pela categoria selecionada", async () => {
+  test("filtro de notas por categoria continua chamando a API com categoria selecionada", async () => {
     mocks.listNotebookNotes.mockResolvedValueOnce([]).mockResolvedValueOnce([note]);
     renderWithClient(<NotebookPanel bookId="book-1" />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Pesquisa" }));
+    fireEvent.click(await screen.findByRole("button", { name: /Pesquisa/ }));
 
     await waitFor(() => {
       expect(mocks.listNotebookNotes).toHaveBeenLastCalledWith("book-1", category.id);

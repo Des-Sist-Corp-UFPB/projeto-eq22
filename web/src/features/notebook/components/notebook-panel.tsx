@@ -8,10 +8,13 @@ import { ErrorState, LoadingState } from "@/components/ui/feedback";
 import { FeedbackMessage } from "@/components/ui/feedback-message";
 import { TextAreaField, TextField } from "@/components/ui/text-field";
 import {
+  useCreateNotebookCategory,
+  useDeleteNotebookCategory,
   useCreateNotebookNote,
   useDeleteNotebookNote,
   useNotebookCategories,
   useNotebookNotes,
+  useUpdateNotebookCategory,
   useUpdateNotebookNote,
 } from "@/features/notebook/api/notebook-hooks";
 import type { NotebookCategory, NotebookNote, NotebookNoteRequest } from "@/features/notebook/types";
@@ -47,6 +50,9 @@ export function NotebookPanel({ bookId }: NotebookPanelProps) {
   const selectedCategoryId = selectedFilter === "all" || selectedFilter === "uncategorized" ? null : selectedFilter;
   const categoriesQuery = useNotebookCategories(bookId);
   const notesQuery = useNotebookNotes(bookId, selectedCategoryId);
+  const createCategoryMutation = useCreateNotebookCategory(bookId);
+  const updateCategoryMutation = useUpdateNotebookCategory(bookId);
+  const deleteCategoryMutation = useDeleteNotebookCategory(bookId);
   const createMutation = useCreateNotebookNote(bookId);
   const updateMutation = useUpdateNotebookNote(bookId);
   const deleteMutation = useDeleteNotebookNote(bookId);
@@ -62,6 +68,13 @@ export function NotebookPanel({ bookId }: NotebookPanelProps) {
   const activeMutation = detailMode === "edit" ? updateMutation : createMutation;
   const errorMessage = useMemo(() => getNotebookErrorMessage(activeMutation.error), [activeMutation.error]);
   const deleteErrorMessage = useMemo(() => getNotebookErrorMessage(deleteMutation.error), [deleteMutation.error]);
+  const categoryErrorMessage = useMemo(
+    () =>
+      getNotebookErrorMessage(
+        createCategoryMutation.error ?? updateCategoryMutation.error ?? deleteCategoryMutation.error
+      ),
+    [createCategoryMutation.error, deleteCategoryMutation.error, updateCategoryMutation.error]
+  );
 
   function startCreate() {
     setSelectedNote(null);
@@ -70,6 +83,9 @@ export function NotebookPanel({ bookId }: NotebookPanelProps) {
     createMutation.reset();
     updateMutation.reset();
     deleteMutation.reset();
+    createCategoryMutation.reset();
+    updateCategoryMutation.reset();
+    deleteCategoryMutation.reset();
   }
 
   function startEdit(note: NotebookNote) {
@@ -79,6 +95,9 @@ export function NotebookPanel({ bookId }: NotebookPanelProps) {
     createMutation.reset();
     updateMutation.reset();
     deleteMutation.reset();
+    createCategoryMutation.reset();
+    updateCategoryMutation.reset();
+    deleteCategoryMutation.reset();
   }
 
   function clearDetail() {
@@ -88,6 +107,9 @@ export function NotebookPanel({ bookId }: NotebookPanelProps) {
     createMutation.reset();
     updateMutation.reset();
     deleteMutation.reset();
+    createCategoryMutation.reset();
+    updateCategoryMutation.reset();
+    deleteCategoryMutation.reset();
   }
 
   function handleSubmit(payload: NotebookNoteRequest) {
@@ -137,6 +159,46 @@ export function NotebookPanel({ bookId }: NotebookPanelProps) {
     });
   }
 
+  function handleCreateCategory(name: string) {
+    createCategoryMutation.mutate(
+      { name },
+      {
+        onSuccess: () => {
+          setSuccessMessage("Categoria criada com sucesso.");
+        },
+      }
+    );
+  }
+
+  function handleRenameCategory(category: NotebookCategory, name: string) {
+    updateCategoryMutation.mutate(
+      { categoryId: category.id, payload: { name } },
+      {
+        onSuccess: () => {
+          setSuccessMessage("Categoria atualizada com sucesso.");
+        },
+      }
+    );
+  }
+
+  function handleDeleteCategory(category: NotebookCategory) {
+    const confirmed = window.confirm(
+      `Excluir a categoria "${category.name}"? As notas desta categoria continuarão no caderno sem categoria.`
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    deleteCategoryMutation.mutate(category.id, {
+      onSuccess: () => {
+        if (selectedFilter === category.id) {
+          setSelectedFilter("uncategorized");
+        }
+        setSuccessMessage("Categoria excluída com sucesso.");
+      },
+    });
+  }
+
   return (
     <section className="h-full overflow-y-auto bg-zinc-50 p-4 md:p-6">
       <div className="mx-auto grid max-w-6xl gap-4">
@@ -162,6 +224,7 @@ export function NotebookPanel({ bookId }: NotebookPanelProps) {
         ) : null}
 
         {deleteErrorMessage ? <ErrorState message={deleteErrorMessage} /> : null}
+        {categoryErrorMessage ? <ErrorState message={categoryErrorMessage} /> : null}
         {successMessage ? <FeedbackMessage variant="success">{successMessage}</FeedbackMessage> : null}
 
         {categoriesQuery.data && notesQuery.data ? (
@@ -174,6 +237,12 @@ export function NotebookPanel({ bookId }: NotebookPanelProps) {
                   setSelectedFilter(filter);
                   clearDetail();
                 }}
+                createPending={createCategoryMutation.isPending}
+                updatePendingCategoryId={updateCategoryMutation.variables?.categoryId ?? null}
+                deletePendingCategoryId={deleteCategoryMutation.variables ?? null}
+                onCreateCategory={handleCreateCategory}
+                onRenameCategory={handleRenameCategory}
+                onDeleteCategory={handleDeleteCategory}
               />
 
               <NotesList
@@ -210,11 +279,65 @@ function CategoryFilters({
   categories,
   selectedFilter,
   onSelectFilter,
+  createPending,
+  updatePendingCategoryId,
+  deletePendingCategoryId,
+  onCreateCategory,
+  onRenameCategory,
+  onDeleteCategory,
 }: {
   categories: NotebookCategory[];
   selectedFilter: CategoryFilter;
   onSelectFilter: (filter: CategoryFilter) => void;
+  createPending: boolean;
+  updatePendingCategoryId: string | null;
+  deletePendingCategoryId: string | null;
+  onCreateCategory: (name: string) => void;
+  onRenameCategory: (category: NotebookCategory, name: string) => void;
+  onDeleteCategory: (category: NotebookCategory) => void;
 }) {
+  const [newCategoryName, setNewCategoryName] = useState("");
+  const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null);
+  const [editingCategoryName, setEditingCategoryName] = useState("");
+  const [validationMessage, setValidationMessage] = useState<string | null>(null);
+
+  function handleCreateCategory(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const name = newCategoryName.trim();
+    if (!name) {
+      setValidationMessage("Informe o nome da categoria.");
+      return;
+    }
+
+    setValidationMessage(null);
+    onCreateCategory(name);
+    setNewCategoryName("");
+  }
+
+  function startRename(category: NotebookCategory) {
+    setValidationMessage(null);
+    setEditingCategoryId(category.id);
+    setEditingCategoryName(category.name);
+  }
+
+  function cancelRename() {
+    setValidationMessage(null);
+    setEditingCategoryId(null);
+    setEditingCategoryName("");
+  }
+
+  function submitRename(category: NotebookCategory) {
+    const name = editingCategoryName.trim();
+    if (!name) {
+      setValidationMessage("Informe o nome da categoria.");
+      return;
+    }
+
+    setValidationMessage(null);
+    onRenameCategory(category, name);
+    cancelRename();
+  }
+
   return (
     <div className="grid gap-2 rounded-md border border-zinc-200 bg-white p-3 shadow-sm">
       <h2 className="text-sm font-semibold text-zinc-950">Categorias</h2>
@@ -234,6 +357,80 @@ function CategoryFilters({
             {category.name}
           </FilterButton>
         ))}
+      </div>
+      <form onSubmit={handleCreateCategory} className="grid gap-2 border-t border-zinc-200 pt-3">
+        <label className="grid gap-1 text-sm">
+          <span className="font-medium text-zinc-700">Nova categoria</span>
+          <input
+            value={newCategoryName}
+            onChange={(event) => {
+              setValidationMessage(null);
+              setNewCategoryName(event.target.value);
+            }}
+            disabled={createPending}
+            className="min-h-9 rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-950 shadow-sm outline-none transition focus:border-zinc-950 focus:ring-2 focus:ring-zinc-200 disabled:cursor-not-allowed disabled:bg-zinc-100 disabled:text-zinc-500"
+          />
+        </label>
+        <Button type="submit" size="sm" disabled={createPending}>
+          {createPending ? "Criando..." : "Criar categoria"}
+        </Button>
+      </form>
+
+      {validationMessage ? <FeedbackMessage variant="error">{validationMessage}</FeedbackMessage> : null}
+
+      <div className="grid gap-2 border-t border-zinc-200 pt-3">
+        {categories.map((category) => {
+          const isEditing = editingCategoryId === category.id;
+          const isPending = updatePendingCategoryId === category.id || deletePendingCategoryId === category.id;
+
+          return (
+            <div key={category.id} className="grid gap-2 rounded-md border border-zinc-200 bg-zinc-50/70 p-2">
+              {isEditing ? (
+                <label className="grid gap-1 text-sm">
+                  <span className="font-medium text-zinc-700">Renomear categoria</span>
+                  <input
+                    value={editingCategoryName}
+                    onChange={(event) => {
+                      setValidationMessage(null);
+                      setEditingCategoryName(event.target.value);
+                    }}
+                    disabled={isPending}
+                    className="min-h-9 rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-950 shadow-sm outline-none transition focus:border-zinc-950 focus:ring-2 focus:ring-zinc-200 disabled:cursor-not-allowed disabled:bg-zinc-100 disabled:text-zinc-500"
+                  />
+                </label>
+              ) : (
+                <p className="truncate text-sm font-medium text-zinc-800">{category.name}</p>
+              )}
+
+              <div className="flex flex-wrap gap-1">
+                {isEditing ? (
+                  <>
+                    <Button type="button" size="sm" variant="secondary" disabled={isPending} onClick={() => submitRename(category)}>
+                      Salvar
+                    </Button>
+                    <Button type="button" size="sm" variant="ghost" disabled={isPending} onClick={cancelRename}>
+                      Cancelar
+                    </Button>
+                  </>
+                ) : (
+                  <Button type="button" size="sm" variant="ghost" disabled={isPending} onClick={() => startRename(category)}>
+                    Renomear
+                  </Button>
+                )}
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  className="text-red-700 hover:bg-red-50"
+                  disabled={isPending}
+                  onClick={() => onDeleteCategory(category)}
+                >
+                  {deletePendingCategoryId === category.id ? "..." : "Excluir"}
+                </Button>
+              </div>
+            </div>
+          );
+        })}
       </div>
     </div>
   );

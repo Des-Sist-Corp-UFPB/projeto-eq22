@@ -26,3 +26,10 @@ export type NotebookNoteRequest = {
 };
 
 export type NotebookNoteUpdateRequest = Partial<NotebookNoteRequest>;
+
+export type NotebookCategoryRequest = {
+  name: string;
+  sortOrder?: number | null;
+};
+
+export type NotebookCategoryUpdateRequest = Partial<NotebookCategoryRequest>;

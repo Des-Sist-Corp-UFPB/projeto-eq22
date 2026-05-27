@@ -2,17 +2,30 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  createNotebookCategory,
   createNotebookNote,
+  deleteNotebookCategory,
   deleteNotebookNote,
   listNotebookCategories,
   listNotebookNotes,
+  updateNotebookCategory,
   updateNotebookNote,
 } from "@/features/notebook/api/notebook-api";
-import type { NotebookNoteRequest, NotebookNoteUpdateRequest } from "@/features/notebook/types";
+import type {
+  NotebookCategoryRequest,
+  NotebookCategoryUpdateRequest,
+  NotebookNoteRequest,
+  NotebookNoteUpdateRequest,
+} from "@/features/notebook/types";
 
 type UpdateNotebookNoteVariables = {
   noteId: string;
   payload: NotebookNoteUpdateRequest;
+};
+
+type UpdateNotebookCategoryVariables = {
+  categoryId: string;
+  payload: NotebookCategoryUpdateRequest;
 };
 
 export const notebookQueryKeys = {
@@ -27,6 +40,41 @@ export function useNotebookCategories(bookId: string) {
     queryKey: notebookQueryKeys.categories(bookId),
     queryFn: () => listNotebookCategories(bookId),
     enabled: Boolean(bookId),
+  });
+}
+
+export function useCreateNotebookCategory(bookId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (payload: NotebookCategoryRequest) => createNotebookCategory(bookId, payload),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: notebookQueryKeys.categories(bookId) });
+    },
+  });
+}
+
+export function useUpdateNotebookCategory(bookId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ categoryId, payload }: UpdateNotebookCategoryVariables) =>
+      updateNotebookCategory(categoryId, payload),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: notebookQueryKeys.categories(bookId) });
+    },
+  });
+}
+
+export function useDeleteNotebookCategory(bookId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (categoryId: string) => deleteNotebookCategory(categoryId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: notebookQueryKeys.categories(bookId) });
+      void queryClient.invalidateQueries({ queryKey: notebookQueryKeys.notesRoot(bookId) });
+    },
   });
 }
 
