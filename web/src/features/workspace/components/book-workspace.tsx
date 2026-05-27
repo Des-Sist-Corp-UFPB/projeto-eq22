@@ -198,6 +198,7 @@ export function BookWorkspace({ bookId, initialSceneId }: BookWorkspaceProps) {
     const currentUrlSceneId = sceneIdFromUrl && sceneIdFromUrl.trim() ? sceneIdFromUrl : null;
 
     if (!currentUrlSceneId) {
+      lastClearedInvalidSceneRef.current = null;
       return;
     }
 
