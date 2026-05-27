@@ -191,6 +191,56 @@ describe("NotebookPanel writing layout and status", () => {
     expect(within(customCategoryRow).getByRole("button", { name: "Renomear" })).toBeInTheDocument();
     expect(within(customCategoryRow).getByRole("button", { name: "Excluir" })).toBeInTheDocument();
   });
+
+  test("excluir categoria da nota selecionada atualiza o editor para Sem categoria", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    renderWithClient(<NotebookPanel bookId="book-1" />);
+
+    const notesList = await screen.findByLabelText("Notas do caderno");
+    fireEvent.click(within(notesList).getByText(resolvedNote.title));
+    expect(screen.getByLabelText("Categoria")).toHaveValue(customCategory.id);
+
+    fireEvent.click(screen.getByRole("button", { name: "Gerenciar categorias" }));
+    const customCategoryRow = screen.getByRole("group", { name: "Categoria Cronologia" });
+    fireEvent.click(within(customCategoryRow).getByRole("button", { name: "Excluir" }));
+
+    await waitFor(() => {
+      expect(mocks.deleteNotebookCategory).toHaveBeenCalledWith(customCategory.id);
+    });
+    expect(screen.getByLabelText("Categoria")).toHaveValue("");
+    expect(screen.getByDisplayValue(resolvedNote.title)).toBeInTheDocument();
+    expect(screen.getByDisplayValue(resolvedNote.content ?? "")).toBeInTheDocument();
+    expect(screen.getByLabelText("Status")).toHaveValue(resolvedNote.status);
+  });
+
+  test("salvar nota selecionada apos excluir categoria nao reenvia categoria excluida", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    renderWithClient(<NotebookPanel bookId="book-1" />);
+
+    const notesList = await screen.findByLabelText("Notas do caderno");
+    fireEvent.click(within(notesList).getByText(resolvedNote.title));
+    fireEvent.click(screen.getByRole("button", { name: "Gerenciar categorias" }));
+    const customCategoryRow = screen.getByRole("group", { name: "Categoria Cronologia" });
+    fireEvent.click(within(customCategoryRow).getByRole("button", { name: "Excluir" }));
+
+    await waitFor(() => {
+      expect(mocks.deleteNotebookCategory).toHaveBeenCalledWith(customCategory.id);
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar nota" }));
+
+    await waitFor(() => {
+      expect(mocks.updateNotebookNote).toHaveBeenCalledWith(resolvedNote.id, {
+        title: resolvedNote.title,
+        content: resolvedNote.content,
+        categoryId: null,
+        status: resolvedNote.status,
+      });
+    });
+    expect(mocks.updateNotebookNote).not.toHaveBeenCalledWith(
+      resolvedNote.id,
+      expect.objectContaining({ categoryId: customCategory.id })
+    );
+  });
 });
 
 function categoryFixture(id: string, name: string, isDefault: boolean, sortOrder: number): NotebookCategory {

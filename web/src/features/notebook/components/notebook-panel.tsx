@@ -211,6 +211,9 @@ export function NotebookPanel({ bookId }: NotebookPanelProps) {
         if (categoryFilter === category.id) {
           setCategoryFilter("uncategorized");
         }
+        setSelectedNote((current) =>
+          current?.categoryId === category.id ? { ...current, categoryId: null, category: null } : current
+        );
         setSuccessMessage("Categoria excluída com sucesso.");
       },
     });
