@@ -15,14 +15,18 @@ export type NotebookNote = {
   category: NotebookCategory | null;
   title: string;
   content: string | null;
+  status: NotebookNoteStatus;
   createdAt: string;
   updatedAt: string;
 };
+
+export type NotebookNoteStatus = "OPEN" | "RESOLVED";
 
 export type NotebookNoteRequest = {
   title: string;
   content?: string | null;
   categoryId?: string | null;
+  status?: NotebookNoteStatus | null;
 };
 
 export type NotebookNoteUpdateRequest = Partial<NotebookNoteRequest>;

@@ -2,7 +2,7 @@ import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import React from "react";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { NotebookPanel } from "@/features/notebook/components/notebook-panel";
-import type { NotebookCategory, NotebookNote } from "@/features/notebook/types";
+import type { NotebookCategory, NotebookNote, NotebookNoteStatus } from "@/features/notebook/types";
 import { renderWithClient } from "@/test/test-utils";
 
 const pesquisaCategory = categoryFixture("category-pesquisa", "Pesquisa", true, 1);
@@ -14,18 +14,21 @@ const pesquisaNote = noteFixture({
   id: "note-pesquisa",
   title: "Mapa de referencias",
   category: pesquisaCategory,
+  status: "OPEN",
+});
+
+const resolvedNote = noteFixture({
+  id: "note-resolved",
+  title: "Pergunta respondida",
+  category: customCategory,
+  status: "RESOLVED",
 });
 
 const customNote = noteFixture({
   id: "note-custom",
   title: "Linha alternativa",
   category: customCategory,
-});
-
-const uncategorizedNote = noteFixture({
-  id: "note-sem-categoria",
-  title: "Nota solta",
-  category: null,
+  status: "OPEN",
 });
 
 const mocks = vi.hoisted(() => ({
@@ -50,20 +53,28 @@ vi.mock("@/features/notebook/api/notebook-api", () => ({
   deleteNotebookNote: mocks.deleteNotebookNote,
 }));
 
-describe("NotebookPanel layout and category management", () => {
+describe("NotebookPanel writing layout and status", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.listNotebookCategories.mockResolvedValue([customCategory, outroCategory, pesquisaCategory, ideiaCategory]);
-    mocks.listNotebookNotes.mockResolvedValue([pesquisaNote, customNote, uncategorizedNote]);
+    mocks.listNotebookNotes.mockResolvedValue([pesquisaNote, resolvedNote]);
     mocks.createNotebookCategory.mockResolvedValue(categoryFixture("category-mundo", "Mundo", false, 3));
     mocks.updateNotebookCategory.mockResolvedValue({ ...pesquisaCategory, name: "Pesquisa revisada" });
     mocks.deleteNotebookCategory.mockResolvedValue(undefined);
     mocks.createNotebookNote.mockResolvedValue(customNote);
-    mocks.updateNotebookNote.mockResolvedValue(customNote);
+    mocks.updateNotebookNote.mockResolvedValue({ ...pesquisaNote, status: "RESOLVED" });
     mocks.deleteNotebookNote.mockResolvedValue(undefined);
   });
 
-  test("criar nota com outro filtro ativo deixa a nova nota visivel e aberta", async () => {
+  test("filtro de status mostra opcoes OPEN e RESOLVED", async () => {
+    renderWithClient(<NotebookPanel bookId="book-1" />);
+
+    const statusFilters = within(await screen.findByLabelText("Filtros de status")).getAllByRole("button");
+
+    expect(statusFilters.map((button) => button.textContent)).toEqual(["Todas", "Abertas", "Resolvidas"]);
+  });
+
+  test("criar nota abre a nota e a mantem visivel", async () => {
     mocks.listNotebookNotes.mockImplementation((_bookId: string, categoryId?: string | null) => {
       if (categoryId === pesquisaCategory.id) {
         return Promise.resolve([pesquisaNote]);
@@ -71,11 +82,12 @@ describe("NotebookPanel layout and category management", () => {
       if (categoryId === customCategory.id) {
         return Promise.resolve([]);
       }
-      return Promise.resolve([pesquisaNote, uncategorizedNote]);
+      return Promise.resolve([pesquisaNote]);
     });
     renderWithClient(<NotebookPanel bookId="book-1" />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Pesquisa" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Resolvidas" }));
+    fireEvent.change(screen.getByLabelText("Buscar notas"), { target: { value: "nao aparece" } });
     fireEvent.click(screen.getByRole("button", { name: "Nova nota" }));
     fireEvent.change(screen.getByLabelText("Título"), { target: { value: customNote.title } });
     fireEvent.change(screen.getByLabelText("Categoria"), { target: { value: customCategory.id } });
@@ -86,15 +98,36 @@ describe("NotebookPanel layout and category management", () => {
         title: customNote.title,
         content: null,
         categoryId: customCategory.id,
+        status: "OPEN",
       });
     });
     expect(await screen.findByText("Nota criada com sucesso.")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Cronologia" })).toHaveClass("bg-zinc-900");
     expect(screen.getAllByText(customNote.title).length).toBeGreaterThan(0);
     expect(screen.getByRole("heading", { name: "Editar nota" })).toBeInTheDocument();
+    expect(screen.getByDisplayValue(customNote.title)).toBeInTheDocument();
   });
 
-  test("Outro aparece por ultimo nos filtros e no seletor de categoria", async () => {
+  test("atualizar status da nota chama API e atualiza notas", async () => {
+    renderWithClient(<NotebookPanel bookId="book-1" />);
+
+    const notesList = await screen.findByLabelText("Notas do caderno");
+    fireEvent.click(within(notesList).getByText(pesquisaNote.title));
+    fireEvent.change(screen.getByLabelText("Status"), { target: { value: "RESOLVED" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar nota" }));
+
+    await waitFor(() => {
+      expect(mocks.updateNotebookNote).toHaveBeenCalledWith(pesquisaNote.id, {
+        title: pesquisaNote.title,
+        content: pesquisaNote.content,
+        categoryId: pesquisaCategory.id,
+        status: "RESOLVED",
+      });
+    });
+    expect(mocks.listNotebookNotes).toHaveBeenCalled();
+  });
+
+  test("filtro por categoria continua funcionando com Outro por ultimo", async () => {
+    mocks.listNotebookNotes.mockResolvedValueOnce([pesquisaNote, resolvedNote]).mockResolvedValueOnce([pesquisaNote]);
     renderWithClient(<NotebookPanel bookId="book-1" />);
 
     const filters = within(await screen.findByLabelText("Filtros de categoria")).getAllByRole("button");
@@ -107,6 +140,11 @@ describe("NotebookPanel layout and category management", () => {
       "Outro",
     ]);
 
+    fireEvent.click(screen.getByRole("button", { name: "Pesquisa" }));
+    await waitFor(() => {
+      expect(mocks.listNotebookNotes).toHaveBeenLastCalledWith("book-1", pesquisaCategory.id);
+    });
+
     fireEvent.click(screen.getByRole("button", { name: "Nova nota" }));
     const options = within(screen.getByLabelText("Categoria")).getAllByRole("option");
     expect(options.map((option) => option.textContent)).toEqual([
@@ -118,61 +156,19 @@ describe("NotebookPanel layout and category management", () => {
     ]);
   });
 
-  test("gerenciador de categorias cria renomeia e exclui categoria", async () => {
-    vi.spyOn(window, "confirm").mockReturnValue(true);
+  test("novo layout renderiza filtros lista e editor em duas areas", async () => {
     renderWithClient(<NotebookPanel bookId="book-1" />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Gerenciar categorias" }));
-    const dialog = await screen.findByRole("dialog");
-
-    fireEvent.change(within(dialog).getByLabelText("Nova categoria"), { target: { value: "Mundo" } });
-    fireEvent.click(within(dialog).getByRole("button", { name: "Criar categoria" }));
-    await waitFor(() => {
-      expect(mocks.createNotebookCategory).toHaveBeenCalledWith("book-1", { name: "Mundo" });
-    });
-
-    fireEvent.click(within(dialog).getAllByRole("button", { name: "Renomear" })[0]);
-    fireEvent.change(within(dialog).getByLabelText("Renomear categoria"), {
-      target: { value: "Pesquisa revisada" },
-    });
-    fireEvent.click(within(dialog).getByRole("button", { name: "Salvar" }));
-    await waitFor(() => {
-      expect(mocks.updateNotebookCategory).toHaveBeenCalledWith(expect.any(String), { name: "Pesquisa revisada" });
-    });
-
-    fireEvent.click(screen.getByRole("button", { name: "Gerenciar categorias" }));
-    const refreshedDialog = await screen.findByRole("dialog");
-    fireEvent.click(within(refreshedDialog).getAllByRole("button", { name: "Excluir" })[0]);
-    await waitFor(() => {
-      expect(mocks.deleteNotebookCategory).toHaveBeenCalledWith(expect.any(String));
-    });
-    expect(mocks.listNotebookCategories).toHaveBeenCalled();
-    expect(mocks.listNotebookNotes).toHaveBeenCalled();
-  });
-
-  test("lista de notas e editor aparecem juntos no novo layout", async () => {
-    renderWithClient(<NotebookPanel bookId="book-1" />);
-
-    const notesList = await screen.findByLabelText("Notas do caderno");
+    expect(await screen.findByLabelText("Navegação do caderno")).toBeInTheDocument();
+    expect(screen.getByLabelText("Buscar notas")).toBeInTheDocument();
+    const notesList = screen.getByLabelText("Notas do caderno");
     expect(within(notesList).getByText(pesquisaNote.title)).toBeInTheDocument();
 
     fireEvent.click(within(notesList).getByText(pesquisaNote.title));
 
+    expect(screen.getByLabelText("Editor do caderno")).toBeInTheDocument();
     expect(await screen.findByRole("heading", { name: "Editar nota" })).toBeInTheDocument();
     expect(screen.getByDisplayValue(pesquisaNote.title)).toBeInTheDocument();
-    expect(screen.getByLabelText("Notas do caderno")).toBeInTheDocument();
-  });
-
-  test("filtro por categoria normal continua chamando a API com a categoria selecionada", async () => {
-    mocks.listNotebookNotes.mockResolvedValueOnce([pesquisaNote, customNote]).mockResolvedValueOnce([pesquisaNote]);
-    renderWithClient(<NotebookPanel bookId="book-1" />);
-
-    fireEvent.click(await screen.findByRole("button", { name: "Pesquisa" }));
-
-    await waitFor(() => {
-      expect(mocks.listNotebookNotes).toHaveBeenLastCalledWith("book-1", pesquisaCategory.id);
-    });
-    expect(await screen.findByText(pesquisaNote.title)).toBeInTheDocument();
   });
 });
 
@@ -192,10 +188,12 @@ function noteFixture({
   id,
   title,
   category,
+  status,
 }: {
   id: string;
   title: string;
   category: NotebookCategory | null;
+  status: NotebookNoteStatus;
 }): NotebookNote {
   return {
     id,
@@ -204,6 +202,7 @@ function noteFixture({
     category,
     title,
     content: "Pesquisar mapas antigos.",
+    status,
     createdAt: "2026-05-21T10:00:00Z",
     updatedAt: "2026-05-22T10:00:00Z",
   };

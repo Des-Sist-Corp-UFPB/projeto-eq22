@@ -9,15 +9,20 @@ import { FeedbackMessage } from "@/components/ui/feedback-message";
 import { TextAreaField, TextField } from "@/components/ui/text-field";
 import {
   useCreateNotebookCategory,
-  useDeleteNotebookCategory,
   useCreateNotebookNote,
+  useDeleteNotebookCategory,
   useDeleteNotebookNote,
   useNotebookCategories,
   useNotebookNotes,
   useUpdateNotebookCategory,
   useUpdateNotebookNote,
 } from "@/features/notebook/api/notebook-hooks";
-import type { NotebookCategory, NotebookNote, NotebookNoteRequest } from "@/features/notebook/types";
+import type {
+  NotebookCategory,
+  NotebookNote,
+  NotebookNoteRequest,
+  NotebookNoteStatus,
+} from "@/features/notebook/types";
 import { ApiError } from "@/lib/api/client";
 
 type NotebookPanelProps = {
@@ -26,17 +31,20 @@ type NotebookPanelProps = {
 
 type DetailMode = "empty" | "create" | "edit";
 type CategoryFilter = "all" | "uncategorized" | string;
+type StatusFilter = "all" | NotebookNoteStatus;
 
 type NoteFormState = {
   title: string;
   content: string;
   categoryId: string;
+  status: NotebookNoteStatus;
 };
 
 const emptyForm: NoteFormState = {
   title: "",
   content: "",
   categoryId: "",
+  status: "OPEN",
 };
 
 const dateFormatter = new Intl.DateTimeFormat("pt-BR", {
@@ -46,9 +54,11 @@ const dateFormatter = new Intl.DateTimeFormat("pt-BR", {
 });
 
 export function NotebookPanel({ bookId }: NotebookPanelProps) {
-  const [selectedFilter, setSelectedFilter] = useState<CategoryFilter>("all");
+  const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>("all");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [searchTerm, setSearchTerm] = useState("");
   const [isCategoryManagerOpen, setIsCategoryManagerOpen] = useState(false);
-  const selectedCategoryId = selectedFilter === "all" || selectedFilter === "uncategorized" ? null : selectedFilter;
+  const selectedCategoryId = categoryFilter === "all" || categoryFilter === "uncategorized" ? null : categoryFilter;
   const categoriesQuery = useNotebookCategories(bookId);
   const notesQuery = useNotebookNotes(bookId, selectedCategoryId);
   const createCategoryMutation = useCreateNotebookCategory(bookId);
@@ -64,9 +74,9 @@ export function NotebookPanel({ bookId }: NotebookPanelProps) {
 
   const notes = useMemo(() => {
     const values = notesQuery.data ?? [];
-    const filteredValues = selectedFilter === "uncategorized" ? values.filter((note) => !note.categoryId) : values;
+    const filteredValues = values.filter((note) => noteMatchesFilters(note, categoryFilter, statusFilter, searchTerm));
 
-    if (!selectedNote || !noteMatchesFilter(selectedNote, selectedFilter)) {
+    if (!selectedNote || !noteMatchesFilters(selectedNote, categoryFilter, statusFilter, searchTerm)) {
       return filteredValues;
     }
 
@@ -75,7 +85,7 @@ export function NotebookPanel({ bookId }: NotebookPanelProps) {
     }
 
     return [selectedNote, ...filteredValues];
-  }, [notesQuery.data, selectedFilter, selectedNote]);
+  }, [notesQuery.data, categoryFilter, statusFilter, searchTerm, selectedNote]);
 
   const activeMutation = detailMode === "edit" ? updateMutation : createMutation;
   const errorMessage = useMemo(() => getNotebookErrorMessage(activeMutation.error), [activeMutation.error]);
@@ -88,40 +98,34 @@ export function NotebookPanel({ bookId }: NotebookPanelProps) {
     [createCategoryMutation.error, deleteCategoryMutation.error, updateCategoryMutation.error]
   );
 
-  function startCreate() {
-    setSelectedNote(null);
-    setDetailMode("create");
-    setSuccessMessage(null);
+  function resetMutations() {
     createMutation.reset();
     updateMutation.reset();
     deleteMutation.reset();
     createCategoryMutation.reset();
     updateCategoryMutation.reset();
     deleteCategoryMutation.reset();
+  }
+
+  function startCreate() {
+    setSelectedNote(null);
+    setDetailMode("create");
+    setSuccessMessage(null);
+    resetMutations();
   }
 
   function startEdit(note: NotebookNote) {
     setSelectedNote(note);
     setDetailMode("edit");
     setSuccessMessage(null);
-    createMutation.reset();
-    updateMutation.reset();
-    deleteMutation.reset();
-    createCategoryMutation.reset();
-    updateCategoryMutation.reset();
-    deleteCategoryMutation.reset();
+    resetMutations();
   }
 
   function clearDetail() {
     setSelectedNote(null);
     setDetailMode("empty");
     setSuccessMessage(null);
-    createMutation.reset();
-    updateMutation.reset();
-    deleteMutation.reset();
-    createCategoryMutation.reset();
-    updateCategoryMutation.reset();
-    deleteCategoryMutation.reset();
+    resetMutations();
   }
 
   function handleSubmit(payload: NotebookNoteRequest) {
@@ -142,7 +146,9 @@ export function NotebookPanel({ bookId }: NotebookPanelProps) {
 
     createMutation.mutate(payload, {
       onSuccess: (note) => {
-        setSelectedFilter(note.categoryId ?? "uncategorized");
+        setSearchTerm("");
+        setStatusFilter(note.status);
+        setCategoryFilter(note.categoryId ?? "uncategorized");
         setSelectedNote(note);
         setDetailMode("edit");
         setSuccessMessage("Nota criada com sucesso.");
@@ -157,9 +163,7 @@ export function NotebookPanel({ bookId }: NotebookPanelProps) {
     }
 
     setSuccessMessage(null);
-    createMutation.reset();
-    updateMutation.reset();
-    deleteMutation.reset();
+    resetMutations();
 
     deleteMutation.mutate(note.id, {
       onSuccess: () => {
@@ -204,8 +208,8 @@ export function NotebookPanel({ bookId }: NotebookPanelProps) {
 
     deleteCategoryMutation.mutate(category.id, {
       onSuccess: () => {
-        if (selectedFilter === category.id) {
-          setSelectedFilter("uncategorized");
+        if (categoryFilter === category.id) {
+          setCategoryFilter("uncategorized");
         }
         setSuccessMessage("Categoria excluída com sucesso.");
       },
@@ -214,7 +218,7 @@ export function NotebookPanel({ bookId }: NotebookPanelProps) {
 
   return (
     <section className="h-full overflow-y-auto bg-zinc-50 p-4 md:p-6">
-      <div className="mx-auto grid max-w-6xl gap-4">
+      <div className="mx-auto grid max-w-7xl gap-4">
         <header className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h1 className="text-xl font-semibold text-zinc-950">Caderno</h1>
@@ -241,20 +245,25 @@ export function NotebookPanel({ bookId }: NotebookPanelProps) {
         {successMessage ? <FeedbackMessage variant="success">{successMessage}</FeedbackMessage> : null}
 
         {categoriesQuery.data ? (
-          <div className="grid min-h-[calc(100vh-180px)] gap-4 lg:grid-cols-[260px_minmax(0,1fr)]">
-            <aside className="grid min-h-0 min-w-0 content-start gap-3 lg:max-w-[340px]">
-              <CategoryFilters
+          <div className="grid min-h-[calc(100vh-180px)] gap-4 lg:grid-cols-[390px_minmax(0,1fr)]">
+            <aside className="grid min-h-0 min-w-0 content-start gap-3" aria-label="Navegação do caderno">
+              <NotebookNavigation
                 categories={orderedCategories}
-                selectedFilter={selectedFilter}
-                onSelectFilter={(filter) => {
-                  setSelectedFilter(filter);
+                categoryFilter={categoryFilter}
+                statusFilter={statusFilter}
+                searchTerm={searchTerm}
+                onSearchTermChange={setSearchTerm}
+                onCategoryFilterChange={(filter) => {
+                  setCategoryFilter(filter);
+                  clearDetail();
+                }}
+                onStatusFilterChange={(filter) => {
+                  setStatusFilter(filter);
                   clearDetail();
                 }}
                 onOpenCategoryManager={() => setIsCategoryManagerOpen(true)}
               />
-            </aside>
 
-            <div className="grid min-h-0 min-w-0 gap-4 xl:grid-cols-[380px_minmax(0,1fr)]">
               <NotesList
                 notes={notes}
                 selectedNoteId={detailMode === "edit" ? selectedNote?.id ?? null : null}
@@ -262,6 +271,9 @@ export function NotebookPanel({ bookId }: NotebookPanelProps) {
                 onEditNote={startEdit}
                 onDeleteNote={handleDeleteNote}
               />
+            </aside>
+
+            <main className="min-h-0 min-w-0" aria-label="Editor do caderno">
               {detailMode === "empty" ? (
                 <EmptyState title="Selecione uma nota para visualizar ou editar." className="h-full" />
               ) : (
@@ -269,12 +281,14 @@ export function NotebookPanel({ bookId }: NotebookPanelProps) {
                   note={detailMode === "edit" ? selectedNote : null}
                   categories={orderedCategories}
                   isPending={activeMutation.isPending}
+                  deletePending={deleteMutation.isPending && deleteMutation.variables === selectedNote?.id}
                   errorMessage={errorMessage}
                   onCancelEdit={clearDetail}
+                  onDeleteNote={selectedNote ? () => handleDeleteNote(selectedNote) : undefined}
                   onSubmit={handleSubmit}
                 />
               )}
-            </div>
+            </main>
 
             {isCategoryManagerOpen ? (
               <CategoryManagerPanel
@@ -297,41 +311,76 @@ export function NotebookPanel({ bookId }: NotebookPanelProps) {
   );
 }
 
-function CategoryFilters({
+function NotebookNavigation({
   categories,
-  selectedFilter,
-  onSelectFilter,
+  categoryFilter,
+  statusFilter,
+  searchTerm,
+  onSearchTermChange,
+  onCategoryFilterChange,
+  onStatusFilterChange,
   onOpenCategoryManager,
 }: {
   categories: NotebookCategory[];
-  selectedFilter: CategoryFilter;
-  onSelectFilter: (filter: CategoryFilter) => void;
+  categoryFilter: CategoryFilter;
+  statusFilter: StatusFilter;
+  searchTerm: string;
+  onSearchTermChange: (value: string) => void;
+  onCategoryFilterChange: (filter: CategoryFilter) => void;
+  onStatusFilterChange: (filter: StatusFilter) => void;
   onOpenCategoryManager: () => void;
 }) {
   return (
-    <div className="grid gap-2 rounded-md border border-zinc-200 bg-white p-3 shadow-sm">
-      <div className="flex items-center justify-between gap-2">
-        <h2 className="text-sm font-semibold text-zinc-950">Categorias</h2>
-        <Button type="button" size="sm" variant="ghost" onClick={onOpenCategoryManager}>
-          Gerenciar categorias
-        </Button>
-      </div>
-      <div className="flex flex-wrap gap-2" aria-label="Filtros de categoria">
-        <FilterButton isActive={selectedFilter === "all"} onClick={() => onSelectFilter("all")}>
-          Todas
-        </FilterButton>
-        <FilterButton isActive={selectedFilter === "uncategorized"} onClick={() => onSelectFilter("uncategorized")}>
-          Sem categoria
-        </FilterButton>
-        {categories.map((category) => (
-          <FilterButton
-            key={category.id}
-            isActive={selectedFilter === category.id}
-            onClick={() => onSelectFilter(category.id)}
-          >
-            {category.name}
+    <div className="grid gap-3 rounded-md border border-zinc-200 bg-white p-3 shadow-sm">
+      <TextField
+        label="Buscar notas"
+        value={searchTerm}
+        onChange={(event) => onSearchTermChange(event.target.value)}
+        placeholder="Título ou conteúdo"
+      />
+
+      <div className="grid gap-2">
+        <h2 className="text-sm font-semibold text-zinc-950">Status</h2>
+        <div className="flex flex-wrap gap-2" aria-label="Filtros de status">
+          <FilterButton isActive={statusFilter === "all"} onClick={() => onStatusFilterChange("all")}>
+            Todas
           </FilterButton>
-        ))}
+          <FilterButton isActive={statusFilter === "OPEN"} onClick={() => onStatusFilterChange("OPEN")}>
+            Abertas
+          </FilterButton>
+          <FilterButton isActive={statusFilter === "RESOLVED"} onClick={() => onStatusFilterChange("RESOLVED")}>
+            Resolvidas
+          </FilterButton>
+        </div>
+      </div>
+
+      <div className="grid gap-2">
+        <div className="flex items-center justify-between gap-2">
+          <h2 className="text-sm font-semibold text-zinc-950">Categorias</h2>
+          <Button type="button" size="sm" variant="ghost" onClick={onOpenCategoryManager}>
+            Gerenciar categorias
+          </Button>
+        </div>
+        <div className="flex flex-wrap gap-2" aria-label="Filtros de categoria">
+          <FilterButton isActive={categoryFilter === "all"} onClick={() => onCategoryFilterChange("all")}>
+            Todas
+          </FilterButton>
+          <FilterButton
+            isActive={categoryFilter === "uncategorized"}
+            onClick={() => onCategoryFilterChange("uncategorized")}
+          >
+            Sem categoria
+          </FilterButton>
+          {categories.map((category) => (
+            <FilterButton
+              key={category.id}
+              isActive={categoryFilter === category.id}
+              onClick={() => onCategoryFilterChange(category.id)}
+            >
+              {category.name}
+            </FilterButton>
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -532,12 +581,7 @@ function NotesList({
   onDeleteNote: (note: NotebookNote) => void;
 }) {
   if (notes.length === 0) {
-    return (
-      <EmptyState
-        title="Nenhuma nota no caderno"
-        description="Crie a primeira nota geral deste livro."
-      />
-    );
+    return <EmptyState title="Nenhuma nota no caderno" description="Crie a primeira nota geral deste livro." />;
   }
 
   return (
@@ -553,6 +597,7 @@ function NotesList({
             <button type="button" className="min-w-0 text-left" onClick={() => onEditNote(note)}>
               <h3 className="truncate text-sm font-semibold text-zinc-950">{note.title}</h3>
               <div className="mt-1 flex min-h-5 flex-wrap items-center gap-1.5 text-xs text-zinc-500">
+                <Badge variant={note.status === "RESOLVED" ? "neutral" : "outline"}>{statusLabel(note.status)}</Badge>
                 {note.category ? <Badge variant="outline">{note.category.name}</Badge> : null}
                 {note.updatedAt ? <span>Atualizada em {formatDate(note.updatedAt)}</span> : null}
               </div>
@@ -594,15 +639,19 @@ function NotebookNoteForm({
   note,
   categories,
   isPending,
+  deletePending,
   errorMessage,
   onCancelEdit,
+  onDeleteNote,
   onSubmit,
 }: {
   note: NotebookNote | null;
   categories: NotebookCategory[];
   isPending: boolean;
+  deletePending: boolean;
   errorMessage: string | null;
   onCancelEdit: () => void;
+  onDeleteNote?: () => void;
   onSubmit: (payload: NotebookNoteRequest) => void;
 }) {
   const [form, setForm] = useState<NoteFormState>(emptyForm);
@@ -631,20 +680,34 @@ function NotebookNoteForm({
       title: form.title.trim(),
       content: nullableText(form.content),
       categoryId: form.categoryId || null,
+      status: form.status,
     });
   }
 
   return (
-    <form onSubmit={handleSubmit} className="grid gap-4 rounded-md border border-zinc-200 bg-white p-4 shadow-sm">
+    <form onSubmit={handleSubmit} className="grid h-full content-start gap-4 rounded-md border border-zinc-200 bg-white p-4 shadow-sm">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-200 pb-4">
         <div>
           <h2 className="text-base font-semibold text-zinc-950">{isEditing ? "Editar nota" : "Nova nota"}</h2>
           <p className="text-sm text-zinc-500">Registre ideias, perguntas, pesquisas e referências gerais.</p>
         </div>
 
-        <Button type="button" variant="ghost" onClick={onCancelEdit}>
-          Cancelar
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          {isEditing && onDeleteNote ? (
+            <Button
+              type="button"
+              variant="ghost"
+              className="text-red-700 hover:bg-red-50"
+              disabled={deletePending}
+              onClick={onDeleteNote}
+            >
+              {deletePending ? "Excluindo..." : "Excluir"}
+            </Button>
+          ) : null}
+          <Button type="button" variant="ghost" onClick={onCancelEdit}>
+            Cancelar
+          </Button>
+        </div>
       </div>
 
       <TextField
@@ -655,27 +718,42 @@ function NotebookNoteForm({
         placeholder="Título da nota"
       />
 
-      <label className="grid gap-1 text-sm">
-        <span className="font-medium text-zinc-700">Categoria</span>
-        <select
-          value={form.categoryId}
-          onChange={(event) => updateField("categoryId", event.target.value)}
-          disabled={isPending}
-          className="min-h-10 rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-950 shadow-sm outline-none transition focus:border-zinc-950 focus:ring-2 focus:ring-zinc-200 disabled:cursor-not-allowed disabled:bg-zinc-100 disabled:text-zinc-500"
-        >
-          <option value="">Sem categoria</option>
-          {categories.map((category) => (
-            <option key={category.id} value={category.id}>
-              {category.name}
-            </option>
-          ))}
-        </select>
-      </label>
+      <div className="grid gap-3 md:grid-cols-2">
+        <label className="grid gap-1 text-sm">
+          <span className="font-medium text-zinc-700">Categoria</span>
+          <select
+            value={form.categoryId}
+            onChange={(event) => updateField("categoryId", event.target.value)}
+            disabled={isPending}
+            className="min-h-10 rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-950 shadow-sm outline-none transition focus:border-zinc-950 focus:ring-2 focus:ring-zinc-200 disabled:cursor-not-allowed disabled:bg-zinc-100 disabled:text-zinc-500"
+          >
+            <option value="">Sem categoria</option>
+            {categories.map((category) => (
+              <option key={category.id} value={category.id}>
+                {category.name}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label className="grid gap-1 text-sm">
+          <span className="font-medium text-zinc-700">Status</span>
+          <select
+            value={form.status}
+            onChange={(event) => updateField("status", event.target.value)}
+            disabled={isPending}
+            className="min-h-10 rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-950 shadow-sm outline-none transition focus:border-zinc-950 focus:ring-2 focus:ring-zinc-200 disabled:cursor-not-allowed disabled:bg-zinc-100 disabled:text-zinc-500"
+          >
+            <option value="OPEN">Aberta</option>
+            <option value="RESOLVED">Resolvida</option>
+          </select>
+        </label>
+      </div>
 
       <TextAreaField
         label="Conteúdo"
         value={form.content}
-        rows={8}
+        rows={14}
         onChange={(event) => updateField("content", event.target.value)}
         disabled={isPending}
         className="resize-y"
@@ -702,19 +780,37 @@ function toFormState(note: NotebookNote): NoteFormState {
     title: note.title,
     content: note.content ?? "",
     categoryId: note.categoryId ?? "",
+    status: note.status,
   };
 }
 
-function noteMatchesFilter(note: NotebookNote, filter: CategoryFilter) {
-  if (filter === "all") {
+function noteMatchesFilters(
+  note: NotebookNote,
+  categoryFilter: CategoryFilter,
+  statusFilter: StatusFilter,
+  searchTerm: string
+) {
+  if (categoryFilter === "uncategorized" && note.categoryId) {
+    return false;
+  }
+
+  if (categoryFilter !== "all" && categoryFilter !== "uncategorized" && note.categoryId !== categoryFilter) {
+    return false;
+  }
+
+  if (statusFilter !== "all" && note.status !== statusFilter) {
+    return false;
+  }
+
+  const normalizedSearch = searchTerm.trim().toLocaleLowerCase("pt-BR");
+  if (!normalizedSearch) {
     return true;
   }
 
-  if (filter === "uncategorized") {
-    return !note.categoryId;
-  }
-
-  return note.categoryId === filter;
+  return (
+    note.title.toLocaleLowerCase("pt-BR").includes(normalizedSearch) ||
+    (note.content ?? "").toLocaleLowerCase("pt-BR").includes(normalizedSearch)
+  );
 }
 
 function orderNotebookCategories(categories: NotebookCategory[]) {
@@ -739,6 +835,10 @@ function orderNotebookCategories(categories: NotebookCategory[]) {
 
 function isOutro(category: NotebookCategory) {
   return category.name.trim().toLocaleLowerCase("pt-BR") === "outro";
+}
+
+function statusLabel(status: NotebookNoteStatus) {
+  return status === "RESOLVED" ? "Resolvida" : "Aberta";
 }
 
 function formatDate(value: string) {
