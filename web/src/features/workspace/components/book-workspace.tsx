@@ -73,6 +73,7 @@ export function BookWorkspace({ bookId, initialSceneId }: BookWorkspaceProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const hasObservedInitialSearchParamsRef = useRef(false);
+  const lastClearedInvalidSceneRef = useRef<string | null>(null);
   const [selectedSceneId, setSelectedSceneId] = useState<string | null>(initialSceneId ?? null);
   const [mode, setMode] = useState<WorkspaceMode>("scenes");
   const [isFocusMode, setIsFocusMode] = useState(false);
@@ -189,13 +190,34 @@ export function BookWorkspace({ bookId, initialSceneId }: BookWorkspaceProps) {
   }, [searchParams]);
 
   useEffect(() => {
-    if (!outline || !selectedSceneId || outlineHasScene(outline, selectedSceneId)) {
+    if (!outline) {
+      return;
+    }
+
+    const sceneIdFromUrl = searchParams.get("sceneId");
+    const currentUrlSceneId = sceneIdFromUrl && sceneIdFromUrl.trim() ? sceneIdFromUrl : null;
+
+    if (!currentUrlSceneId) {
+      return;
+    }
+
+    if (outlineHasScene(outline, currentUrlSceneId)) {
+      lastClearedInvalidSceneRef.current = null;
+      setSelectedSceneId((previousSceneId) =>
+        previousSceneId === currentUrlSceneId ? previousSceneId : currentUrlSceneId
+      );
       return;
     }
 
     setSelectedSceneId(null);
+    const invalidSceneKey = `${bookId}:${currentUrlSceneId}`;
+    if (lastClearedInvalidSceneRef.current === invalidSceneKey) {
+      return;
+    }
+
+    lastClearedInvalidSceneRef.current = invalidSceneKey;
     router.replace(`/books/${bookId}`, { scroll: false });
-  }, [bookId, outline, router, selectedSceneId]);
+  }, [bookId, outline, router, searchParams]);
 
   useEffect(() => {
     if (mode === "scenes" && selectedSceneId && readStoredFocusMode()) {

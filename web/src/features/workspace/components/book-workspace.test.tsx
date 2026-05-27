@@ -352,6 +352,24 @@ describe("BookWorkspace initial scene selection", () => {
     expect(mocks.getScene).toHaveBeenCalledWith(alternateSceneForPlanning.id);
   });
 
+  test("nao remove sceneId valido da URL quando a selecao anterior era de outro livro", async () => {
+    const stalePreviousBookScene = {
+      ...sceneForPlanning,
+      id: "scene-do-livro-anterior",
+      title: "Cena do livro anterior",
+    };
+    mocks.searchParams = new URLSearchParams(`sceneId=${sceneForPlanning.id}`);
+    mocks.getScene.mockImplementation((sceneId: string) =>
+      Promise.resolve(sceneId === stalePreviousBookScene.id ? stalePreviousBookScene : sceneForPlanning)
+    );
+
+    renderWithClient(<BookWorkspace bookId="book-1" initialSceneId={stalePreviousBookScene.id} />);
+
+    expect(await screen.findByRole("heading", { name: sceneForPlanning.title })).toBeInTheDocument();
+    expect(mocks.getScene).toHaveBeenCalledWith(sceneForPlanning.id);
+    expect(mocks.routerReplace).not.toHaveBeenCalledWith("/books/book-1", { scroll: false });
+  });
+
   test("limpa sceneId invalido da URL depois que o outline carrega", async () => {
     mocks.searchParams = new URLSearchParams("sceneId=scene-inexistente");
     renderWithClient(<BookWorkspace bookId="book-1" initialSceneId="scene-inexistente" />);
