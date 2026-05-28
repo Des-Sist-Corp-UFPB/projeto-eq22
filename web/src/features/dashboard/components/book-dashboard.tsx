@@ -110,6 +110,7 @@ function DashboardContent({
       ) : null}
 
       <WordTargetCard dashboard={dashboard} />
+      <DailyWritingGoalCard dashboard={dashboard} />
 
       <Card className="p-4 transition-[transform,background-color,box-shadow] duration-150 ease-out hover:scale-[1.01] hover:bg-white hover:shadow-sm hover:shadow-zinc-200/70">
         <div className="flex flex-wrap items-end justify-between gap-3">
@@ -220,6 +221,175 @@ function DashboardContent({
         />
       ) : null}
     </div>
+  );
+}
+
+function DailyWritingGoalCard({ dashboard }: { dashboard: BookDashboardResponse }) {
+  const queryClient = useQueryClient();
+  const today = dashboard.writingProgress.today;
+  const currentDailyTargetWordCount = dashboard.dailyTargetWordCount ?? today.dailyTargetWordCount;
+  const [isEditing, setIsEditing] = useState(false);
+  const [targetValue, setTargetValue] = useState(currentDailyTargetWordCount?.toString() ?? "");
+  const [validationMessage, setValidationMessage] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+
+  const updateTargetMutation = useMutation({
+    mutationFn: (dailyTargetWordCount: number | null) => updateBook(dashboard.bookId, { dailyTargetWordCount }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.bookDashboard(dashboard.bookId) });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.book(dashboard.bookId) });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.books });
+    },
+  });
+
+  useEffect(() => {
+    setTargetValue(currentDailyTargetWordCount?.toString() ?? "");
+  }, [currentDailyTargetWordCount]);
+
+  function startEditing() {
+    setValidationMessage(null);
+    setSuccessMessage(null);
+    setIsEditing(true);
+  }
+
+  function cancelEditing() {
+    setValidationMessage(null);
+    setTargetValue(currentDailyTargetWordCount?.toString() ?? "");
+    setIsEditing(false);
+  }
+
+  function saveTarget() {
+    const parsedValue = Number(targetValue);
+
+    setValidationMessage(null);
+    setSuccessMessage(null);
+
+    if (!Number.isInteger(parsedValue) || parsedValue <= 0) {
+      setValidationMessage("Informe uma meta diaria maior que zero.");
+      return;
+    }
+
+    updateTargetMutation.mutate(parsedValue, {
+      onSuccess: () => {
+        setSuccessMessage("Meta diaria salva.");
+        setIsEditing(false);
+      },
+    });
+  }
+
+  function removeTarget() {
+    setValidationMessage(null);
+    setSuccessMessage(null);
+    updateTargetMutation.mutate(null, {
+      onSuccess: () => {
+        setSuccessMessage("Meta diaria removida.");
+        setIsEditing(false);
+      },
+    });
+  }
+
+  const errorMessage = getBookTargetErrorMessage(updateTargetMutation.error);
+  const hasTarget = currentDailyTargetWordCount != null;
+  const progressPercent = today.progressPercent ?? 0;
+  const visualProgressPercent = clampPercent(progressPercent);
+
+  return (
+    <Card className="p-4 transition-[transform,background-color,box-shadow] duration-150 ease-out hover:scale-[1.01] hover:bg-white hover:shadow-sm hover:shadow-zinc-200/70">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="text-base font-semibold text-zinc-950">Meta diaria</h2>
+          <p className="mt-1 text-sm text-zinc-500">Acompanhe o avanco de escrita registrado hoje.</p>
+        </div>
+        {!isEditing ? (
+          <Button type="button" variant="secondary" size="sm" onClick={startEditing}>
+            {hasTarget ? "Editar meta diaria" : "Definir meta diaria"}
+          </Button>
+        ) : null}
+      </div>
+
+      {!hasTarget && !isEditing ? (
+        <div className="mt-4 rounded-md border border-dashed border-zinc-300 bg-zinc-50 p-4">
+          <p className="text-sm font-medium text-zinc-900">Nenhuma meta diaria definida.</p>
+          <p className="mt-1 text-sm text-zinc-500">
+            Defina uma meta opcional para acompanhar o progresso de hoje e dos ultimos dias.
+          </p>
+          <p className="mt-3 text-sm text-zinc-700">Hoje: {formatSignedWords(today.netWordCountChange)}</p>
+        </div>
+      ) : null}
+
+      {hasTarget && !isEditing ? (
+        <div className="mt-4 grid gap-3">
+          <div className="flex flex-wrap items-end justify-between gap-3">
+            <div>
+              <p className="text-2xl font-semibold text-zinc-950">
+                {formatSignedWords(today.netWordCountChange)} / {formatNumber(currentDailyTargetWordCount ?? 0)}
+              </p>
+              <p className="mt-1 text-sm text-zinc-500">{formatPercent(progressPercent)} da meta diaria</p>
+            </div>
+            <Badge variant="outline">{formatDashboardDate(today.date)}</Badge>
+          </div>
+          <div className="h-3 overflow-hidden rounded-full bg-zinc-100">
+            <div className="h-full rounded-full bg-emerald-500" style={{ width: `${visualProgressPercent}%` }} />
+          </div>
+        </div>
+      ) : null}
+
+      {isEditing ? (
+        <div className="mt-4 grid gap-3 rounded-md border border-zinc-200 bg-zinc-50 p-3">
+          <label className="grid gap-1 text-sm font-medium text-zinc-900">
+            Meta diaria de palavras
+            <Input
+              type="number"
+              min={1}
+              step={1}
+              value={targetValue}
+              onChange={(event) => setTargetValue(event.target.value)}
+              placeholder="Ex.: 1000"
+              disabled={updateTargetMutation.isPending}
+            />
+          </label>
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" size="sm" onClick={saveTarget} disabled={updateTargetMutation.isPending}>
+              {updateTargetMutation.isPending ? "Salvando..." : "Salvar meta diaria"}
+            </Button>
+            {hasTarget ? (
+              <Button type="button" variant="secondary" size="sm" onClick={removeTarget} disabled={updateTargetMutation.isPending}>
+                Remover meta diaria
+              </Button>
+            ) : null}
+            <Button type="button" variant="ghost" size="sm" onClick={cancelEditing} disabled={updateTargetMutation.isPending}>
+              Cancelar
+            </Button>
+          </div>
+        </div>
+      ) : null}
+
+      {dashboard.writingProgress.recentDays.length > 0 ? (
+        <div className="mt-4 border-t border-zinc-200 pt-4">
+          <h3 className="text-sm font-semibold text-zinc-950">Ultimos 7 dias</h3>
+          <ol className="mt-3 grid gap-2">
+            {dashboard.writingProgress.recentDays.map((day) => {
+              const dayProgressPercent = day.progressPercent ?? 0;
+              return (
+                <li key={day.date} className="grid gap-1 rounded-md border border-zinc-200 bg-zinc-50 p-2">
+                  <div className="flex items-center justify-between gap-3 text-sm">
+                    <span className="font-medium text-zinc-800">{formatDashboardDate(day.date)}</span>
+                    <span className="tabular-nums text-zinc-600">{formatSignedWords(day.netWordCountChange)}</span>
+                  </div>
+                  <div className="h-2 overflow-hidden rounded-full bg-zinc-100">
+                    <div className="h-full rounded-full bg-emerald-500" style={{ width: `${clampPercent(dayProgressPercent)}%` }} />
+                  </div>
+                </li>
+              );
+            })}
+          </ol>
+        </div>
+      ) : null}
+
+      {validationMessage ? <FeedbackMessage variant="error" className="mt-3">{validationMessage}</FeedbackMessage> : null}
+      {errorMessage ? <FeedbackMessage variant="error" className="mt-3">{errorMessage}</FeedbackMessage> : null}
+      {successMessage ? <FeedbackMessage variant="success" className="mt-3">{successMessage}</FeedbackMessage> : null}
+    </Card>
   );
 }
 
@@ -483,6 +653,24 @@ function formatNumber(value: number) {
 
 function formatPercent(value: number) {
   return `${formatNumber(Math.round(value))}%`;
+}
+
+function formatSignedWords(value: number) {
+  const formattedValue = formatNumber(Math.abs(value));
+  if (value < 0) {
+    return `-${formattedValue} palavras`;
+  }
+
+  return `${formattedValue} palavras`;
+}
+
+function formatDashboardDate(value: string) {
+  const [year, month, day] = value.split("-").map(Number);
+  if (!year || !month || !day) {
+    return value;
+  }
+
+  return new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "2-digit" }).format(new Date(year, month - 1, day));
 }
 
 function clampPercent(value: number) {
