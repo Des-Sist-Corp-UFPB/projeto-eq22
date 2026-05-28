@@ -23,6 +23,7 @@ import com.iwrite.section.entity.BookSection;
 import com.iwrite.section.repository.BookSectionRepository;
 import com.iwrite.writingprogress.entity.DailyWritingProgress;
 import com.iwrite.writingprogress.service.DailyWritingProgressService;
+import com.iwrite.writingprogress.service.WritingProgressPeriod;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -58,6 +59,11 @@ public class BookDashboardService {
 
     @Transactional(readOnly = true)
     public BookDashboardResponse getDashboard(UUID bookId) {
+        return getDashboard(bookId, WritingProgressPeriod.DEFAULT);
+    }
+
+    @Transactional(readOnly = true)
+    public BookDashboardResponse getDashboard(UUID bookId, WritingProgressPeriod progressPeriod) {
         Book book = bookService.getBook(bookId);
         List<Scene> scenes = sceneRepository.findByBookIdOrderBySortOrderAsc(bookId);
 
@@ -81,7 +87,7 @@ public class BookDashboardService {
                 sectionRepository.countByBookId(bookId),
                 chapterRepository.countByBookId(bookId),
                 totalScenes,
-                buildWritingProgress(bookId, totalWordCount),
+                buildWritingProgress(bookId, totalWordCount, progressPeriod),
                 new PlanningProgressResponse(plannedScenesCount, totalScenes, plannedScenesPercent(plannedScenesCount, totalScenes)),
                 buildStatusCounts(scenes),
                 buildPovStats(scenes),
@@ -92,9 +98,9 @@ public class BookDashboardService {
         );
     }
 
-    private WritingProgressDashboardResponse buildWritingProgress(UUID bookId, int totalWordCount) {
+    private WritingProgressDashboardResponse buildWritingProgress(UUID bookId, int totalWordCount, WritingProgressPeriod progressPeriod) {
         DailyWritingProgress today = dailyWritingProgressService.getTodayProgressOrEmpty(bookId, totalWordCount);
-        List<DailyWritingProgressResponse> recentDays = dailyWritingProgressService.getRecentProgress(bookId)
+        List<DailyWritingProgressResponse> recentDays = dailyWritingProgressService.getRecentProgress(bookId, progressPeriod)
                 .stream()
                 .map(this::toDailyWritingProgressResponse)
                 .toList();

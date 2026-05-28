@@ -15,8 +15,6 @@ import java.util.UUID;
 @Service
 public class DailyWritingProgressService {
 
-    private static final int RECENT_DAYS = 7;
-
     private final BookService bookService;
     private final DailyWritingProgressRepository progressRepository;
     private final Clock clock;
@@ -57,8 +55,13 @@ public class DailyWritingProgressService {
 
     @Transactional(readOnly = true)
     public List<DailyWritingProgress> getRecentProgress(UUID bookId) {
+        return getRecentProgress(bookId, WritingProgressPeriod.DEFAULT);
+    }
+
+    @Transactional(readOnly = true)
+    public List<DailyWritingProgress> getRecentProgress(UUID bookId, WritingProgressPeriod period) {
         LocalDate endDate = today();
-        LocalDate startDate = endDate.minusDays(RECENT_DAYS - 1L);
+        LocalDate startDate = period.startDateInclusive(endDate);
         return progressRepository.findByBookIdAndProgressDateBetweenOrderByProgressDateDesc(bookId, startDate, endDate);
     }
 
