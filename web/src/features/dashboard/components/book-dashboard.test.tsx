@@ -80,15 +80,30 @@ describe("BookDashboard", () => {
     expect(screen.getByText("Meta ultrapassada em 200 palavras")).toBeInTheDocument();
     expect(screen.getByText("Hoje: 300 / 500 palavras")).toBeInTheDocument();
     expect(screen.getByText("60% da meta diária")).toBeInTheDocument();
-    expect(screen.getByText("-100 palavras")).toBeInTheDocument();
-    const chart = screen.getByRole("img", { name: /progresso/ });
+    expect(screen.getByRole("button", { name: "7 dias" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "15 dias" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "30 dias" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "3 meses" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "6 meses" })).toBeInTheDocument();
+    const chart = screen.getByRole("img", { name: /vertical.*progresso/ });
     expect(within(chart).queryByRole("list")).not.toBeInTheDocument();
     expect(within(chart).getByText("14/05")).toBeInTheDocument();
-    expect(within(chart).getByText("300 palavras")).toBeInTheDocument();
+    expect(within(chart).getByText("300")).toBeInTheDocument();
     expect(within(chart).getByText("13/05")).toBeInTheDocument();
-    expect(within(chart).getByText("-100 palavras")).toBeInTheDocument();
+    expect(within(chart).getByText("-100")).toBeInTheDocument();
+    expect(screen.getAllByTestId("daily-progress-vertical-bar").length).toBeGreaterThan(0);
     expect(screen.getByText("Planejamento narrativo")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Ver cenas com status Rascunho" })).toBeInTheDocument();
+  });
+
+  test("selecionar 30 dias recarrega dashboard com progressPeriod", async () => {
+    mocks.useBookDashboard.mockReturnValue({ isLoading: false, isError: false, data: dashboardWithScenes });
+
+    renderWithClient(<BookDashboard bookId="book-1" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "30 dias" }));
+
+    await waitFor(() => expect(mocks.useBookDashboard).toHaveBeenLastCalledWith("book-1", "30d"));
   });
 
   test("salvar meta diária troca estado vazio por progresso diário", async () => {

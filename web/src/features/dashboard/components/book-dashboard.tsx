@@ -10,6 +10,7 @@ import { ErrorState, LoadingState } from "@/components/ui/feedback";
 import { FeedbackMessage } from "@/components/ui/feedback-message";
 import { Input } from "@/components/ui/input";
 import { updateBook } from "@/features/books/api/books-api";
+import type { WritingProgressPeriod } from "@/features/dashboard/api/dashboard-api";
 import { useBookDashboard } from "@/features/dashboard/api/dashboard-hooks";
 import {
   DashboardDetailModal,
@@ -33,7 +34,8 @@ type BookDashboardProps = {
 };
 
 export function BookDashboard({ bookId, onOpenSceneInEditor, onOpenWorkspaceTab }: BookDashboardProps) {
-  const dashboardQuery = useBookDashboard(bookId);
+  const [progressPeriod, setProgressPeriod] = useState<WritingProgressPeriod>("7d");
+  const dashboardQuery = useBookDashboard(bookId, progressPeriod);
 
   return (
     <section className="h-full overflow-y-auto bg-zinc-50 p-4 md:p-6">
@@ -54,6 +56,8 @@ export function BookDashboard({ bookId, onOpenSceneInEditor, onOpenWorkspaceTab 
         {dashboardQuery.data ? (
           <DashboardContent
             dashboard={dashboardQuery.data}
+            progressPeriod={progressPeriod}
+            onProgressPeriodChange={setProgressPeriod}
             onOpenSceneInEditor={onOpenSceneInEditor}
             onOpenWorkspaceTab={onOpenWorkspaceTab}
           />
@@ -65,10 +69,14 @@ export function BookDashboard({ bookId, onOpenSceneInEditor, onOpenWorkspaceTab 
 
 function DashboardContent({
   dashboard,
+  progressPeriod,
+  onProgressPeriodChange,
   onOpenSceneInEditor,
   onOpenWorkspaceTab,
 }: {
   dashboard: BookDashboardResponse;
+  progressPeriod: WritingProgressPeriod;
+  onProgressPeriodChange: (period: WritingProgressPeriod) => void;
   onOpenSceneInEditor?: (sceneId: string) => void;
   onOpenWorkspaceTab?: (tab: DashboardWorkspaceTab) => void;
 }) {
@@ -110,7 +118,11 @@ function DashboardContent({
       ) : null}
 
       <WordTargetCard dashboard={dashboard} />
-      <DailyWritingGoalCard dashboard={dashboard} />
+      <DailyWritingGoalCard
+        dashboard={dashboard}
+        progressPeriod={progressPeriod}
+        onProgressPeriodChange={onProgressPeriodChange}
+      />
 
       <Card className="p-4 transition-[transform,background-color,box-shadow] duration-150 ease-out hover:scale-[1.01] hover:bg-white hover:shadow-sm hover:shadow-zinc-200/70">
         <div className="flex flex-wrap items-end justify-between gap-3">
@@ -224,7 +236,15 @@ function DashboardContent({
   );
 }
 
-function DailyWritingGoalCard({ dashboard }: { dashboard: BookDashboardResponse }) {
+function DailyWritingGoalCard({
+  dashboard,
+  progressPeriod,
+  onProgressPeriodChange,
+}: {
+  dashboard: BookDashboardResponse;
+  progressPeriod: WritingProgressPeriod;
+  onProgressPeriodChange: (period: WritingProgressPeriod) => void;
+}) {
   const queryClient = useQueryClient();
   const today = dashboard.writingProgress.today;
   const currentDailyTargetWordCount = dashboard.dailyTargetWordCount ?? today.dailyTargetWordCount;
@@ -372,6 +392,8 @@ function DailyWritingGoalCard({ dashboard }: { dashboard: BookDashboardResponse 
       <DailyProgressChart
         recentDays={dashboard.writingProgress.recentDays}
         dailyTargetWordCount={effectiveDailyTargetWordCount}
+        progressPeriod={progressPeriod}
+        onProgressPeriodChange={onProgressPeriodChange}
       />
 
       {validationMessage ? <FeedbackMessage variant="error" className="mt-3">{validationMessage}</FeedbackMessage> : null}
@@ -384,20 +406,49 @@ function DailyWritingGoalCard({ dashboard }: { dashboard: BookDashboardResponse 
 function DailyProgressChart({
   recentDays,
   dailyTargetWordCount,
+  progressPeriod,
+  onProgressPeriodChange,
 }: {
   recentDays: BookDashboardResponse["writingProgress"]["recentDays"];
   dailyTargetWordCount: number | null;
+  progressPeriod: WritingProgressPeriod;
+  onProgressPeriodChange: (period: WritingProgressPeriod) => void;
 }) {
   const positiveWordCounts = recentDays.map((day) => Math.max(day.netWordCountChange, 0));
   const maxRecentWordCount = Math.max(0, ...positiveWordCounts);
   const chartReference = dailyTargetWordCount && dailyTargetWordCount > 0 ? dailyTargetWordCount : maxRecentWordCount;
+  const selectedPeriod = WRITING_PROGRESS_PERIODS.find((period) => period.value === progressPeriod) ?? WRITING_PROGRESS_PERIODS[0];
+  const compactLabels = progressPeriod === "3m" || progressPeriod === "6m" || progressPeriod === "30d";
+  const minBarWidth = progressPeriod === "7d" ? "3rem" : progressPeriod === "15d" ? "2.25rem" : "1.5rem";
 
   return (
     <div className="mt-4 border-t border-zinc-200 pt-4">
-      <div className="flex flex-wrap items-end justify-between gap-2">
-        <h3 className="text-sm font-semibold text-zinc-950">Últimos 7 dias</h3>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-semibold text-zinc-950">Progresso recente</h3>
+          {dailyTargetWordCount && dailyTargetWordCount > 0 ? (
+            <p className="mt-1 text-xs text-zinc-500">Meta diária: {formatNumber(dailyTargetWordCount)} palavras</p>
+          ) : null}
+        </div>
+        <div className="flex flex-wrap gap-1" aria-label="Período do progresso diário">
+          {WRITING_PROGRESS_PERIODS.map((period) => (
+            <Button
+              key={period.value}
+              type="button"
+              variant={period.value === progressPeriod ? "primary" : "secondary"}
+              size="sm"
+              onClick={() => onProgressPeriodChange(period.value)}
+            >
+              {period.label}
+            </Button>
+          ))}
+        </div>
+      </div>
+
+      <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+        <span className="text-xs font-medium text-zinc-600">{selectedPeriod.description}</span>
         {dailyTargetWordCount && dailyTargetWordCount > 0 ? (
-          <span className="text-xs text-zinc-500">Meta diária: {formatNumber(dailyTargetWordCount)} palavras</span>
+          <span className="text-xs text-zinc-500">Linha de referência: meta diária</span>
         ) : null}
       </div>
 
@@ -409,33 +460,50 @@ function DailyProgressChart({
       ) : (
         <div
           role="img"
-          aria-label="Gráfico de progresso diário dos últimos 7 dias"
-          className="mt-3 grid grid-cols-[repeat(auto-fit,minmax(56px,1fr))] items-end gap-3"
+          aria-label={`Gráfico vertical de progresso diário em ${selectedPeriod.label}`}
+          className="mt-3 overflow-x-auto pb-1"
         >
-          {recentDays.map((day) => {
-            const positiveWordCount = Math.max(day.netWordCountChange, 0);
-            const barPercent = chartReference > 0 ? clampPercent((positiveWordCount * 100) / chartReference) : 0;
-            const barHeightPercent = Math.max(barPercent, positiveWordCount > 0 ? 8 : 0);
+          <div className="flex h-44 min-w-full items-end gap-2 rounded-md border border-zinc-200 bg-zinc-50 px-3 py-3">
+            {recentDays.map((day) => {
+              const positiveWordCount = Math.max(day.netWordCountChange, 0);
+              const barPercent = chartReference > 0 ? clampPercent((positiveWordCount * 100) / chartReference) : 0;
+              const barHeightPercent = Math.max(barPercent, positiveWordCount > 0 ? 8 : 0);
 
-            return (
-              <div key={day.date} className="grid min-h-36 grid-rows-[1fr_auto_auto] gap-2 rounded-md border border-zinc-200 bg-zinc-50 p-2">
-                <div className="flex min-h-20 items-end justify-center rounded-md bg-white px-2 py-1">
+              return (
+                <div key={day.date} className="flex h-full flex-1 flex-col items-center justify-end gap-1" style={{ minWidth: minBarWidth }}>
+                  <p className="text-center text-[11px] tabular-nums leading-tight text-zinc-600">{formatSignedNumber(day.netWordCountChange)}</p>
+                  <div className="relative flex h-24 w-full items-end justify-center border-b border-zinc-300">
+                    {dailyTargetWordCount && dailyTargetWordCount > 0 ? (
+                      <span aria-hidden="true" className="absolute left-0 right-0 top-0 border-t border-dashed border-emerald-300" />
+                    ) : null}
                   <div
-                    aria-hidden="true"
-                    className={`w-full rounded-t-sm ${day.netWordCountChange < 0 ? "bg-zinc-300" : "bg-emerald-500"}`}
+                    role="presentation"
+                    data-testid="daily-progress-vertical-bar"
+                    aria-label={`${formatDashboardDate(day.date)}: ${formatSignedWords(day.netWordCountChange)}`}
+                    className={`w-4 max-w-full rounded-t-sm ${day.netWordCountChange < 0 ? "bg-zinc-300" : "bg-emerald-500"}`}
                     style={{ height: `${barHeightPercent}%` }}
                   />
+                  </div>
+                  <p className="text-center text-[11px] font-medium leading-tight text-zinc-700">
+                    {formatDashboardDate(day.date, compactLabels)}
+                  </p>
                 </div>
-                <p className="truncate text-center text-xs font-medium text-zinc-700">{formatDashboardDate(day.date)}</p>
-                <p className="text-center text-xs tabular-nums text-zinc-600">{formatSignedWords(day.netWordCountChange)}</p>
-              </div>
-            );
-          })}
+              );
+            })}
+          </div>
         </div>
       )}
     </div>
   );
 }
+
+const WRITING_PROGRESS_PERIODS: Array<{ value: WritingProgressPeriod; label: string; description: string }> = [
+  { value: "7d", label: "7 dias", description: "Últimos 7 dias" },
+  { value: "15d", label: "15 dias", description: "Últimos 15 dias" },
+  { value: "30d", label: "30 dias", description: "Últimos 30 dias" },
+  { value: "3m", label: "3 meses", description: "Últimos 3 meses" },
+  { value: "6m", label: "6 meses", description: "Últimos 6 meses" },
+];
 
 function WordTargetCard({ dashboard }: { dashboard: BookDashboardResponse }) {
   const queryClient = useQueryClient();
@@ -712,13 +780,13 @@ function formatSignedNumber(value: number) {
   return formattedValue;
 }
 
-function formatDashboardDate(value: string) {
+function formatDashboardDate(value: string, compact = false) {
   const [year, month, day] = value.split("-").map(Number);
   if (!year || !month || !day) {
     return value;
   }
 
-  return new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "2-digit" }).format(new Date(year, month - 1, day));
+  return new Intl.DateTimeFormat("pt-BR", compact ? { day: "2-digit" } : { day: "2-digit", month: "2-digit" }).format(new Date(year, month - 1, day));
 }
 
 function clampPercent(value: number) {
