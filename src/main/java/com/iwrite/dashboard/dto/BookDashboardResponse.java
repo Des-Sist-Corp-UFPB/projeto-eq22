@@ -8,6 +8,7 @@ public record BookDashboardResponse(
         String title,
         int totalWordCount,
         Integer targetWordCount,
+        Integer dailyTargetWordCount,
         Integer remainingWordCount,
         Double wordCountProgressPercent,
         Integer exceededTargetWordCount,

@@ -67,7 +67,7 @@ describe("BookDashboard", () => {
     expect(screen.getByText("Total de cenas")).toBeInTheDocument();
     expect(screen.getByText(/ainda.*cenas/i)).toBeInTheDocument();
     expect(screen.getByText("Nenhuma meta de palavras definida.")).toBeInTheDocument();
-    expect(screen.getByText("Nenhuma meta diaria definida.")).toBeInTheDocument();
+    expect(screen.getByText("Nenhuma meta diária definida.")).toBeInTheDocument();
   });
 
   test("mostra cards principais, meta existente e meta ultrapassada", () => {
@@ -78,34 +78,37 @@ describe("BookDashboard", () => {
     expect(screen.getByText("Total de palavras")).toBeInTheDocument();
     expect(screen.getByText("1.200 / 1.000 palavras")).toBeInTheDocument();
     expect(screen.getByText("Meta ultrapassada em 200 palavras")).toBeInTheDocument();
-    expect(screen.getByText("300 palavras / 500")).toBeInTheDocument();
-    expect(screen.getByText("60% da meta diaria")).toBeInTheDocument();
+    expect(screen.getByText("Hoje: 300 / 500 palavras")).toBeInTheDocument();
+    expect(screen.getByText("60% da meta diária")).toBeInTheDocument();
     expect(screen.getByText("-100 palavras")).toBeInTheDocument();
     expect(screen.getByText("Planejamento narrativo")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Ver cenas com status Rascunho" })).toBeInTheDocument();
   });
 
-  test("definir ou editar meta diaria envia dailyTargetWordCount", async () => {
+  test("salvar meta diária troca estado vazio por progresso diário", async () => {
     mocks.useBookDashboard.mockReturnValue({ isLoading: false, isError: false, data: emptyDashboard });
 
     renderWithClient(<BookDashboard bookId="book-1" />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Definir meta diaria" }));
-    fireEvent.change(screen.getByLabelText("Meta diaria de palavras"), { target: { value: "750" } });
-    fireEvent.click(screen.getByRole("button", { name: "Salvar meta diaria" }));
+    fireEvent.click(screen.getByRole("button", { name: "Definir meta diária" }));
+    fireEvent.change(screen.getByLabelText("Meta diária de palavras"), { target: { value: "750" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar meta diária" }));
 
     await waitFor(() => expect(mocks.updateBook).toHaveBeenCalledWith("book-1", { dailyTargetWordCount: 750 }));
+    await waitFor(() => expect(screen.queryByText("Nenhuma meta diária definida.")).not.toBeInTheDocument());
+    expect(screen.getByText("Hoje: 0 / 750 palavras")).toBeInTheDocument();
   });
 
-  test("remover meta diaria envia dailyTargetWordCount null", async () => {
+  test("remover meta diária volta para estado sem meta", async () => {
     mocks.useBookDashboard.mockReturnValue({ isLoading: false, isError: false, data: dashboardWithScenes });
 
     renderWithClient(<BookDashboard bookId="book-1" />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Editar meta diaria" }));
-    fireEvent.click(screen.getByRole("button", { name: "Remover meta diaria" }));
+    fireEvent.click(screen.getByRole("button", { name: "Editar meta diária" }));
+    fireEvent.click(screen.getByRole("button", { name: "Remover meta diária" }));
 
     await waitFor(() => expect(mocks.updateBook).toHaveBeenCalledWith("book-1", { dailyTargetWordCount: null }));
+    await waitFor(() => expect(screen.getByText("Nenhuma meta diária definida.")).toBeInTheDocument());
   });
 
   test("clicar em card de status abre modal e clicar em cena troca o conteudo do mesmo modal", () => {

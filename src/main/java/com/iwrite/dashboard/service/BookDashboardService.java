@@ -74,6 +74,7 @@ public class BookDashboardService {
                 book.getTitle(),
                 totalWordCount,
                 book.getTargetWordCount(),
+                book.getDailyTargetWordCount(),
                 remainingWordCount(totalWordCount, book.getTargetWordCount()),
                 wordCountProgressPercent(totalWordCount, book.getTargetWordCount()),
                 exceededTargetWordCount(totalWordCount, book.getTargetWordCount()),
