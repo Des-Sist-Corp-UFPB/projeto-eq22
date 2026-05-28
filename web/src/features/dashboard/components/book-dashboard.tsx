@@ -369,32 +369,71 @@ function DailyWritingGoalCard({ dashboard }: { dashboard: BookDashboardResponse 
         </div>
       ) : null}
 
-      {dashboard.writingProgress.recentDays.length > 0 ? (
-        <div className="mt-4 border-t border-zinc-200 pt-4">
-          <h3 className="text-sm font-semibold text-zinc-950">Últimos 7 dias</h3>
-          <ol className="mt-3 grid gap-2">
-            {dashboard.writingProgress.recentDays.map((day) => {
-              const dayProgressPercent = day.progressPercent ?? 0;
-              return (
-                <li key={day.date} className="grid gap-1 rounded-md border border-zinc-200 bg-zinc-50 p-2">
-                  <div className="flex items-center justify-between gap-3 text-sm">
-                    <span className="font-medium text-zinc-800">{formatDashboardDate(day.date)}</span>
-                    <span className="tabular-nums text-zinc-600">{formatSignedWords(day.netWordCountChange)}</span>
-                  </div>
-                  <div className="h-2 overflow-hidden rounded-full bg-zinc-100">
-                    <div className="h-full rounded-full bg-emerald-500" style={{ width: `${clampPercent(dayProgressPercent)}%` }} />
-                  </div>
-                </li>
-              );
-            })}
-          </ol>
-        </div>
-      ) : null}
+      <DailyProgressChart
+        recentDays={dashboard.writingProgress.recentDays}
+        dailyTargetWordCount={effectiveDailyTargetWordCount}
+      />
 
       {validationMessage ? <FeedbackMessage variant="error" className="mt-3">{validationMessage}</FeedbackMessage> : null}
       {errorMessage ? <FeedbackMessage variant="error" className="mt-3">{errorMessage}</FeedbackMessage> : null}
       {successMessage ? <FeedbackMessage variant="success" className="mt-3">{successMessage}</FeedbackMessage> : null}
     </Card>
+  );
+}
+
+function DailyProgressChart({
+  recentDays,
+  dailyTargetWordCount,
+}: {
+  recentDays: BookDashboardResponse["writingProgress"]["recentDays"];
+  dailyTargetWordCount: number | null;
+}) {
+  const positiveWordCounts = recentDays.map((day) => Math.max(day.netWordCountChange, 0));
+  const maxRecentWordCount = Math.max(0, ...positiveWordCounts);
+  const chartReference = dailyTargetWordCount && dailyTargetWordCount > 0 ? dailyTargetWordCount : maxRecentWordCount;
+
+  return (
+    <div className="mt-4 border-t border-zinc-200 pt-4">
+      <div className="flex flex-wrap items-end justify-between gap-2">
+        <h3 className="text-sm font-semibold text-zinc-950">Últimos 7 dias</h3>
+        {dailyTargetWordCount && dailyTargetWordCount > 0 ? (
+          <span className="text-xs text-zinc-500">Meta diária: {formatNumber(dailyTargetWordCount)} palavras</span>
+        ) : null}
+      </div>
+
+      {recentDays.length === 0 ? (
+        <div className="mt-3 rounded-md border border-dashed border-zinc-300 bg-zinc-50 p-3">
+          <p className="text-sm font-medium text-zinc-900">Nenhum progresso recente registrado.</p>
+          <p className="mt-1 text-sm text-zinc-500">Salve conteúdo de uma cena para acompanhar os últimos dias aqui.</p>
+        </div>
+      ) : (
+        <div
+          role="img"
+          aria-label="Gráfico de progresso diário dos últimos 7 dias"
+          className="mt-3 grid grid-cols-[repeat(auto-fit,minmax(56px,1fr))] items-end gap-3"
+        >
+          {recentDays.map((day) => {
+            const positiveWordCount = Math.max(day.netWordCountChange, 0);
+            const barPercent = chartReference > 0 ? clampPercent((positiveWordCount * 100) / chartReference) : 0;
+            const barHeightPercent = Math.max(barPercent, positiveWordCount > 0 ? 8 : 0);
+
+            return (
+              <div key={day.date} className="grid min-h-36 grid-rows-[1fr_auto_auto] gap-2 rounded-md border border-zinc-200 bg-zinc-50 p-2">
+                <div className="flex min-h-20 items-end justify-center rounded-md bg-white px-2 py-1">
+                  <div
+                    aria-hidden="true"
+                    className={`w-full rounded-t-sm ${day.netWordCountChange < 0 ? "bg-zinc-300" : "bg-emerald-500"}`}
+                    style={{ height: `${barHeightPercent}%` }}
+                  />
+                </div>
+                <p className="truncate text-center text-xs font-medium text-zinc-700">{formatDashboardDate(day.date)}</p>
+                <p className="text-center text-xs tabular-nums text-zinc-600">{formatSignedWords(day.netWordCountChange)}</p>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
   );
 }
 

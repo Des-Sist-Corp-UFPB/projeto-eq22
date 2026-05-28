@@ -81,6 +81,12 @@ describe("BookDashboard", () => {
     expect(screen.getByText("Hoje: 300 / 500 palavras")).toBeInTheDocument();
     expect(screen.getByText("60% da meta diária")).toBeInTheDocument();
     expect(screen.getByText("-100 palavras")).toBeInTheDocument();
+    const chart = screen.getByRole("img", { name: /progresso/ });
+    expect(within(chart).queryByRole("list")).not.toBeInTheDocument();
+    expect(within(chart).getByText("14/05")).toBeInTheDocument();
+    expect(within(chart).getByText("300 palavras")).toBeInTheDocument();
+    expect(within(chart).getByText("13/05")).toBeInTheDocument();
+    expect(within(chart).getByText("-100 palavras")).toBeInTheDocument();
     expect(screen.getByText("Planejamento narrativo")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Ver cenas com status Rascunho" })).toBeInTheDocument();
   });
