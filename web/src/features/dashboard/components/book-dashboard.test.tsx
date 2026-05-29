@@ -80,12 +80,15 @@ describe("BookDashboard", () => {
     expect(screen.getByText("Meta ultrapassada em 200 palavras")).toBeInTheDocument();
     expect(screen.getByText("Hoje: 300 / 500 palavras")).toBeInTheDocument();
     expect(screen.getByText("60% da meta diária")).toBeInTheDocument();
+    expect(screen.getByText("Escrita no período")).toBeInTheDocument();
+    expect(screen.getByText("Total no período")).toBeInTheDocument();
+    expect(screen.getByText("Média por dia")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "7 dias" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "15 dias" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "30 dias" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "3 meses" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "6 meses" })).toBeInTheDocument();
-    const chart = screen.getByRole("img", { name: /vertical.*progresso/ });
+    const chart = screen.getByRole("img", { name: /vertical.*escrita/ });
     expect(within(chart).queryByRole("list")).not.toBeInTheDocument();
     expect(within(chart).getByText("14/05")).toBeInTheDocument();
     expect(within(chart).getByText("300")).toBeInTheDocument();
