@@ -138,7 +138,10 @@ describe("BookDashboard", () => {
     await waitFor(() => expect(screen.getAllByTestId("daily-progress-bucket")).toHaveLength(30));
     expect(screen.getByText("15/04 - 14/05")).toBeInTheDocument();
     const chart = screen.getByRole("img", { name: /30 dias/ });
-    expect(within(chart).getByText("14")).toBeInTheDocument();
+    expect(screen.getByTestId("daily-progress-chart-grid")).toHaveStyle({
+      gridTemplateColumns: "repeat(30, minmax(0, 1fr))",
+    });
+    expect(within(chart).getByText("14/05")).toBeInTheDocument();
     expect(within(chart).getAllByText("0").length).toBeGreaterThan(0);
   });
 

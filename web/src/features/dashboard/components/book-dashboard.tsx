@@ -431,8 +431,8 @@ function DailyProgressChart({
     ? recentDays.filter((day) => day.netWordCountChange >= dailyTargetWordCount).length
     : null;
   const periodLabel = getWritingProgressPeriodLabel(chartEntries, selectedPeriod.description, progressPeriod);
-  const minBarWidth = progressPeriod === "7d" ? "2.75rem" : progressPeriod === "15d" ? "2rem" : progressPeriod === "30d" ? "1.5rem" : "2.5rem";
-  const labelStep = chartEntries.length <= 15 ? 1 : chartEntries.length <= 30 ? 3 : chartEntries.length <= 6 ? 1 : 2;
+  const bucketColumnTemplate = `repeat(${Math.max(chartEntries.length, 1)}, minmax(0, 1fr))`;
+  const barWidthClass = chartEntries.length >= 30 ? "w-1.5" : chartEntries.length >= 15 ? "w-2" : "w-4";
 
   return (
     <section className="mt-4 rounded-md border border-zinc-200 bg-white p-3">
@@ -469,18 +469,21 @@ function DailyProgressChart({
           <div
             role="img"
             aria-label={`Gráfico vertical de escrita no período em ${selectedPeriod.label}`}
-            className="overflow-x-auto pb-1"
+            className="pb-1"
           >
-            <div className="flex h-44 min-w-full items-end gap-2 rounded-md border border-zinc-200 bg-zinc-50 px-3 py-3">
-              {chartEntries.map((entry, index) => {
+            <div
+              className="grid h-36 w-full items-end gap-1 rounded-md border border-zinc-200 bg-zinc-50 px-2 py-2"
+              data-testid="daily-progress-chart-grid"
+              style={{ gridTemplateColumns: bucketColumnTemplate }}
+            >
+              {chartEntries.map((entry) => {
                 const positiveWordCount = Math.max(entry.netWordCountChange, 0);
                 const barPercent = chartReference > 0 ? clampPercent((positiveWordCount * 100) / chartReference) : 0;
                 const barHeightPercent = Math.max(barPercent, positiveWordCount > 0 ? 8 : 1);
-                const showDateLabel = index % labelStep === 0 || index === chartEntries.length - 1;
 
                 return (
-                  <div key={entry.key} className="flex h-full flex-1 flex-col items-center justify-end gap-1" data-testid="daily-progress-bucket" style={{ minWidth: minBarWidth }}>
-                    <div className="relative flex h-24 w-full items-end justify-center">
+                  <div key={entry.key} className="flex h-full min-w-0 flex-col items-center justify-end gap-0.5" data-testid="daily-progress-bucket">
+                    <div className="relative flex h-20 w-full items-end justify-center">
                       {goalLineTop != null ? (
                         <span aria-hidden="true" className="absolute left-0 right-0 border-t border-dashed border-emerald-300" style={{ top: `${goalLineTop}%` }} />
                       ) : null}
@@ -488,13 +491,13 @@ function DailyProgressChart({
                         role="presentation"
                         data-testid="daily-progress-vertical-bar"
                         aria-label={`${entry.accessibleLabel}: ${formatSignedWords(entry.netWordCountChange)}`}
-                        className={`w-4 max-w-full rounded-t-sm ${entry.netWordCountChange < 0 ? "bg-zinc-300" : "bg-emerald-500"}`}
+                        className={`${barWidthClass} max-w-full rounded-t-sm ${entry.netWordCountChange < 0 ? "bg-zinc-300" : "bg-emerald-500"}`}
                         style={{ height: `${barHeightPercent}%` }}
                       />
                     </div>
                     <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-zinc-400" />
-                    <p className="h-4 text-center text-[11px] tabular-nums leading-tight text-zinc-600">{formatSignedNumber(entry.netWordCountChange)}</p>
-                    <p className="h-4 text-center text-[11px] font-medium leading-tight text-zinc-700">{showDateLabel ? entry.axisLabel : ""}</p>
+                    <p className="h-3.5 max-w-full text-center text-[10px] tabular-nums leading-tight text-zinc-600">{formatSignedNumber(entry.netWordCountChange)}</p>
+                    <p className="h-3.5 max-w-full text-center text-[10px] font-medium leading-tight text-zinc-700">{entry.axisLabel}</p>
                   </div>
                 );
               })}
@@ -591,7 +594,7 @@ function buildDailyProgressBuckets(
     const bucketDateKey = formatIsoDate(bucketDate);
     return {
       key: bucketDateKey,
-      axisLabel: formatDashboardDate(bucketDateKey, progressPeriod === "30d"),
+      axisLabel: formatDashboardDate(bucketDateKey),
       accessibleLabel: formatDashboardDate(bucketDateKey),
       periodStart: bucketDateKey,
       periodEnd: bucketDateKey,
@@ -952,13 +955,13 @@ function formatSignedNumber(value: number) {
   return formattedValue;
 }
 
-function formatDashboardDate(value: string, compact = false) {
+function formatDashboardDate(value: string) {
   const [year, month, day] = value.split("-").map(Number);
   if (!year || !month || !day) {
     return value;
   }
 
-  return new Intl.DateTimeFormat("pt-BR", compact ? { day: "2-digit" } : { day: "2-digit", month: "2-digit" }).format(new Date(year, month - 1, day));
+  return new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "2-digit" }).format(new Date(year, month - 1, day));
 }
 
 function parseIsoDate(value: string) {
