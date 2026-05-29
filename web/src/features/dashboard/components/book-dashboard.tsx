@@ -414,22 +414,31 @@ function DailyProgressChart({
   progressPeriod: WritingProgressPeriod;
   onProgressPeriodChange: (period: WritingProgressPeriod) => void;
 }) {
-  const positiveWordCounts = recentDays.map((day) => Math.max(day.netWordCountChange, 0));
-  const maxRecentWordCount = Math.max(0, ...positiveWordCounts);
-  const chartReference = dailyTargetWordCount && dailyTargetWordCount > 0 ? dailyTargetWordCount : maxRecentWordCount;
   const selectedPeriod = WRITING_PROGRESS_PERIODS.find((period) => period.value === progressPeriod) ?? WRITING_PROGRESS_PERIODS[0];
+  const chartEntries = buildWritingProgressChartEntries(recentDays, progressPeriod);
+  const positiveWordCounts = chartEntries.map((entry) => Math.max(entry.netWordCountChange, 0));
+  const maxRecentWordCount = Math.max(0, ...positiveWordCounts);
+  const chartReference = dailyTargetWordCount && dailyTargetWordCount > 0 ? Math.max(dailyTargetWordCount, maxRecentWordCount) : maxRecentWordCount;
+  const goalLineTop = dailyTargetWordCount && dailyTargetWordCount > 0 && chartReference > 0
+    ? 100 - clampPercent((dailyTargetWordCount * 100) / chartReference)
+    : null;
   const totalWords = recentDays.reduce((total, day) => total + day.netWordCountChange, 0);
   const writingDays = recentDays.filter((day) => day.netWordCountChange !== 0).length;
   const averageWords = recentDays.length === 0 ? 0 : Math.round(totalWords / recentDays.length);
-  const minBarWidth = progressPeriod === "7d" ? "3.25rem" : progressPeriod === "15d" ? "2.5rem" : "1.625rem";
-  const labelStep = recentDays.length <= 15 ? 1 : recentDays.length <= 30 ? 3 : 7;
+  const bestDay = getBestWritingDay(recentDays);
+  const goalHitDays = dailyTargetWordCount && dailyTargetWordCount > 0
+    ? recentDays.filter((day) => day.netWordCountChange >= dailyTargetWordCount).length
+    : null;
+  const periodLabel = getWritingProgressPeriodLabel(chartEntries, selectedPeriod.description, progressPeriod);
+  const minBarWidth = progressPeriod === "7d" ? "3rem" : progressPeriod === "15d" ? "2.25rem" : progressPeriod === "30d" ? "1.75rem" : "3.5rem";
+  const labelStep = chartEntries.length <= 15 ? 1 : chartEntries.length <= 30 ? 3 : 1;
 
   return (
     <section className="mt-4 rounded-md border border-zinc-200 bg-white p-3">
       <div className="flex flex-wrap items-start justify-between gap-3 border-b border-zinc-100 pb-3">
         <div>
           <h3 className="text-sm font-semibold text-zinc-950">Escrita no período</h3>
-          <p className="mt-1 text-xs text-zinc-500">{selectedPeriod.description}</p>
+          <p className="mt-1 text-xs text-zinc-500">{periodLabel}</p>
           {dailyTargetWordCount && dailyTargetWordCount > 0 ? (
             <p className="mt-1 text-xs text-zinc-500">Meta diária: {formatNumber(dailyTargetWordCount)} palavras</p>
           ) : null}
@@ -449,68 +458,159 @@ function DailyProgressChart({
         </div>
       </div>
 
-      <div className="mt-3 grid gap-2 sm:grid-cols-3">
-        <div className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2">
-          <p className="text-xs text-zinc-500">Total no período</p>
-          <p className="mt-1 text-sm font-semibold tabular-nums text-zinc-950">{formatSignedWords(totalWords)}</p>
-        </div>
-        <div className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2">
-          <p className="text-xs text-zinc-500">Média por dia</p>
-          <p className="mt-1 text-sm font-semibold tabular-nums text-zinc-950">{formatSignedWords(averageWords)}</p>
-        </div>
-        <div className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2">
-          <p className="text-xs text-zinc-500">Dias com escrita</p>
-          <p className="mt-1 text-sm font-semibold tabular-nums text-zinc-950">{formatNumber(writingDays)}</p>
+      <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,1fr)_220px]">
+        {chartEntries.length === 0 ? (
+          <div className="rounded-md border border-dashed border-zinc-300 bg-zinc-50 p-3">
+            <p className="text-sm font-medium text-zinc-900">Nenhum progresso recente registrado.</p>
+            <p className="mt-1 text-sm text-zinc-500">Salve conteúdo de uma cena para acompanhar os últimos dias aqui.</p>
+          </div>
+        ) : (
+          <div
+            role="img"
+            aria-label={`Gráfico vertical de escrita no período em ${selectedPeriod.label}`}
+            className="overflow-x-auto pb-1"
+          >
+            <div className="flex h-40 min-w-full items-end gap-2 rounded-md border border-zinc-200 bg-zinc-50 px-3 py-3">
+              {chartEntries.map((entry, index) => {
+                const positiveWordCount = Math.max(entry.netWordCountChange, 0);
+                const barPercent = chartReference > 0 ? clampPercent((positiveWordCount * 100) / chartReference) : 0;
+                const barHeightPercent = Math.max(barPercent, positiveWordCount > 0 ? 8 : 1);
+                const showDateLabel = index % labelStep === 0 || index === chartEntries.length - 1;
+
+                return (
+                  <div key={entry.key} className="flex h-full flex-1 flex-col items-center justify-end gap-1" style={{ minWidth: minBarWidth }}>
+                    <div className="relative flex h-24 w-full items-end justify-center border-b border-zinc-300">
+                      {goalLineTop != null ? (
+                        <span aria-hidden="true" className="absolute left-0 right-0 border-t border-dashed border-emerald-300" style={{ top: `${goalLineTop}%` }} />
+                      ) : null}
+                      <div
+                        role="presentation"
+                        data-testid="daily-progress-vertical-bar"
+                        aria-label={`${entry.accessibleLabel}: ${formatSignedWords(entry.netWordCountChange)}`}
+                        className={`w-4 max-w-full rounded-t-sm ${entry.netWordCountChange < 0 ? "bg-zinc-300" : "bg-emerald-500"}`}
+                        style={{ height: `${barHeightPercent}%` }}
+                      />
+                    </div>
+                    <p className="h-4 text-center text-[11px] tabular-nums leading-tight text-zinc-600">{formatSignedNumber(entry.netWordCountChange)}</p>
+                    <p className="h-4 text-center text-[11px] font-medium leading-tight text-zinc-700">{showDateLabel ? entry.axisLabel : ""}</p>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3">
+          <h4 className="text-sm font-semibold text-zinc-950">Resumo do período</h4>
+          <dl className="mt-3 grid gap-2">
+            <SummaryMetric label="Total no período" value={formatSignedWords(totalWords)} />
+            <SummaryMetric label="Média por dia" value={formatSignedWords(averageWords)} />
+            <SummaryMetric label="Dias com escrita" value={formatNumber(writingDays)} />
+            <SummaryMetric
+              label="Melhor dia"
+              value={bestDay ? formatSignedWords(bestDay.netWordCountChange) : "0 palavras"}
+              detail={bestDay ? formatDashboardDate(bestDay.date) : undefined}
+            />
+            <SummaryMetric label="Dias em que bateu a meta" value={goalHitDays == null ? "Sem meta" : formatNumber(goalHitDays)} />
+          </dl>
         </div>
       </div>
-
-      {recentDays.length === 0 ? (
-        <div className="mt-3 rounded-md border border-dashed border-zinc-300 bg-zinc-50 p-3">
-          <p className="text-sm font-medium text-zinc-900">Nenhum progresso recente registrado.</p>
-          <p className="mt-1 text-sm text-zinc-500">Salve conteúdo de uma cena para acompanhar os últimos dias aqui.</p>
-        </div>
-      ) : (
-        <div
-          role="img"
-          aria-label={`Gráfico vertical de escrita no período em ${selectedPeriod.label}`}
-          className="mt-3 overflow-x-auto pb-1"
-        >
-          <div className="flex h-52 min-w-full items-end gap-2 rounded-md border border-zinc-200 bg-zinc-50 px-3 py-3">
-            {recentDays.map((day, index) => {
-              const positiveWordCount = Math.max(day.netWordCountChange, 0);
-              const barPercent = chartReference > 0 ? clampPercent((positiveWordCount * 100) / chartReference) : 0;
-              const barHeightPercent = Math.max(barPercent, positiveWordCount > 0 ? 6 : 1);
-              const showValueLabel = recentDays.length <= 15 || day.netWordCountChange < 0 || positiveWordCount === maxRecentWordCount;
-              const showDateLabel = index % labelStep === 0 || index === recentDays.length - 1;
-
-              return (
-                <div key={day.date} className="flex h-full flex-1 flex-col items-center justify-end gap-1" style={{ minWidth: minBarWidth }}>
-                  <p className="h-4 text-center text-[11px] tabular-nums leading-tight text-zinc-600">
-                    {showValueLabel ? formatSignedNumber(day.netWordCountChange) : ""}
-                  </p>
-                  <div className="relative flex h-28 w-full items-end justify-center border-b border-zinc-300">
-                    {dailyTargetWordCount && dailyTargetWordCount > 0 ? (
-                      <span aria-hidden="true" className="absolute left-0 right-0 top-0 border-t border-dashed border-emerald-300" />
-                    ) : null}
-                    <div
-                      role="presentation"
-                      data-testid="daily-progress-vertical-bar"
-                      aria-label={`${formatDashboardDate(day.date)}: ${formatSignedWords(day.netWordCountChange)}`}
-                      className={`w-4 max-w-full rounded-t-sm ${day.netWordCountChange < 0 ? "bg-zinc-300" : "bg-emerald-500"}`}
-                      style={{ height: `${barHeightPercent}%` }}
-                    />
-                  </div>
-                  <p className="text-center text-[11px] font-medium leading-tight text-zinc-700">
-                    {showDateLabel ? formatDashboardDate(day.date, recentDays.length > 15) : ""}
-                  </p>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
     </section>
   );
+}
+
+function SummaryMetric({ label, value, detail }: { label: string; value: string; detail?: string }) {
+  return (
+    <div className="rounded-md border border-zinc-200 bg-white px-3 py-2">
+      <dt className="text-xs text-zinc-500">{label}</dt>
+      <dd className="mt-1 text-sm font-semibold tabular-nums text-zinc-950">{value}</dd>
+      {detail ? <dd className="mt-0.5 text-xs text-zinc-500">{detail}</dd> : null}
+    </div>
+  );
+}
+
+type WritingProgressChartEntry = {
+  key: string;
+  axisLabel: string;
+  accessibleLabel: string;
+  periodStart: string;
+  periodEnd: string;
+  netWordCountChange: number;
+};
+
+function buildWritingProgressChartEntries(
+  recentDays: BookDashboardResponse["writingProgress"]["recentDays"],
+  progressPeriod: WritingProgressPeriod
+): WritingProgressChartEntry[] {
+  const chronologicalDays = [...recentDays].sort((first, second) => first.date.localeCompare(second.date));
+
+  if (progressPeriod !== "3m" && progressPeriod !== "6m") {
+    return chronologicalDays.map((day) => ({
+      key: day.date,
+      axisLabel: formatDashboardDate(day.date, progressPeriod === "30d"),
+      accessibleLabel: formatDashboardDate(day.date),
+      periodStart: day.date,
+      periodEnd: day.date,
+      netWordCountChange: day.netWordCountChange,
+    }));
+  }
+
+  const monthlyEntries = new Map<string, WritingProgressChartEntry>();
+  for (const day of chronologicalDays) {
+    const [year, month] = day.date.split("-");
+    const key = `${year}-${month}`;
+    const existingEntry = monthlyEntries.get(key);
+    if (existingEntry) {
+      existingEntry.periodEnd = day.date;
+      existingEntry.netWordCountChange += day.netWordCountChange;
+      continue;
+    }
+
+    monthlyEntries.set(key, {
+      key,
+      axisLabel: formatDashboardMonth(day.date, false),
+      accessibleLabel: formatDashboardMonth(day.date, true),
+      periodStart: day.date,
+      periodEnd: day.date,
+      netWordCountChange: day.netWordCountChange,
+    });
+  }
+
+  return Array.from(monthlyEntries.values());
+}
+
+function getWritingProgressPeriodLabel(
+  entries: WritingProgressChartEntry[],
+  fallback: string,
+  progressPeriod: WritingProgressPeriod
+) {
+  if (entries.length === 0) {
+    return fallback;
+  }
+
+  const firstEntry = entries[0];
+  const lastEntry = entries[entries.length - 1];
+  if (progressPeriod === "3m" || progressPeriod === "6m") {
+    if (firstEntry.key === lastEntry.key) {
+      return formatDashboardMonth(firstEntry.periodStart, true);
+    }
+
+    return `${formatDashboardMonth(firstEntry.periodStart, true)} - ${formatDashboardMonth(lastEntry.periodEnd, true)}`;
+  }
+
+  if (firstEntry.periodStart === lastEntry.periodEnd) {
+    return formatDashboardDate(firstEntry.periodStart);
+  }
+
+  return `${formatDashboardDate(firstEntry.periodStart)} - ${formatDashboardDate(lastEntry.periodEnd)}`;
+}
+
+function getBestWritingDay(recentDays: BookDashboardResponse["writingProgress"]["recentDays"]) {
+  if (recentDays.length === 0) {
+    return null;
+  }
+
+  return recentDays.reduce((bestDay, day) => (day.netWordCountChange > bestDay.netWordCountChange ? day : bestDay));
 }
 
 const WRITING_PROGRESS_PERIODS: Array<{ value: WritingProgressPeriod; label: string; description: string }> = [
@@ -803,6 +903,16 @@ function formatDashboardDate(value: string, compact = false) {
   }
 
   return new Intl.DateTimeFormat("pt-BR", compact ? { day: "2-digit" } : { day: "2-digit", month: "2-digit" }).format(new Date(year, month - 1, day));
+}
+
+function formatDashboardMonth(value: string, includeYear: boolean) {
+  const [year, month] = value.split("-").map(Number);
+  if (!year || !month) {
+    return value;
+  }
+
+  const monthLabel = new Intl.DateTimeFormat("pt-BR", { month: "short" }).format(new Date(year, month - 1, 1));
+  return includeYear ? `${monthLabel}/${year}` : monthLabel;
 }
 
 function clampPercent(value: number) {

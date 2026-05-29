@@ -83,6 +83,7 @@ describe("BookDashboard", () => {
     expect(screen.getByText("Escrita no período")).toBeInTheDocument();
     expect(screen.getByText("Total no período")).toBeInTheDocument();
     expect(screen.getByText("Média por dia")).toBeInTheDocument();
+    expect(screen.getByText("Dias em que bateu a meta")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "7 dias" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "15 dias" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "30 dias" })).toBeInTheDocument();
@@ -90,23 +91,97 @@ describe("BookDashboard", () => {
     expect(screen.getByRole("button", { name: "6 meses" })).toBeInTheDocument();
     const chart = screen.getByRole("img", { name: /vertical.*escrita/ });
     expect(within(chart).queryByRole("list")).not.toBeInTheDocument();
+    expect(screen.getByText("13/05 - 14/05")).toBeInTheDocument();
     expect(within(chart).getByText("14/05")).toBeInTheDocument();
     expect(within(chart).getByText("300")).toBeInTheDocument();
     expect(within(chart).getByText("13/05")).toBeInTheDocument();
     expect(within(chart).getByText("-100")).toBeInTheDocument();
-    expect(screen.getAllByTestId("daily-progress-vertical-bar").length).toBeGreaterThan(0);
+    expect(screen.getAllByTestId("daily-progress-vertical-bar")).toHaveLength(2);
     expect(screen.getByText("Planejamento narrativo")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Ver cenas com status Rascunho" })).toBeInTheDocument();
   });
 
   test("selecionar 30 dias recarrega dashboard com progressPeriod", async () => {
-    mocks.useBookDashboard.mockReturnValue({ isLoading: false, isError: false, data: dashboardWithScenes });
+    const thirtyDayDashboard = {
+      ...dashboardWithScenes,
+      writingProgress: {
+        ...dashboardWithScenes.writingProgress,
+        recentDays: [
+          { ...dashboardWithScenes.writingProgress.today, date: "2026-05-12", netWordCountChange: 120 },
+          { ...dashboardWithScenes.writingProgress.today, date: "2026-05-13", netWordCountChange: 220 },
+          { ...dashboardWithScenes.writingProgress.today, date: "2026-05-14", netWordCountChange: 320 },
+        ],
+      },
+    };
+    mocks.useBookDashboard.mockImplementation((_bookId: string, period: string) => ({
+      isLoading: false,
+      isError: false,
+      data: period === "30d" ? thirtyDayDashboard : dashboardWithScenes,
+    }));
 
     renderWithClient(<BookDashboard bookId="book-1" />);
 
     fireEvent.click(screen.getByRole("button", { name: "30 dias" }));
 
     await waitFor(() => expect(mocks.useBookDashboard).toHaveBeenLastCalledWith("book-1", "30d"));
+    await waitFor(() => expect(screen.getAllByTestId("daily-progress-vertical-bar")).toHaveLength(3));
+    const chart = screen.getByRole("img", { name: /30 dias/ });
+    expect(within(chart).getByText("12")).toBeInTheDocument();
+    expect(within(chart).getByText("13")).toBeInTheDocument();
+    expect(within(chart).getByText("14")).toBeInTheDocument();
+  });
+
+  test("agrega progresso por mes em 3 meses e 6 meses", async () => {
+    const threeMonthDashboard = {
+      ...dashboardWithScenes,
+      writingProgress: {
+        ...dashboardWithScenes.writingProgress,
+        recentDays: [
+          { ...dashboardWithScenes.writingProgress.today, date: "2026-05-14", netWordCountChange: 300 },
+          { ...dashboardWithScenes.writingProgress.today, date: "2026-05-01", netWordCountChange: 200 },
+          { ...dashboardWithScenes.writingProgress.today, date: "2026-04-20", netWordCountChange: 100 },
+          { ...dashboardWithScenes.writingProgress.today, date: "2026-03-10", netWordCountChange: 50 },
+        ],
+      },
+    };
+    const sixMonthDashboard = {
+      ...dashboardWithScenes,
+      writingProgress: {
+        ...dashboardWithScenes.writingProgress,
+        recentDays: [
+          ...threeMonthDashboard.writingProgress.recentDays,
+          { ...dashboardWithScenes.writingProgress.today, date: "2026-02-07", netWordCountChange: 40 },
+          { ...dashboardWithScenes.writingProgress.today, date: "2026-01-03", netWordCountChange: 30 },
+        ],
+      },
+    };
+    mocks.useBookDashboard.mockImplementation((_bookId: string, period: string) => ({
+      isLoading: false,
+      isError: false,
+      data: period === "6m" ? sixMonthDashboard : period === "3m" ? threeMonthDashboard : dashboardWithScenes,
+    }));
+
+    renderWithClient(<BookDashboard bookId="book-1" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "3 meses" }));
+
+    await waitFor(() => expect(mocks.useBookDashboard).toHaveBeenLastCalledWith("book-1", "3m"));
+    expect(screen.getByText("mar./2026 - mai./2026")).toBeInTheDocument();
+    let chart = screen.getByRole("img", { name: /3 meses/ });
+    expect(screen.getAllByTestId("daily-progress-vertical-bar")).toHaveLength(3);
+    expect(within(chart).getByText("mar.")).toBeInTheDocument();
+    expect(within(chart).getByText("abr.")).toBeInTheDocument();
+    expect(within(chart).getByText("mai.")).toBeInTheDocument();
+    expect(within(chart).getByText("500")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "6 meses" }));
+
+    await waitFor(() => expect(mocks.useBookDashboard).toHaveBeenLastCalledWith("book-1", "6m"));
+    expect(screen.getByText("jan./2026 - mai./2026")).toBeInTheDocument();
+    chart = screen.getByRole("img", { name: /6 meses/ });
+    expect(screen.getAllByTestId("daily-progress-vertical-bar")).toHaveLength(5);
+    expect(within(chart).getByText("jan.")).toBeInTheDocument();
+    expect(within(chart).getByText("mai.")).toBeInTheDocument();
   });
 
   test("salvar meta diária troca estado vazio por progresso diário", async () => {
