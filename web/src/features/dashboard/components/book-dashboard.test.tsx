@@ -82,26 +82,29 @@ describe("BookDashboard", () => {
     expect(screen.getByText("60% da meta diária")).toBeInTheDocument();
     expect(screen.getByText("Escrita no período")).toBeInTheDocument();
     expect(screen.getByText("Total no período")).toBeInTheDocument();
-    expect(screen.getByText("Média por dia")).toBeInTheDocument();
+    expect(screen.getByText("Média por bucket")).toBeInTheDocument();
+    expect(screen.getByText("Buckets com escrita")).toBeInTheDocument();
     expect(screen.getByText("Dias em que bateu a meta")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "7 dias" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "15 dias" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "30 dias" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "3 meses" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "6 meses" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "12 meses" })).toBeInTheDocument();
     const chart = screen.getByRole("img", { name: /vertical.*escrita/ });
     expect(within(chart).queryByRole("list")).not.toBeInTheDocument();
-    expect(screen.getByText("13/05 - 14/05")).toBeInTheDocument();
+    expect(screen.getByText("08/05 - 14/05")).toBeInTheDocument();
     expect(within(chart).getByText("14/05")).toBeInTheDocument();
     expect(within(chart).getByText("300")).toBeInTheDocument();
     expect(within(chart).getByText("13/05")).toBeInTheDocument();
     expect(within(chart).getByText("-100")).toBeInTheDocument();
-    expect(screen.getAllByTestId("daily-progress-vertical-bar")).toHaveLength(2);
+    expect(screen.getAllByTestId("daily-progress-bucket")).toHaveLength(7);
+    expect(screen.getAllByTestId("daily-progress-vertical-bar")).toHaveLength(7);
     expect(screen.getByText("Planejamento narrativo")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Ver cenas com status Rascunho" })).toBeInTheDocument();
   });
 
-  test("selecionar 30 dias recarrega dashboard com progressPeriod", async () => {
+  test("7, 15 e 30 dias renderizam buckets diarios fixos", async () => {
     const thirtyDayDashboard = {
       ...dashboardWithScenes,
       writingProgress: {
@@ -121,17 +124,25 @@ describe("BookDashboard", () => {
 
     renderWithClient(<BookDashboard bookId="book-1" />);
 
+    expect(screen.getAllByTestId("daily-progress-bucket")).toHaveLength(7);
+
+    fireEvent.click(screen.getByRole("button", { name: "15 dias" }));
+
+    await waitFor(() => expect(mocks.useBookDashboard).toHaveBeenLastCalledWith("book-1", "15d"));
+    expect(screen.getAllByTestId("daily-progress-bucket")).toHaveLength(15);
+    expect(screen.getByText("30/04 - 14/05")).toBeInTheDocument();
+
     fireEvent.click(screen.getByRole("button", { name: "30 dias" }));
 
     await waitFor(() => expect(mocks.useBookDashboard).toHaveBeenLastCalledWith("book-1", "30d"));
-    await waitFor(() => expect(screen.getAllByTestId("daily-progress-vertical-bar")).toHaveLength(3));
+    await waitFor(() => expect(screen.getAllByTestId("daily-progress-bucket")).toHaveLength(30));
+    expect(screen.getByText("15/04 - 14/05")).toBeInTheDocument();
     const chart = screen.getByRole("img", { name: /30 dias/ });
-    expect(within(chart).getByText("12")).toBeInTheDocument();
-    expect(within(chart).getByText("13")).toBeInTheDocument();
     expect(within(chart).getByText("14")).toBeInTheDocument();
+    expect(within(chart).getAllByText("0").length).toBeGreaterThan(0);
   });
 
-  test("agrega progresso por mes em 3 meses e 6 meses", async () => {
+  test("3, 6 e 12 meses renderizam buckets mensais fixos", async () => {
     const threeMonthDashboard = {
       ...dashboardWithScenes,
       writingProgress: {
@@ -155,10 +166,20 @@ describe("BookDashboard", () => {
         ],
       },
     };
+    const twelveMonthDashboard = {
+      ...dashboardWithScenes,
+      writingProgress: {
+        ...dashboardWithScenes.writingProgress,
+        recentDays: [
+          ...sixMonthDashboard.writingProgress.recentDays,
+          { ...dashboardWithScenes.writingProgress.today, date: "2025-06-15", netWordCountChange: 10 },
+        ],
+      },
+    };
     mocks.useBookDashboard.mockImplementation((_bookId: string, period: string) => ({
       isLoading: false,
       isError: false,
-      data: period === "6m" ? sixMonthDashboard : period === "3m" ? threeMonthDashboard : dashboardWithScenes,
+      data: period === "12m" ? twelveMonthDashboard : period === "6m" ? sixMonthDashboard : period === "3m" ? threeMonthDashboard : dashboardWithScenes,
     }));
 
     renderWithClient(<BookDashboard bookId="book-1" />);
@@ -168,7 +189,7 @@ describe("BookDashboard", () => {
     await waitFor(() => expect(mocks.useBookDashboard).toHaveBeenLastCalledWith("book-1", "3m"));
     expect(screen.getByText("mar./2026 - mai./2026")).toBeInTheDocument();
     let chart = screen.getByRole("img", { name: /3 meses/ });
-    expect(screen.getAllByTestId("daily-progress-vertical-bar")).toHaveLength(3);
+    expect(screen.getAllByTestId("daily-progress-bucket")).toHaveLength(3);
     expect(within(chart).getByText("mar.")).toBeInTheDocument();
     expect(within(chart).getByText("abr.")).toBeInTheDocument();
     expect(within(chart).getByText("mai.")).toBeInTheDocument();
@@ -177,10 +198,20 @@ describe("BookDashboard", () => {
     fireEvent.click(screen.getByRole("button", { name: "6 meses" }));
 
     await waitFor(() => expect(mocks.useBookDashboard).toHaveBeenLastCalledWith("book-1", "6m"));
-    expect(screen.getByText("jan./2026 - mai./2026")).toBeInTheDocument();
+    expect(screen.getByText("dez./2025 - mai./2026")).toBeInTheDocument();
     chart = screen.getByRole("img", { name: /6 meses/ });
-    expect(screen.getAllByTestId("daily-progress-vertical-bar")).toHaveLength(5);
+    expect(screen.getAllByTestId("daily-progress-bucket")).toHaveLength(6);
+    expect(within(chart).getByText("dez.")).toBeInTheDocument();
     expect(within(chart).getByText("jan.")).toBeInTheDocument();
+    expect(within(chart).getByText("mai.")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "12 meses" }));
+
+    await waitFor(() => expect(mocks.useBookDashboard).toHaveBeenLastCalledWith("book-1", "12m"));
+    expect(screen.getByText("jun./2025 - mai./2026")).toBeInTheDocument();
+    chart = screen.getByRole("img", { name: /12 meses/ });
+    expect(screen.getAllByTestId("daily-progress-bucket")).toHaveLength(12);
+    expect(within(chart).getByText("jun.")).toBeInTheDocument();
     expect(within(chart).getByText("mai.")).toBeInTheDocument();
   });
 

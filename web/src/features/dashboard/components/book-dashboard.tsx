@@ -419,19 +419,20 @@ function DailyProgressChart({
   const positiveWordCounts = chartEntries.map((entry) => Math.max(entry.netWordCountChange, 0));
   const maxRecentWordCount = Math.max(0, ...positiveWordCounts);
   const chartReference = dailyTargetWordCount && dailyTargetWordCount > 0 ? Math.max(dailyTargetWordCount, maxRecentWordCount) : maxRecentWordCount;
-  const goalLineTop = dailyTargetWordCount && dailyTargetWordCount > 0 && chartReference > 0
+  const isMonthlyPeriod = isMonthlyWritingProgressPeriod(progressPeriod);
+  const goalLineTop = !isMonthlyPeriod && dailyTargetWordCount && dailyTargetWordCount > 0 && chartReference > 0
     ? 100 - clampPercent((dailyTargetWordCount * 100) / chartReference)
     : null;
-  const totalWords = recentDays.reduce((total, day) => total + day.netWordCountChange, 0);
-  const writingDays = recentDays.filter((day) => day.netWordCountChange !== 0).length;
-  const averageWords = recentDays.length === 0 ? 0 : Math.round(totalWords / recentDays.length);
-  const bestDay = getBestWritingDay(recentDays);
+  const totalWords = chartEntries.reduce((total, entry) => total + entry.netWordCountChange, 0);
+  const writingBuckets = chartEntries.filter((entry) => entry.netWordCountChange !== 0).length;
+  const averageWords = chartEntries.length === 0 ? 0 : Math.round(totalWords / chartEntries.length);
+  const bestBucket = getBestWritingProgressBucket(chartEntries);
   const goalHitDays = dailyTargetWordCount && dailyTargetWordCount > 0
     ? recentDays.filter((day) => day.netWordCountChange >= dailyTargetWordCount).length
     : null;
   const periodLabel = getWritingProgressPeriodLabel(chartEntries, selectedPeriod.description, progressPeriod);
-  const minBarWidth = progressPeriod === "7d" ? "3rem" : progressPeriod === "15d" ? "2.25rem" : progressPeriod === "30d" ? "1.75rem" : "3.5rem";
-  const labelStep = chartEntries.length <= 15 ? 1 : chartEntries.length <= 30 ? 3 : 1;
+  const minBarWidth = progressPeriod === "7d" ? "2.75rem" : progressPeriod === "15d" ? "2rem" : progressPeriod === "30d" ? "1.5rem" : "2.5rem";
+  const labelStep = chartEntries.length <= 15 ? 1 : chartEntries.length <= 30 ? 3 : chartEntries.length <= 6 ? 1 : 2;
 
   return (
     <section className="mt-4 rounded-md border border-zinc-200 bg-white p-3">
@@ -458,7 +459,7 @@ function DailyProgressChart({
         </div>
       </div>
 
-      <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,1fr)_220px]">
+      <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,1fr)_240px]">
         {chartEntries.length === 0 ? (
           <div className="rounded-md border border-dashed border-zinc-300 bg-zinc-50 p-3">
             <p className="text-sm font-medium text-zinc-900">Nenhum progresso recente registrado.</p>
@@ -470,7 +471,7 @@ function DailyProgressChart({
             aria-label={`Gráfico vertical de escrita no período em ${selectedPeriod.label}`}
             className="overflow-x-auto pb-1"
           >
-            <div className="flex h-40 min-w-full items-end gap-2 rounded-md border border-zinc-200 bg-zinc-50 px-3 py-3">
+            <div className="flex h-44 min-w-full items-end gap-2 rounded-md border border-zinc-200 bg-zinc-50 px-3 py-3">
               {chartEntries.map((entry, index) => {
                 const positiveWordCount = Math.max(entry.netWordCountChange, 0);
                 const barPercent = chartReference > 0 ? clampPercent((positiveWordCount * 100) / chartReference) : 0;
@@ -478,8 +479,8 @@ function DailyProgressChart({
                 const showDateLabel = index % labelStep === 0 || index === chartEntries.length - 1;
 
                 return (
-                  <div key={entry.key} className="flex h-full flex-1 flex-col items-center justify-end gap-1" style={{ minWidth: minBarWidth }}>
-                    <div className="relative flex h-24 w-full items-end justify-center border-b border-zinc-300">
+                  <div key={entry.key} className="flex h-full flex-1 flex-col items-center justify-end gap-1" data-testid="daily-progress-bucket" style={{ minWidth: minBarWidth }}>
+                    <div className="relative flex h-24 w-full items-end justify-center">
                       {goalLineTop != null ? (
                         <span aria-hidden="true" className="absolute left-0 right-0 border-t border-dashed border-emerald-300" style={{ top: `${goalLineTop}%` }} />
                       ) : null}
@@ -491,6 +492,7 @@ function DailyProgressChart({
                         style={{ height: `${barHeightPercent}%` }}
                       />
                     </div>
+                    <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-zinc-400" />
                     <p className="h-4 text-center text-[11px] tabular-nums leading-tight text-zinc-600">{formatSignedNumber(entry.netWordCountChange)}</p>
                     <p className="h-4 text-center text-[11px] font-medium leading-tight text-zinc-700">{showDateLabel ? entry.axisLabel : ""}</p>
                   </div>
@@ -500,16 +502,16 @@ function DailyProgressChart({
           </div>
         )}
 
-        <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3">
+        <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3 lg:min-h-44">
           <h4 className="text-sm font-semibold text-zinc-950">Resumo do período</h4>
           <dl className="mt-3 grid gap-2">
             <SummaryMetric label="Total no período" value={formatSignedWords(totalWords)} />
-            <SummaryMetric label="Média por dia" value={formatSignedWords(averageWords)} />
-            <SummaryMetric label="Dias com escrita" value={formatNumber(writingDays)} />
+            <SummaryMetric label="Média por bucket" value={formatSignedWords(averageWords)} />
+            <SummaryMetric label="Buckets com escrita" value={formatNumber(writingBuckets)} />
             <SummaryMetric
-              label="Melhor dia"
-              value={bestDay ? formatSignedWords(bestDay.netWordCountChange) : "0 palavras"}
-              detail={bestDay ? formatDashboardDate(bestDay.date) : undefined}
+              label="Melhor bucket"
+              value={bestBucket ? formatSignedWords(bestBucket.netWordCountChange) : "0 palavras"}
+              detail={bestBucket ? bestBucket.accessibleLabel : undefined}
             />
             <SummaryMetric label="Dias em que bateu a meta" value={goalHitDays == null ? "Sem meta" : formatNumber(goalHitDays)} />
           </dl>
@@ -542,41 +544,12 @@ function buildWritingProgressChartEntries(
   recentDays: BookDashboardResponse["writingProgress"]["recentDays"],
   progressPeriod: WritingProgressPeriod
 ): WritingProgressChartEntry[] {
-  const chronologicalDays = [...recentDays].sort((first, second) => first.date.localeCompare(second.date));
-
-  if (progressPeriod !== "3m" && progressPeriod !== "6m") {
-    return chronologicalDays.map((day) => ({
-      key: day.date,
-      axisLabel: formatDashboardDate(day.date, progressPeriod === "30d"),
-      accessibleLabel: formatDashboardDate(day.date),
-      periodStart: day.date,
-      periodEnd: day.date,
-      netWordCountChange: day.netWordCountChange,
-    }));
+  const endDate = getChartEndDate(recentDays);
+  if (isMonthlyWritingProgressPeriod(progressPeriod)) {
+    return buildMonthlyProgressBuckets(recentDays, progressPeriod, endDate);
   }
 
-  const monthlyEntries = new Map<string, WritingProgressChartEntry>();
-  for (const day of chronologicalDays) {
-    const [year, month] = day.date.split("-");
-    const key = `${year}-${month}`;
-    const existingEntry = monthlyEntries.get(key);
-    if (existingEntry) {
-      existingEntry.periodEnd = day.date;
-      existingEntry.netWordCountChange += day.netWordCountChange;
-      continue;
-    }
-
-    monthlyEntries.set(key, {
-      key,
-      axisLabel: formatDashboardMonth(day.date, false),
-      accessibleLabel: formatDashboardMonth(day.date, true),
-      periodStart: day.date,
-      periodEnd: day.date,
-      netWordCountChange: day.netWordCountChange,
-    });
-  }
-
-  return Array.from(monthlyEntries.values());
+  return buildDailyProgressBuckets(recentDays, progressPeriod, endDate);
 }
 
 function getWritingProgressPeriodLabel(
@@ -590,7 +563,7 @@ function getWritingProgressPeriodLabel(
 
   const firstEntry = entries[0];
   const lastEntry = entries[entries.length - 1];
-  if (progressPeriod === "3m" || progressPeriod === "6m") {
+  if (isMonthlyWritingProgressPeriod(progressPeriod)) {
     if (firstEntry.key === lastEntry.key) {
       return formatDashboardMonth(firstEntry.periodStart, true);
     }
@@ -605,12 +578,94 @@ function getWritingProgressPeriodLabel(
   return `${formatDashboardDate(firstEntry.periodStart)} - ${formatDashboardDate(lastEntry.periodEnd)}`;
 }
 
-function getBestWritingDay(recentDays: BookDashboardResponse["writingProgress"]["recentDays"]) {
-  if (recentDays.length === 0) {
+function buildDailyProgressBuckets(
+  recentDays: BookDashboardResponse["writingProgress"]["recentDays"],
+  progressPeriod: WritingProgressPeriod,
+  endDate: Date
+) {
+  const bucketCount = getWritingProgressBucketCount(progressPeriod);
+  const progressByDate = new Map(recentDays.map((day) => [day.date, day.netWordCountChange]));
+
+  return Array.from({ length: bucketCount }, (_, index) => {
+    const bucketDate = addDays(endDate, index - (bucketCount - 1));
+    const bucketDateKey = formatIsoDate(bucketDate);
+    return {
+      key: bucketDateKey,
+      axisLabel: formatDashboardDate(bucketDateKey, progressPeriod === "30d"),
+      accessibleLabel: formatDashboardDate(bucketDateKey),
+      periodStart: bucketDateKey,
+      periodEnd: bucketDateKey,
+      netWordCountChange: progressByDate.get(bucketDateKey) ?? 0,
+    };
+  });
+}
+
+function buildMonthlyProgressBuckets(
+  recentDays: BookDashboardResponse["writingProgress"]["recentDays"],
+  progressPeriod: WritingProgressPeriod,
+  endDate: Date
+) {
+  const bucketCount = getWritingProgressBucketCount(progressPeriod);
+  const progressByMonth = new Map<string, number>();
+  for (const day of recentDays) {
+    const monthKey = day.date.slice(0, 7);
+    progressByMonth.set(monthKey, (progressByMonth.get(monthKey) ?? 0) + day.netWordCountChange);
+  }
+
+  return Array.from({ length: bucketCount }, (_, index) => {
+    const bucketDate = addMonths(new Date(endDate.getFullYear(), endDate.getMonth(), 1), index - (bucketCount - 1));
+    const bucketMonthKey = formatIsoMonth(bucketDate);
+    return {
+      key: bucketMonthKey,
+      axisLabel: formatDashboardMonth(`${bucketMonthKey}-01`, false),
+      accessibleLabel: formatDashboardMonth(`${bucketMonthKey}-01`, true),
+      periodStart: `${bucketMonthKey}-01`,
+      periodEnd: formatIsoDate(new Date(bucketDate.getFullYear(), bucketDate.getMonth() + 1, 0)),
+      netWordCountChange: progressByMonth.get(bucketMonthKey) ?? 0,
+    };
+  });
+}
+
+function getBestWritingProgressBucket(entries: WritingProgressChartEntry[]) {
+  if (entries.length === 0) {
     return null;
   }
 
-  return recentDays.reduce((bestDay, day) => (day.netWordCountChange > bestDay.netWordCountChange ? day : bestDay));
+  return entries.reduce((bestEntry, entry) => (entry.netWordCountChange > bestEntry.netWordCountChange ? entry : bestEntry));
+}
+
+function getChartEndDate(recentDays: BookDashboardResponse["writingProgress"]["recentDays"]) {
+  const latestDate = recentDays
+    .map((day) => day.date)
+    .sort((first, second) => second.localeCompare(first))[0];
+  if (latestDate) {
+    return parseIsoDate(latestDate);
+  }
+
+  const today = new Date();
+  return new Date(today.getFullYear(), today.getMonth(), today.getDate());
+}
+
+function getWritingProgressBucketCount(progressPeriod: WritingProgressPeriod) {
+  switch (progressPeriod) {
+    case "15d":
+      return 15;
+    case "30d":
+      return 30;
+    case "3m":
+      return 3;
+    case "6m":
+      return 6;
+    case "12m":
+      return 12;
+    case "7d":
+    default:
+      return 7;
+  }
+}
+
+function isMonthlyWritingProgressPeriod(progressPeriod: WritingProgressPeriod) {
+  return progressPeriod === "3m" || progressPeriod === "6m" || progressPeriod === "12m";
 }
 
 const WRITING_PROGRESS_PERIODS: Array<{ value: WritingProgressPeriod; label: string; description: string }> = [
@@ -619,6 +674,7 @@ const WRITING_PROGRESS_PERIODS: Array<{ value: WritingProgressPeriod; label: str
   { value: "30d", label: "30 dias", description: "Últimos 30 dias" },
   { value: "3m", label: "3 meses", description: "Últimos 3 meses" },
   { value: "6m", label: "6 meses", description: "Últimos 6 meses" },
+  { value: "12m", label: "12 meses", description: "Últimos 12 meses" },
 ];
 
 function WordTargetCard({ dashboard }: { dashboard: BookDashboardResponse }) {
@@ -903,6 +959,32 @@ function formatDashboardDate(value: string, compact = false) {
   }
 
   return new Intl.DateTimeFormat("pt-BR", compact ? { day: "2-digit" } : { day: "2-digit", month: "2-digit" }).format(new Date(year, month - 1, day));
+}
+
+function parseIsoDate(value: string) {
+  const [year, month, day] = value.split("-").map(Number);
+  return new Date(year, month - 1, day);
+}
+
+function formatIsoDate(value: Date) {
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, "0");
+  const day = String(value.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function formatIsoMonth(value: Date) {
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, "0");
+  return `${year}-${month}`;
+}
+
+function addDays(value: Date, amount: number) {
+  return new Date(value.getFullYear(), value.getMonth(), value.getDate() + amount);
+}
+
+function addMonths(value: Date, amount: number) {
+  return new Date(value.getFullYear(), value.getMonth() + amount, 1);
 }
 
 function formatDashboardMonth(value: string, includeYear: boolean) {
