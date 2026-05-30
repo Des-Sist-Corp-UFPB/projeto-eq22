@@ -136,6 +136,20 @@ describe("BookDashboard", () => {
   });
 
   test("7, 15 e 30 dias renderizam buckets diarios fixos", async () => {
+    const staleRecentDashboard = {
+      ...dashboardWithScenes,
+      writingProgress: {
+        ...dashboardWithScenes.writingProgress,
+        today: {
+          ...dashboardWithScenes.writingProgress.today,
+          date: "2026-05-14",
+          netWordCountChange: 0,
+        },
+        recentDays: [
+          { ...dashboardWithScenes.writingProgress.today, date: "2026-05-10", netWordCountChange: 120 },
+        ],
+      },
+    };
     const thirtyDayDashboard = {
       ...dashboardWithScenes,
       writingProgress: {
@@ -150,12 +164,18 @@ describe("BookDashboard", () => {
     mocks.useBookDashboard.mockImplementation((_bookId: string, period: string) => ({
       isLoading: false,
       isError: false,
-      data: period === "30d" ? thirtyDayDashboard : dashboardWithScenes,
+      data: period === "30d" ? thirtyDayDashboard : period === "7d" ? staleRecentDashboard : dashboardWithScenes,
     }));
 
     renderWithClient(<BookDashboard bookId="book-1" />);
 
     expect(screen.getAllByTestId("daily-progress-bucket")).toHaveLength(7);
+    expect(screen.getByText("08/05 - 14/05")).toBeInTheDocument();
+    let chart = screen.getByRole("img", { name: /7 dias/ });
+    expect(within(chart).getByText("10/05")).toBeInTheDocument();
+    expect(within(chart).getByText("14/05")).toBeInTheDocument();
+    expect(within(chart).getByText("120")).toBeInTheDocument();
+    expect(within(chart).getAllByText("0").length).toBeGreaterThan(0);
 
     fireEvent.click(screen.getByRole("button", { name: "15 dias" }));
 
@@ -168,7 +188,7 @@ describe("BookDashboard", () => {
     await waitFor(() => expect(mocks.useBookDashboard).toHaveBeenLastCalledWith("book-1", "30d"));
     await waitFor(() => expect(screen.getAllByTestId("daily-progress-bucket")).toHaveLength(30));
     expect(screen.getByText("15/04 - 14/05")).toBeInTheDocument();
-    const chart = screen.getByRole("img", { name: /30 dias/ });
+    chart = screen.getByRole("img", { name: /30 dias/ });
     expect(screen.getByTestId("daily-progress-chart-grid")).toHaveStyle({
       gridTemplateColumns: "repeat(30, minmax(0, 1fr))",
     });
@@ -205,7 +225,7 @@ describe("BookDashboard", () => {
       writingProgress: {
         ...dashboardWithScenes.writingProgress,
         recentDays: [
-          ...sixMonthDashboard.writingProgress.recentDays,
+          { ...dashboardWithScenes.writingProgress.today, date: "2026-04-20", netWordCountChange: 100 },
           { ...dashboardWithScenes.writingProgress.today, date: "2025-06-15", netWordCountChange: 10 },
         ],
       },

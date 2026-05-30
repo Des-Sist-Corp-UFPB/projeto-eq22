@@ -396,6 +396,7 @@ function DailyWritingGoalCard({
       ) : null}
 
       <DailyProgressChart
+        todayDate={today.date}
         recentDays={dashboard.writingProgress.recentDays}
         dailyTargetWordCount={effectiveDailyTargetWordCount}
         progressPeriod={progressPeriod}
@@ -411,12 +412,14 @@ function DailyWritingGoalCard({
 }
 
 function DailyProgressChart({
+  todayDate,
   recentDays,
   dailyTargetWordCount,
   progressPeriod,
   isRefetching,
   onProgressPeriodChange,
 }: {
+  todayDate: string;
   recentDays: BookDashboardResponse["writingProgress"]["recentDays"];
   dailyTargetWordCount: number | null;
   progressPeriod: WritingProgressPeriod;
@@ -424,7 +427,7 @@ function DailyProgressChart({
   onProgressPeriodChange: (period: WritingProgressPeriod) => void;
 }) {
   const selectedPeriod = WRITING_PROGRESS_PERIODS.find((period) => period.value === progressPeriod) ?? WRITING_PROGRESS_PERIODS[0];
-  const chartEntries = buildWritingProgressChartEntries(recentDays, progressPeriod);
+  const chartEntries = buildWritingProgressChartEntries(todayDate, recentDays, progressPeriod);
   const positiveWordCounts = chartEntries.map((entry) => Math.max(entry.netWordCountChange, 0));
   const maxRecentWordCount = Math.max(0, ...positiveWordCounts);
   const chartReference = dailyTargetWordCount && dailyTargetWordCount > 0 ? Math.max(dailyTargetWordCount, maxRecentWordCount) : maxRecentWordCount;
@@ -573,10 +576,11 @@ type WritingProgressChartBucket = WritingProgressChartEntry & {
 const CHART_BASELINE_Y = 98;
 
 function buildWritingProgressChartEntries(
+  todayDate: string,
   recentDays: BookDashboardResponse["writingProgress"]["recentDays"],
   progressPeriod: WritingProgressPeriod
 ): WritingProgressChartEntry[] {
-  const endDate = getChartEndDate(recentDays);
+  const endDate = getChartEndDate(todayDate);
   if (isMonthlyWritingProgressPeriod(progressPeriod)) {
     return buildMonthlyProgressBuckets(recentDays, progressPeriod, endDate);
   }
@@ -677,16 +681,14 @@ function getBestWritingProgressBucket(entries: WritingProgressChartEntry[]) {
   return entries.reduce((bestEntry, entry) => (entry.netWordCountChange > bestEntry.netWordCountChange ? entry : bestEntry));
 }
 
-function getChartEndDate(recentDays: BookDashboardResponse["writingProgress"]["recentDays"]) {
-  const latestDate = recentDays
-    .map((day) => day.date)
-    .sort((first, second) => second.localeCompare(first))[0];
-  if (latestDate) {
-    return parseIsoDate(latestDate);
+function getChartEndDate(todayDate: string) {
+  const parsedTodayDate = parseIsoDate(todayDate);
+  if (!Number.isNaN(parsedTodayDate.getTime())) {
+    return parsedTodayDate;
   }
 
-  const today = new Date();
-  return new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const currentDate = new Date();
+  return new Date(currentDate.getFullYear(), currentDate.getMonth(), currentDate.getDate());
 }
 
 function getWritingProgressBucketCount(progressPeriod: WritingProgressPeriod) {
