@@ -7,6 +7,7 @@ export type Book = {
   description: string | null;
   status: BookStatus;
   targetWordCount: number | null;
+  dailyTargetWordCount: number | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -16,6 +17,7 @@ export type CreateBookRequest = {
   subtitle?: string;
   description?: string;
   targetWordCount?: number | null;
+  dailyTargetWordCount?: number | null;
 };
 
 export type UpdateBookRequest = {
@@ -24,4 +26,5 @@ export type UpdateBookRequest = {
   description?: string;
   status?: BookStatus;
   targetWordCount?: number | null;
+  dailyTargetWordCount?: number | null;
 };

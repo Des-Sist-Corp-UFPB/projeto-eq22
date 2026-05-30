@@ -181,15 +181,20 @@ class ControllerContractIntegrationTest extends PostgresIntegrationTest {
 
         mockMvc.perform(patch("/api/books/{bookId}", book.id())
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(json(Map.of("targetWordCount", 120000))))
+                        .content(json(Map.of(
+                                "targetWordCount", 120000,
+                                "dailyTargetWordCount", 1000
+                        ))))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.targetWordCount").value(120000));
+                .andExpect(jsonPath("$.targetWordCount").value(120000))
+                .andExpect(jsonPath("$.dailyTargetWordCount").value(1000));
 
         mockMvc.perform(patch("/api/books/{bookId}", book.id())
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"targetWordCount\":null}"))
+                        .content("{\"targetWordCount\":null,\"dailyTargetWordCount\":null}"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.targetWordCount").value(nullValue()));
+                .andExpect(jsonPath("$.targetWordCount").value(nullValue()))
+                .andExpect(jsonPath("$.dailyTargetWordCount").value(nullValue()));
     }
 
     @Test
@@ -207,6 +212,18 @@ class ControllerContractIntegrationTest extends PostgresIntegrationTest {
                         .content(json(Map.of("targetWordCount", -1))))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.messages", hasItem(containsString("targetWordCount"))));
+
+        mockMvc.perform(patch("/api/books/{bookId}", book.id())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of("dailyTargetWordCount", 0))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.messages", hasItem(containsString("dailyTargetWordCount"))));
+
+        mockMvc.perform(patch("/api/books/{bookId}", book.id())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of("dailyTargetWordCount", -1))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.messages", hasItem(containsString("dailyTargetWordCount"))));
     }
 
     private String json(Object value) throws Exception {

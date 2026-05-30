@@ -55,17 +55,33 @@ export type EntityUsageResponse = {
   scenesCount: number;
 };
 
+export type DailyWritingProgressResponse = {
+  date: string;
+  dailyTargetWordCount: number | null;
+  startWordCount: number;
+  endWordCount: number;
+  netWordCountChange: number;
+  progressPercent: number | null;
+};
+
+export type WritingProgressDashboardResponse = {
+  today: DailyWritingProgressResponse;
+  recentDays: DailyWritingProgressResponse[];
+};
+
 export type BookDashboardResponse = {
   bookId: string;
   title: string;
   totalWordCount: number;
   targetWordCount: number | null;
+  dailyTargetWordCount: number | null;
   remainingWordCount: number | null;
   wordCountProgressPercent: number | null;
   exceededTargetWordCount: number | null;
   totalSections: number;
   totalChapters: number;
   totalScenes: number;
+  writingProgress: WritingProgressDashboardResponse;
   planningProgress: PlanningProgressResponse;
   scenesByStatus: StatusCountResponse[];
   povStats: PovStatsResponse[];

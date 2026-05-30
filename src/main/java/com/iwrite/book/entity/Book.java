@@ -41,6 +41,8 @@ public class Book {
 
     private Integer targetWordCount;
 
+    private Integer dailyTargetWordCount;
+
     @Column(nullable = false, updatable = false)
     private OffsetDateTime createdAt;
 
@@ -107,6 +109,14 @@ public class Book {
 
     public void setTargetWordCount(Integer targetWordCount) {
         this.targetWordCount = targetWordCount;
+    }
+
+    public Integer getDailyTargetWordCount() {
+        return dailyTargetWordCount;
+    }
+
+    public void setDailyTargetWordCount(Integer dailyTargetWordCount) {
+        this.dailyTargetWordCount = dailyTargetWordCount;
     }
 
     public OffsetDateTime getCreatedAt() {

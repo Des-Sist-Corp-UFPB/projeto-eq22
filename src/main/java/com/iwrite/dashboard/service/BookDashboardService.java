@@ -7,11 +7,13 @@ import com.iwrite.chapter.repository.ChapterRepository;
 import com.iwrite.character.entity.Character;
 import com.iwrite.dashboard.dto.BookDashboardResponse;
 import com.iwrite.dashboard.dto.DashboardSceneSummaryResponse;
+import com.iwrite.dashboard.dto.DailyWritingProgressResponse;
 import com.iwrite.dashboard.dto.EntityUsageResponse;
 import com.iwrite.dashboard.dto.NarrativeGapsResponse;
 import com.iwrite.dashboard.dto.PlanningProgressResponse;
 import com.iwrite.dashboard.dto.PovStatsResponse;
 import com.iwrite.dashboard.dto.StatusCountResponse;
+import com.iwrite.dashboard.dto.WritingProgressDashboardResponse;
 import com.iwrite.item.entity.Item;
 import com.iwrite.location.entity.Location;
 import com.iwrite.scene.entity.Scene;
@@ -19,6 +21,9 @@ import com.iwrite.scene.entity.SceneStatus;
 import com.iwrite.scene.repository.SceneRepository;
 import com.iwrite.section.entity.BookSection;
 import com.iwrite.section.repository.BookSectionRepository;
+import com.iwrite.writingprogress.entity.DailyWritingProgress;
+import com.iwrite.writingprogress.service.DailyWritingProgressService;
+import com.iwrite.writingprogress.service.WritingProgressPeriod;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -36,21 +41,29 @@ public class BookDashboardService {
     private final BookSectionRepository sectionRepository;
     private final ChapterRepository chapterRepository;
     private final SceneRepository sceneRepository;
+    private final DailyWritingProgressService dailyWritingProgressService;
 
     public BookDashboardService(
             BookService bookService,
             BookSectionRepository sectionRepository,
             ChapterRepository chapterRepository,
-            SceneRepository sceneRepository
+            SceneRepository sceneRepository,
+            DailyWritingProgressService dailyWritingProgressService
     ) {
         this.bookService = bookService;
         this.sectionRepository = sectionRepository;
         this.chapterRepository = chapterRepository;
         this.sceneRepository = sceneRepository;
+        this.dailyWritingProgressService = dailyWritingProgressService;
     }
 
     @Transactional(readOnly = true)
     public BookDashboardResponse getDashboard(UUID bookId) {
+        return getDashboard(bookId, WritingProgressPeriod.DEFAULT);
+    }
+
+    @Transactional(readOnly = true)
+    public BookDashboardResponse getDashboard(UUID bookId, WritingProgressPeriod progressPeriod) {
         Book book = bookService.getBook(bookId);
         List<Scene> scenes = sceneRepository.findByBookIdOrderBySortOrderAsc(bookId);
 
@@ -67,12 +80,14 @@ public class BookDashboardService {
                 book.getTitle(),
                 totalWordCount,
                 book.getTargetWordCount(),
+                book.getDailyTargetWordCount(),
                 remainingWordCount(totalWordCount, book.getTargetWordCount()),
                 wordCountProgressPercent(totalWordCount, book.getTargetWordCount()),
                 exceededTargetWordCount(totalWordCount, book.getTargetWordCount()),
                 sectionRepository.countByBookId(bookId),
                 chapterRepository.countByBookId(bookId),
                 totalScenes,
+                buildWritingProgress(bookId, totalWordCount, progressPeriod),
                 new PlanningProgressResponse(plannedScenesCount, totalScenes, plannedScenesPercent(plannedScenesCount, totalScenes)),
                 buildStatusCounts(scenes),
                 buildPovStats(scenes),
@@ -80,6 +95,27 @@ public class BookDashboardService {
                 buildCharacterUsage(scenes),
                 buildLocationUsage(scenes),
                 buildItemUsage(scenes)
+        );
+    }
+
+    private WritingProgressDashboardResponse buildWritingProgress(UUID bookId, int totalWordCount, WritingProgressPeriod progressPeriod) {
+        DailyWritingProgress today = dailyWritingProgressService.getTodayProgressOrEmpty(bookId, totalWordCount);
+        List<DailyWritingProgressResponse> recentDays = dailyWritingProgressService.getRecentProgress(bookId, progressPeriod)
+                .stream()
+                .map(this::toDailyWritingProgressResponse)
+                .toList();
+
+        return new WritingProgressDashboardResponse(toDailyWritingProgressResponse(today), recentDays);
+    }
+
+    private DailyWritingProgressResponse toDailyWritingProgressResponse(DailyWritingProgress progress) {
+        return new DailyWritingProgressResponse(
+                progress.getProgressDate(),
+                progress.getDailyTargetWordCount(),
+                progress.getStartWordCount(),
+                progress.getEndWordCount(),
+                progress.getNetWordCountChange(),
+                dailyProgressPercent(progress.getNetWordCountChange(), progress.getDailyTargetWordCount())
         );
     }
 
@@ -304,6 +340,14 @@ public class BookDashboardService {
         }
 
         return Math.max(totalWordCount - targetWordCount, 0);
+    }
+
+    private Double dailyProgressPercent(int netWordCountChange, Integer dailyTargetWordCount) {
+        if (!hasValidTargetWordCount(dailyTargetWordCount)) {
+            return null;
+        }
+
+        return (netWordCountChange * 100.0) / dailyTargetWordCount;
     }
 
     private boolean hasValidTargetWordCount(Integer targetWordCount) {
