@@ -70,6 +70,23 @@ class BookDashboardWritingProgressPeriodIntegrationTest extends PostgresIntegrat
                 .containsExactly(today, today.minusMonths(3));
     }
 
+    @Test
+    void dashboardProgressPeriodTwelveMonthsReturnsCurrentMonthAndPreviousElevenMonthsNewestFirst() {
+        var book = createBook("twelve month progress");
+        LocalDate today = LocalDate.now();
+        LocalDate firstDayOfRange = today.minusMonths(11).withDayOfMonth(1);
+        Book persistedBook = bookService.getBook(book.id());
+        saveProgress(persistedBook, today, 0);
+        saveProgress(persistedBook, firstDayOfRange, 11);
+        saveProgress(persistedBook, firstDayOfRange.minusDays(1), 12);
+
+        var dashboard = dashboardService.getDashboard(book.id(), WritingProgressPeriod.TWELVE_MONTHS);
+
+        assertThat(dashboard.writingProgress().recentDays())
+                .extracting(day -> day.date())
+                .containsExactly(today, firstDayOfRange);
+    }
+
     private void saveProgress(Book book, LocalDate progressDate, int wordCount) {
         DailyWritingProgress progress = new DailyWritingProgress();
         progress.setBook(book);

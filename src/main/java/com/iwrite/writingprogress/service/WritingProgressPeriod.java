@@ -34,6 +34,12 @@ public enum WritingProgressPeriod {
         LocalDate startDate(LocalDate today) {
             return today.minusMonths(6);
         }
+    },
+    TWELVE_MONTHS("12m") {
+        @Override
+        LocalDate startDate(LocalDate today) {
+            return today.minusMonths(11).withDayOfMonth(1);
+        }
     };
 
     public static final WritingProgressPeriod DEFAULT = SEVEN_DAYS;
