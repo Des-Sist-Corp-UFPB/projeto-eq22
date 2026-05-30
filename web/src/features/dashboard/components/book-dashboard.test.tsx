@@ -107,8 +107,30 @@ describe("BookDashboard", () => {
     expect(within(chart).getByText("-100")).toBeInTheDocument();
     expect(screen.getAllByTestId("daily-progress-bucket")).toHaveLength(7);
     expect(screen.getAllByTestId("daily-progress-vertical-bar")).toHaveLength(7);
+    expect(screen.getAllByTestId("daily-progress-timeline-dot")).toHaveLength(7);
+    expect(screen.getByTestId("daily-progress-x-axis")).toBeInTheDocument();
+    expect(screen.getByTestId("daily-progress-trend-line").getAttribute("points")).toContain("92.86,40");
+    expect(screen.getByTestId("daily-progress-trend-line").getAttribute("points")).toContain("78.57,100");
     expect(screen.getByText("Planejamento narrativo")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Ver cenas com status Rascunho" })).toBeInTheDocument();
+  });
+
+  test("trocar período mantém analytics visível durante refetch", async () => {
+    mocks.useBookDashboard.mockImplementation((_bookId: string, period: string) => ({
+      isLoading: false,
+      isFetching: period === "30d",
+      isError: false,
+      data: dashboardWithScenes,
+    }));
+
+    renderWithClient(<BookDashboard bookId="book-1" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "30 dias" }));
+
+    await waitFor(() => expect(mocks.useBookDashboard).toHaveBeenLastCalledWith("book-1", "30d"));
+    expect(screen.queryByText("Carregando visão geral...")).not.toBeInTheDocument();
+    expect(screen.getByRole("img", { name: /30 dias/ })).toBeInTheDocument();
+    expect(screen.getByText("Atualizando período...")).toBeInTheDocument();
   });
 
   test("7, 15 e 30 dias renderizam buckets diarios fixos", async () => {

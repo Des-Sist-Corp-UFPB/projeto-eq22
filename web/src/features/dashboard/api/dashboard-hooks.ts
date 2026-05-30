@@ -1,6 +1,6 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { getBookDashboard, type WritingProgressPeriod } from "@/features/dashboard/api/dashboard-api";
 import { queryKeys } from "@/lib/query/keys";
 
@@ -9,5 +9,6 @@ export function useBookDashboard(bookId: string, progressPeriod: WritingProgress
     queryKey: [...queryKeys.bookDashboard(bookId), progressPeriod],
     queryFn: () => getBookDashboard(bookId, progressPeriod),
     enabled: Boolean(bookId),
+    placeholderData: keepPreviousData,
   });
 }

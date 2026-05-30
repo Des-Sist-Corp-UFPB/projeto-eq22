@@ -57,6 +57,7 @@ export function BookDashboard({ bookId, onOpenSceneInEditor, onOpenWorkspaceTab 
           <DashboardContent
             dashboard={dashboardQuery.data}
             progressPeriod={progressPeriod}
+            isProgressRefetching={dashboardQuery.isFetching && !dashboardQuery.isLoading}
             onProgressPeriodChange={setProgressPeriod}
             onOpenSceneInEditor={onOpenSceneInEditor}
             onOpenWorkspaceTab={onOpenWorkspaceTab}
@@ -70,12 +71,14 @@ export function BookDashboard({ bookId, onOpenSceneInEditor, onOpenWorkspaceTab 
 function DashboardContent({
   dashboard,
   progressPeriod,
+  isProgressRefetching,
   onProgressPeriodChange,
   onOpenSceneInEditor,
   onOpenWorkspaceTab,
 }: {
   dashboard: BookDashboardResponse;
   progressPeriod: WritingProgressPeriod;
+  isProgressRefetching: boolean;
   onProgressPeriodChange: (period: WritingProgressPeriod) => void;
   onOpenSceneInEditor?: (sceneId: string) => void;
   onOpenWorkspaceTab?: (tab: DashboardWorkspaceTab) => void;
@@ -121,6 +124,7 @@ function DashboardContent({
       <DailyWritingGoalCard
         dashboard={dashboard}
         progressPeriod={progressPeriod}
+        isProgressRefetching={isProgressRefetching}
         onProgressPeriodChange={onProgressPeriodChange}
       />
 
@@ -239,10 +243,12 @@ function DashboardContent({
 function DailyWritingGoalCard({
   dashboard,
   progressPeriod,
+  isProgressRefetching,
   onProgressPeriodChange,
 }: {
   dashboard: BookDashboardResponse;
   progressPeriod: WritingProgressPeriod;
+  isProgressRefetching: boolean;
   onProgressPeriodChange: (period: WritingProgressPeriod) => void;
 }) {
   const queryClient = useQueryClient();
@@ -393,6 +399,7 @@ function DailyWritingGoalCard({
         recentDays={dashboard.writingProgress.recentDays}
         dailyTargetWordCount={effectiveDailyTargetWordCount}
         progressPeriod={progressPeriod}
+        isRefetching={isProgressRefetching}
         onProgressPeriodChange={onProgressPeriodChange}
       />
 
@@ -407,11 +414,13 @@ function DailyProgressChart({
   recentDays,
   dailyTargetWordCount,
   progressPeriod,
+  isRefetching,
   onProgressPeriodChange,
 }: {
   recentDays: BookDashboardResponse["writingProgress"]["recentDays"];
   dailyTargetWordCount: number | null;
   progressPeriod: WritingProgressPeriod;
+  isRefetching: boolean;
   onProgressPeriodChange: (period: WritingProgressPeriod) => void;
 }) {
   const selectedPeriod = WRITING_PROGRESS_PERIODS.find((period) => period.value === progressPeriod) ?? WRITING_PROGRESS_PERIODS[0];
@@ -433,6 +442,7 @@ function DailyProgressChart({
   const periodLabel = getWritingProgressPeriodLabel(chartEntries, selectedPeriod.description, progressPeriod);
   const bucketColumnTemplate = `repeat(${Math.max(chartEntries.length, 1)}, minmax(0, 1fr))`;
   const barWidthClass = chartEntries.length >= 30 ? "w-1.5" : chartEntries.length >= 15 ? "w-2" : "w-4";
+  const trendPoints = buildTrendLinePoints(chartEntries, chartReference);
 
   return (
     <section className="mt-4 rounded-md border border-zinc-200 bg-white p-3">
@@ -443,6 +453,7 @@ function DailyProgressChart({
           {dailyTargetWordCount && dailyTargetWordCount > 0 ? (
             <p className="mt-1 text-xs text-zinc-500">Meta diária: {formatNumber(dailyTargetWordCount)} palavras</p>
           ) : null}
+          {isRefetching ? <p className="mt-1 text-xs text-emerald-700">Atualizando período...</p> : null}
         </div>
         <div className="flex flex-wrap gap-1 rounded-md border border-zinc-200 bg-zinc-50 p-1" aria-label="Período do progresso diário">
           {WRITING_PROGRESS_PERIODS.map((period) => (
@@ -472,17 +483,46 @@ function DailyProgressChart({
             className="pb-1"
           >
             <div
-              className="grid h-64 w-full items-end gap-1 rounded-md border border-zinc-200 bg-zinc-50 px-2 py-3"
+              className="relative grid h-64 w-full items-end gap-1 overflow-hidden rounded-md border border-zinc-200 bg-zinc-50 px-2 py-3 transition-[grid-template-columns,opacity] duration-300 motion-reduce:transition-none"
               data-testid="daily-progress-chart-grid"
               style={{ gridTemplateColumns: bucketColumnTemplate }}
             >
+              <svg
+                aria-hidden="true"
+                className="pointer-events-none absolute left-2 right-2 top-3 z-10 h-48 overflow-visible"
+                data-testid="daily-progress-trend-svg"
+                preserveAspectRatio="none"
+                viewBox="0 0 100 100"
+              >
+                <line
+                  data-testid="daily-progress-x-axis"
+                  x1="0"
+                  x2="100"
+                  y1="100"
+                  y2="100"
+                  className="stroke-zinc-300"
+                  strokeWidth="1"
+                  vectorEffect="non-scaling-stroke"
+                />
+                {trendPoints ? (
+                  <polyline
+                    data-testid="daily-progress-trend-line"
+                    points={trendPoints}
+                    className="fill-none stroke-emerald-700 opacity-80 transition-opacity duration-300 motion-reduce:transition-none"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth="2"
+                    vectorEffect="non-scaling-stroke"
+                  />
+                ) : null}
+              </svg>
               {chartEntries.map((entry) => {
                 const positiveWordCount = Math.max(entry.netWordCountChange, 0);
                 const barPercent = chartReference > 0 ? clampPercent((positiveWordCount * 100) / chartReference) : 0;
                 const barHeightPercent = Math.max(barPercent, positiveWordCount > 0 ? 8 : 1);
 
                 return (
-                  <div key={entry.key} className="flex h-full min-w-0 flex-col items-center justify-end gap-0.5" data-testid="daily-progress-bucket">
+                  <div key={entry.key} className="flex h-full min-w-0 flex-col items-center justify-end gap-0.5 transition-all duration-300 ease-out motion-reduce:transition-none" data-testid="daily-progress-bucket">
                     <div className="relative flex h-48 w-full items-end justify-center">
                       {goalLineTop != null ? (
                         <span aria-hidden="true" className="absolute left-0 right-0 border-t border-dashed border-emerald-300" style={{ top: `${goalLineTop}%` }} />
@@ -491,11 +531,11 @@ function DailyProgressChart({
                         role="presentation"
                         data-testid="daily-progress-vertical-bar"
                         aria-label={`${entry.accessibleLabel}: ${formatSignedWords(entry.netWordCountChange)}`}
-                        className={`${barWidthClass} max-w-full rounded-t-sm ${entry.netWordCountChange < 0 ? "bg-zinc-300" : "bg-emerald-500"}`}
+                        className={`${barWidthClass} max-w-full rounded-t-sm transition-all duration-300 ease-out motion-reduce:transition-none ${entry.netWordCountChange < 0 ? "bg-zinc-300" : "bg-emerald-500"}`}
                         style={{ height: `${barHeightPercent}%` }}
                       />
                     </div>
-                    <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-zinc-400" />
+                    <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-zinc-500" data-testid="daily-progress-timeline-dot" />
                     <p className="h-3.5 max-w-full text-center text-[10px] tabular-nums leading-tight text-zinc-600">{formatSignedNumber(entry.netWordCountChange)}</p>
                     <p className="h-3.5 max-w-full text-center text-[10px] font-medium leading-tight text-zinc-700">{entry.axisLabel}</p>
                   </div>
@@ -550,6 +590,19 @@ function buildWritingProgressChartEntries(
   }
 
   return buildDailyProgressBuckets(recentDays, progressPeriod, endDate);
+}
+
+function buildTrendLinePoints(entries: WritingProgressChartEntry[], chartReference: number) {
+  if (entries.length === 0) {
+    return "";
+  }
+
+  return entries.map((entry, index) => {
+    const x = ((index + 0.5) / entries.length) * 100;
+    const positiveWordCount = Math.max(entry.netWordCountChange, 0);
+    const y = chartReference > 0 ? 100 - clampPercent((positiveWordCount * 100) / chartReference) : 100;
+    return `${formatChartPoint(x)},${formatChartPoint(y)}`;
+  }).join(" ");
 }
 
 function getWritingProgressPeriodLabel(
@@ -937,6 +990,10 @@ function formatNumber(value: number) {
 
 function formatPercent(value: number) {
   return `${formatNumber(Math.round(value))}%`;
+}
+
+function formatChartPoint(value: number) {
+  return Number(value.toFixed(2)).toString();
 }
 
 function formatSignedWords(value: number) {
