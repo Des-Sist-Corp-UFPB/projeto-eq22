@@ -443,7 +443,7 @@ function DailyProgressChart({
   const bucketColumnTemplate = `repeat(${Math.max(chartEntries.length, 1)}, minmax(0, 1fr))`;
   const chartViewBoxWidth = Math.max(chartEntries.length, 1);
   const barWidthClass = chartEntries.length >= 30 ? "w-1.5" : chartEntries.length >= 15 ? "w-2" : "w-4";
-  const trendPoints = buildTrendLinePoints(chartEntries, chartReference);
+  const trendPath = buildTrendLinePath(chartEntries, chartReference);
 
   return (
     <section className="mt-4 rounded-md border border-zinc-200 bg-white p-3">
@@ -505,11 +505,12 @@ function DailyProgressChart({
                   strokeWidth="1"
                   vectorEffect="non-scaling-stroke"
                 />
-                {trendPoints ? (
-                  <polyline
+                {trendPath ? (
+                  <path
                     data-testid="daily-progress-trend-line"
-                    points={trendPoints}
-                    className="fill-none stroke-emerald-700 opacity-80 transition-opacity duration-300 motion-reduce:transition-none"
+                    d={trendPath}
+                    fill="none"
+                    className="stroke-emerald-700 opacity-80 transition-opacity duration-300 motion-reduce:transition-none"
                     strokeLinecap="round"
                     strokeLinejoin="round"
                     strokeWidth="2"
@@ -596,7 +597,7 @@ function buildWritingProgressChartEntries(
   return buildDailyProgressBuckets(recentDays, progressPeriod, endDate);
 }
 
-function buildTrendLinePoints(entries: WritingProgressChartEntry[], chartReference: number) {
+function buildTrendLinePath(entries: WritingProgressChartEntry[], chartReference: number) {
   if (entries.length === 0) {
     return "";
   }
@@ -606,7 +607,8 @@ function buildTrendLinePoints(entries: WritingProgressChartEntry[], chartReferen
     const positiveWordCount = Math.max(entry.netWordCountChange, 0);
     const progressPercent = chartReference > 0 ? clampPercent((positiveWordCount * 100) / chartReference) : 0;
     const y = CHART_BASELINE_Y - ((CHART_BASELINE_Y - CHART_TOP_Y) * progressPercent) / 100;
-    return `${formatChartPoint(x)},${formatChartPoint(y)}`;
+    const command = index === 0 ? "M" : "L";
+    return `${command} ${formatChartPoint(x)},${formatChartPoint(y)}`;
   }).join(" ");
 }
 
