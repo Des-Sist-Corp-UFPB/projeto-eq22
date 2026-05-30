@@ -10,12 +10,20 @@ import com.iwrite.writingprogress.entity.DailyWritingProgress;
 import com.iwrite.writingprogress.repository.DailyWritingProgressRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Primary;
 
+import java.time.Clock;
+import java.time.Instant;
 import java.time.LocalDate;
+import java.time.ZoneOffset;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 class DailyWritingProgressIntegrationTest extends PostgresIntegrationTest {
+
+    private static final LocalDate TODAY = LocalDate.of(2026, 5, 30);
 
     @Autowired
     private DailyWritingProgressRepository progressRepository;
@@ -32,7 +40,7 @@ class DailyWritingProgressIntegrationTest extends PostgresIntegrationTest {
 
         sceneService.updateContent(scene.id(), new SceneContentRequest("{}", wordText(5)));
 
-        DailyWritingProgress progress = progressRepository.findByBookIdAndProgressDate(book.id(), LocalDate.now())
+        DailyWritingProgress progress = progressRepository.findByBookIdAndProgressDate(book.id(), TODAY)
                 .orElseThrow();
         assertThat(progress.getStartWordCount()).isZero();
         assertThat(progress.getEndWordCount()).isEqualTo(5);
@@ -49,8 +57,8 @@ class DailyWritingProgressIntegrationTest extends PostgresIntegrationTest {
         sceneService.updateContent(scene.id(), new SceneContentRequest("{}", wordText(2)));
         sceneService.updateContent(scene.id(), new SceneContentRequest("{}", wordText(5)));
 
-        assertThat(progressRepository.countByBookIdAndProgressDate(book.id(), LocalDate.now())).isEqualTo(1);
-        DailyWritingProgress progress = progressRepository.findByBookIdAndProgressDate(book.id(), LocalDate.now())
+        assertThat(progressRepository.countByBookIdAndProgressDate(book.id(), TODAY)).isEqualTo(1);
+        DailyWritingProgress progress = progressRepository.findByBookIdAndProgressDate(book.id(), TODAY)
                 .orElseThrow();
         assertThat(progress.getStartWordCount()).isZero();
         assertThat(progress.getEndWordCount()).isEqualTo(5);
@@ -66,7 +74,7 @@ class DailyWritingProgressIntegrationTest extends PostgresIntegrationTest {
 
         sceneService.delete(scene.id());
 
-        DailyWritingProgress progress = progressRepository.findByBookIdAndProgressDate(book.id(), LocalDate.now())
+        DailyWritingProgress progress = progressRepository.findByBookIdAndProgressDate(book.id(), TODAY)
                 .orElseThrow();
         assertThat(progress.getStartWordCount()).isZero();
         assertThat(progress.getEndWordCount()).isZero();
@@ -79,7 +87,7 @@ class DailyWritingProgressIntegrationTest extends PostgresIntegrationTest {
 
         var dashboard = dashboardService.getDashboard(book.id());
 
-        assertThat(dashboard.writingProgress().today().date()).isEqualTo(LocalDate.now());
+        assertThat(dashboard.writingProgress().today().date()).isEqualTo(TODAY);
         assertThat(dashboard.writingProgress().today().dailyTargetWordCount()).isNull();
         assertThat(dashboard.writingProgress().today().startWordCount()).isZero();
         assertThat(dashboard.writingProgress().today().endWordCount()).isZero();
@@ -97,7 +105,7 @@ class DailyWritingProgressIntegrationTest extends PostgresIntegrationTest {
         var section = createSection(book, "Part");
         var chapter = createChapter(section, "Chapter");
         var scene = createScene(chapter, "Scene", SceneStatus.DRAFT, 0, "");
-        LocalDate today = LocalDate.now();
+        LocalDate today = TODAY;
 
         saveProgress(bookService.getBook(book.id()), today.minusDays(2), 3, 7);
         saveProgress(bookService.getBook(book.id()), today.minusDays(1), 7, 9);
@@ -117,7 +125,7 @@ class DailyWritingProgressIntegrationTest extends PostgresIntegrationTest {
     @Test
     void dashboardCurrentStreakIncludesTodayWhenTodayIsPositive() {
         var book = createBook("current streak includes today");
-        LocalDate today = LocalDate.now();
+        LocalDate today = TODAY;
         Book persistedBook = bookService.getBook(book.id());
 
         saveProgress(persistedBook, today.minusDays(2), 0, 4);
@@ -132,7 +140,7 @@ class DailyWritingProgressIntegrationTest extends PostgresIntegrationTest {
 
     @Test
     void dashboardCurrentStreakFallsBackToYesterdayWhenTodayIsMissingOrZero() {
-        LocalDate today = LocalDate.now();
+        LocalDate today = TODAY;
 
         var missingTodayBook = createBook("current streak missing today");
         Book persistedMissingTodayBook = bookService.getBook(missingTodayBook.id());
@@ -154,7 +162,7 @@ class DailyWritingProgressIntegrationTest extends PostgresIntegrationTest {
     @Test
     void dashboardCurrentStreakIsZeroWhenNeitherTodayNorYesterdayIsPositive() {
         var book = createBook("current streak zero");
-        LocalDate today = LocalDate.now();
+        LocalDate today = TODAY;
         Book persistedBook = bookService.getBook(book.id());
 
         saveProgress(persistedBook, today.minusDays(3), 0, 2);
@@ -170,7 +178,7 @@ class DailyWritingProgressIntegrationTest extends PostgresIntegrationTest {
     @Test
     void dashboardMissingDateBreaksCurrentAndBestStreak() {
         var book = createBook("missing date breaks streak");
-        LocalDate today = LocalDate.now();
+        LocalDate today = TODAY;
         Book persistedBook = bookService.getBook(book.id());
 
         saveProgress(persistedBook, today.minusDays(4), 0, 1);
@@ -187,7 +195,7 @@ class DailyWritingProgressIntegrationTest extends PostgresIntegrationTest {
     @Test
     void dashboardZeroOrNegativeDayBreaksStreak() {
         var book = createBook("zero negative breaks streak");
-        LocalDate today = LocalDate.now();
+        LocalDate today = TODAY;
         Book persistedBook = bookService.getBook(book.id());
 
         saveProgress(persistedBook, today.minusDays(4), 0, 2);
@@ -205,7 +213,7 @@ class DailyWritingProgressIntegrationTest extends PostgresIntegrationTest {
     @Test
     void dashboardBestStreakUsesFullHistoryNotSelectedChartPeriod() {
         var book = createBook("best streak full history");
-        LocalDate today = LocalDate.now();
+        LocalDate today = TODAY;
         Book persistedBook = bookService.getBook(book.id());
 
         saveProgress(persistedBook, today.minusDays(20), 0, 1);
@@ -228,7 +236,7 @@ class DailyWritingProgressIntegrationTest extends PostgresIntegrationTest {
     @Test
     void dashboardMonthAndRecentConsistencyCountOnlyPositiveRows() {
         var book = createBook("month and recent consistency");
-        LocalDate today = LocalDate.now();
+        LocalDate today = TODAY;
         Book persistedBook = bookService.getBook(book.id());
         LocalDate firstDayOfMonth = today.withDayOfMonth(1);
 
@@ -257,5 +265,15 @@ class DailyWritingProgressIntegrationTest extends PostgresIntegrationTest {
         progress.setEndWordCount(endWordCount);
         progress.setNetWordCountChange(endWordCount - startWordCount);
         progressRepository.save(progress);
+    }
+
+    @TestConfiguration
+    static class FixedWritingProgressClockConfig {
+
+        @Bean
+        @Primary
+        Clock fixedWritingProgressClock() {
+            return Clock.fixed(Instant.parse("2026-05-30T12:00:00Z"), ZoneOffset.UTC);
+        }
     }
 }
