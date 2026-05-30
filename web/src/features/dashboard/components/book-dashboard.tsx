@@ -428,6 +428,7 @@ function DailyProgressChart({
   const positiveWordCounts = chartEntries.map((entry) => Math.max(entry.netWordCountChange, 0));
   const maxRecentWordCount = Math.max(0, ...positiveWordCounts);
   const chartReference = dailyTargetWordCount && dailyTargetWordCount > 0 ? Math.max(dailyTargetWordCount, maxRecentWordCount) : maxRecentWordCount;
+  const chartBuckets = buildChartGeometryBuckets(chartEntries, chartReference);
   const isMonthlyPeriod = isMonthlyWritingProgressPeriod(progressPeriod);
   const goalLineTop = !isMonthlyPeriod && dailyTargetWordCount && dailyTargetWordCount > 0 && chartReference > 0
     ? 100 - clampPercent((dailyTargetWordCount * 100) / chartReference)
@@ -440,10 +441,9 @@ function DailyProgressChart({
     ? recentDays.filter((day) => day.netWordCountChange >= dailyTargetWordCount).length
     : null;
   const periodLabel = getWritingProgressPeriodLabel(chartEntries, selectedPeriod.description, progressPeriod);
-  const bucketColumnTemplate = `repeat(${Math.max(chartEntries.length, 1)}, minmax(0, 1fr))`;
-  const chartViewBoxWidth = Math.max(chartEntries.length, 1);
-  const barWidthClass = chartEntries.length >= 30 ? "w-1.5" : chartEntries.length >= 15 ? "w-2" : "w-4";
-  const trendPath = buildTrendLinePath(chartEntries, chartReference);
+  const bucketColumnTemplate = `repeat(${Math.max(chartBuckets.length, 1)}, minmax(0, 1fr))`;
+  const chartViewBoxWidth = Math.max(chartBuckets.length, 1);
+  const barWidthClass = chartBuckets.length >= 30 ? "w-1.5" : chartBuckets.length >= 15 ? "w-2" : "w-4";
 
   return (
     <section className="mt-4 rounded-md border border-zinc-200 bg-white p-3">
@@ -472,7 +472,7 @@ function DailyProgressChart({
       </div>
 
       <div className="mt-3 space-y-3">
-        {chartEntries.length === 0 ? (
+        {chartBuckets.length === 0 ? (
           <div className="rounded-md border border-dashed border-zinc-300 bg-zinc-50 p-3">
             <p className="text-sm font-medium text-zinc-900">Nenhum progresso recente registrado.</p>
             <p className="mt-1 text-sm text-zinc-500">Salve conteúdo de uma cena para acompanhar os últimos dias aqui.</p>
@@ -490,8 +490,8 @@ function DailyProgressChart({
             >
               <svg
                 aria-hidden="true"
-                className="pointer-events-none absolute left-2 right-2 top-3 z-10 h-48 overflow-visible"
-                data-testid="daily-progress-trend-svg"
+                className="pointer-events-none absolute left-2 right-2 top-3 z-10 h-48"
+                data-testid="daily-progress-axis-svg"
                 preserveAspectRatio="none"
                 viewBox={`0 0 ${chartViewBoxWidth} 100`}
               >
@@ -505,26 +505,10 @@ function DailyProgressChart({
                   strokeWidth="1"
                   vectorEffect="non-scaling-stroke"
                 />
-                {trendPath ? (
-                  <path
-                    data-testid="daily-progress-trend-line"
-                    d={trendPath}
-                    fill="none"
-                    className="stroke-emerald-700 opacity-80 transition-opacity duration-300 motion-reduce:transition-none"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth="2"
-                    vectorEffect="non-scaling-stroke"
-                  />
-                ) : null}
               </svg>
-              {chartEntries.map((entry) => {
-                const positiveWordCount = Math.max(entry.netWordCountChange, 0);
-                const barPercent = chartReference > 0 ? clampPercent((positiveWordCount * 100) / chartReference) : 0;
-                const barHeightPercent = Math.max(barPercent, positiveWordCount > 0 ? 8 : 1);
-
+              {chartBuckets.map((bucket) => {
                 return (
-                  <div key={entry.key} className="flex h-full min-w-0 flex-col items-center justify-end gap-0.5 transition-all duration-300 ease-out motion-reduce:transition-none" data-testid="daily-progress-bucket">
+                  <div key={bucket.key} className="flex h-full min-w-0 flex-col items-center justify-end gap-0.5 transition-all duration-300 ease-out motion-reduce:transition-none" data-testid="daily-progress-bucket">
                     <div className="relative flex h-48 w-full items-end justify-center">
                       {goalLineTop != null ? (
                         <span aria-hidden="true" className="absolute left-0 right-0 border-t border-dashed border-emerald-300" style={{ top: `${goalLineTop}%` }} />
@@ -532,14 +516,14 @@ function DailyProgressChart({
                       <div
                         role="presentation"
                         data-testid="daily-progress-vertical-bar"
-                        aria-label={`${entry.accessibleLabel}: ${formatSignedWords(entry.netWordCountChange)}`}
-                        className={`${barWidthClass} max-w-full rounded-t-sm transition-all duration-300 ease-out motion-reduce:transition-none ${entry.netWordCountChange < 0 ? "bg-zinc-300" : "bg-emerald-500"}`}
-                        style={{ height: `${barHeightPercent}%` }}
+                        aria-label={`${bucket.accessibleLabel}: ${formatSignedWords(bucket.netWordCountChange)}`}
+                        className={`${barWidthClass} max-w-full rounded-t-sm transition-all duration-300 ease-out motion-reduce:transition-none ${bucket.netWordCountChange < 0 ? "bg-zinc-300" : "bg-emerald-500"}`}
+                        style={{ height: `${bucket.barHeightPercent}%` }}
                       />
                     </div>
                     <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-zinc-500" data-testid="daily-progress-timeline-dot" />
-                    <p className="h-3.5 max-w-full text-center text-[10px] tabular-nums leading-tight text-zinc-600">{formatSignedNumber(entry.netWordCountChange)}</p>
-                    <p className="h-3.5 max-w-full text-center text-[10px] font-medium leading-tight text-zinc-700">{entry.axisLabel}</p>
+                    <p className="h-3.5 max-w-full text-center text-[10px] tabular-nums leading-tight text-zinc-600">{formatSignedNumber(bucket.netWordCountChange)}</p>
+                    <p className="h-3.5 max-w-full text-center text-[10px] font-medium leading-tight text-zinc-700">{bucket.axisLabel}</p>
                   </div>
                 );
               })}
@@ -582,8 +566,11 @@ type WritingProgressChartEntry = {
   netWordCountChange: number;
 };
 
+type WritingProgressChartBucket = WritingProgressChartEntry & {
+  barHeightPercent: number;
+};
+
 const CHART_BASELINE_Y = 98;
-const CHART_TOP_Y = 4;
 
 function buildWritingProgressChartEntries(
   recentDays: BookDashboardResponse["writingProgress"]["recentDays"],
@@ -597,23 +584,15 @@ function buildWritingProgressChartEntries(
   return buildDailyProgressBuckets(recentDays, progressPeriod, endDate);
 }
 
-function buildTrendLinePath(entries: WritingProgressChartEntry[], chartReference: number) {
-  if (entries.length === 0) {
-    return "";
-  }
-
+function buildChartGeometryBuckets(entries: WritingProgressChartEntry[], chartReference: number): WritingProgressChartBucket[] {
   return entries.map((entry, index) => {
-    const x = getChartSlotCenter(index);
     const positiveWordCount = Math.max(entry.netWordCountChange, 0);
     const progressPercent = chartReference > 0 ? clampPercent((positiveWordCount * 100) / chartReference) : 0;
-    const y = CHART_BASELINE_Y - ((CHART_BASELINE_Y - CHART_TOP_Y) * progressPercent) / 100;
-    const command = index === 0 ? "M" : "L";
-    return `${command} ${formatChartPoint(x)},${formatChartPoint(y)}`;
-  }).join(" ");
-}
-
-function getChartSlotCenter(index: number) {
-  return index + 0.5;
+    return {
+      ...entry,
+      barHeightPercent: Math.max(progressPercent, positiveWordCount > 0 ? 8 : 1),
+    };
+  });
 }
 
 function getWritingProgressPeriodLabel(
@@ -1001,10 +980,6 @@ function formatNumber(value: number) {
 
 function formatPercent(value: number) {
   return `${formatNumber(Math.round(value))}%`;
-}
-
-function formatChartPoint(value: number) {
-  return Number(value.toFixed(2)).toString();
 }
 
 function formatSignedWords(value: number) {
