@@ -26,19 +26,19 @@ public enum WritingProgressPeriod {
     THREE_MONTHS("3m") {
         @Override
         LocalDate startDate(LocalDate today) {
-            return today.minusMonths(3);
+            return firstDayOfCurrentMonthMinusMonths(today, 2);
         }
     },
     SIX_MONTHS("6m") {
         @Override
         LocalDate startDate(LocalDate today) {
-            return today.minusMonths(6);
+            return firstDayOfCurrentMonthMinusMonths(today, 5);
         }
     },
     TWELVE_MONTHS("12m") {
         @Override
         LocalDate startDate(LocalDate today) {
-            return today.minusMonths(11).withDayOfMonth(1);
+            return firstDayOfCurrentMonthMinusMonths(today, 11);
         }
     };
 
@@ -69,4 +69,8 @@ public enum WritingProgressPeriod {
     }
 
     abstract LocalDate startDate(LocalDate today);
+
+    private static LocalDate firstDayOfCurrentMonthMinusMonths(LocalDate today, int months) {
+        return today.withDayOfMonth(1).minusMonths(months);
+    }
 }

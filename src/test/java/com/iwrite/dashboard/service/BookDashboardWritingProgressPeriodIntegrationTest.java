@@ -58,16 +58,17 @@ class BookDashboardWritingProgressPeriodIntegrationTest extends PostgresIntegrat
     void dashboardProgressPeriodThreeMonthsReturnsExpectedRange() {
         var book = createBook("three month progress");
         LocalDate today = LocalDate.now();
+        LocalDate firstDayOfRange = today.withDayOfMonth(1).minusMonths(2);
         Book persistedBook = bookService.getBook(book.id());
         saveProgress(persistedBook, today, 0);
-        saveProgress(persistedBook, today.minusMonths(3), 3);
-        saveProgress(persistedBook, today.minusMonths(3).minusDays(1), 4);
+        saveProgress(persistedBook, firstDayOfRange, 3);
+        saveProgress(persistedBook, firstDayOfRange.minusDays(1), 4);
 
         var dashboard = dashboardService.getDashboard(book.id(), WritingProgressPeriod.THREE_MONTHS);
 
         assertThat(dashboard.writingProgress().recentDays())
                 .extracting(day -> day.date())
-                .containsExactly(today, today.minusMonths(3));
+                .containsExactly(today, firstDayOfRange);
     }
 
     @Test
