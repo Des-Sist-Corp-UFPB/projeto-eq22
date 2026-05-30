@@ -13,6 +13,7 @@ import com.iwrite.dashboard.dto.NarrativeGapsResponse;
 import com.iwrite.dashboard.dto.PlanningProgressResponse;
 import com.iwrite.dashboard.dto.PovStatsResponse;
 import com.iwrite.dashboard.dto.StatusCountResponse;
+import com.iwrite.dashboard.dto.WritingConsistencyResponse;
 import com.iwrite.dashboard.dto.WritingProgressDashboardResponse;
 import com.iwrite.item.entity.Item;
 import com.iwrite.location.entity.Location;
@@ -104,8 +105,9 @@ public class BookDashboardService {
                 .stream()
                 .map(this::toDailyWritingProgressResponse)
                 .toList();
+        WritingConsistencyResponse consistency = dailyWritingProgressService.getWritingConsistency(bookId);
 
-        return new WritingProgressDashboardResponse(toDailyWritingProgressResponse(today), recentDays);
+        return new WritingProgressDashboardResponse(toDailyWritingProgressResponse(today), recentDays, consistency);
     }
 
     private DailyWritingProgressResponse toDailyWritingProgressResponse(DailyWritingProgress progress) {
