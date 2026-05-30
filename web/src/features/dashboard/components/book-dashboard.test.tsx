@@ -109,10 +109,39 @@ describe("BookDashboard", () => {
     expect(screen.getAllByTestId("daily-progress-vertical-bar")).toHaveLength(7);
     expect(screen.getAllByTestId("daily-progress-timeline-dot")).toHaveLength(7);
     expect(screen.getByTestId("daily-progress-x-axis")).toBeInTheDocument();
-    expect(screen.getByTestId("daily-progress-trend-line").getAttribute("points")).toContain("92.86,40");
-    expect(screen.getByTestId("daily-progress-trend-line").getAttribute("points")).toContain("78.57,100");
+    expect(getTrendLinePoints()).toEqual(["0.5,98", "1.5,98", "2.5,98", "3.5,98", "4.5,98", "5.5,98", "6.5,41.6"]);
     expect(screen.getByText("Planejamento narrativo")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Ver cenas com status Rascunho" })).toBeInTheDocument();
+  });
+
+  test("linha de tendência usa todos os buckets e sobe apenas nos dias finais", () => {
+    const finalDaysDashboard = {
+      ...dashboardWithScenes,
+      writingProgress: {
+        ...dashboardWithScenes.writingProgress,
+        today: {
+          ...dashboardWithScenes.writingProgress.today,
+          date: "2026-05-29",
+          netWordCountChange: 2056,
+        },
+        recentDays: [
+          { ...dashboardWithScenes.writingProgress.today, date: "2026-05-29", netWordCountChange: 2056 },
+          { ...dashboardWithScenes.writingProgress.today, date: "2026-05-28", netWordCountChange: 2020 },
+        ],
+      },
+    };
+    mocks.useBookDashboard.mockReturnValue({ isLoading: false, isError: false, data: finalDaysDashboard });
+
+    renderWithClient(<BookDashboard bookId="book-1" />);
+
+    expect(screen.getByText("23/05 - 29/05")).toBeInTheDocument();
+    expect(screen.getAllByTestId("daily-progress-bucket")).toHaveLength(7);
+    expect(screen.getAllByTestId("daily-progress-timeline-dot")).toHaveLength(7);
+    const points = getTrendLinePoints();
+    expect(points).toHaveLength(7);
+    expect(points.slice(0, 5)).toEqual(["0.5,98", "1.5,98", "2.5,98", "3.5,98", "4.5,98"]);
+    expect(points[5]).toBe("5.5,5.65");
+    expect(points[6]).toBe("6.5,4");
   });
 
   test("trocar período mantém analytics visível durante refetch", async () => {
@@ -331,3 +360,7 @@ describe("BookDashboard", () => {
     expect(within(itemDialog).queryByText(characterAda.id)).not.toBeInTheDocument();
   });
 });
+
+function getTrendLinePoints() {
+  return screen.getByTestId("daily-progress-trend-line").getAttribute("points")?.split(" ") ?? [];
+}

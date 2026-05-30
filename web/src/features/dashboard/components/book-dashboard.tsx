@@ -441,6 +441,7 @@ function DailyProgressChart({
     : null;
   const periodLabel = getWritingProgressPeriodLabel(chartEntries, selectedPeriod.description, progressPeriod);
   const bucketColumnTemplate = `repeat(${Math.max(chartEntries.length, 1)}, minmax(0, 1fr))`;
+  const chartViewBoxWidth = Math.max(chartEntries.length, 1);
   const barWidthClass = chartEntries.length >= 30 ? "w-1.5" : chartEntries.length >= 15 ? "w-2" : "w-4";
   const trendPoints = buildTrendLinePoints(chartEntries, chartReference);
 
@@ -483,7 +484,7 @@ function DailyProgressChart({
             className="pb-1"
           >
             <div
-              className="relative grid h-64 w-full items-end gap-1 overflow-hidden rounded-md border border-zinc-200 bg-zinc-50 px-2 py-3 transition-[grid-template-columns,opacity] duration-300 motion-reduce:transition-none"
+              className="relative grid h-64 w-full items-end gap-0 overflow-hidden rounded-md border border-zinc-200 bg-zinc-50 px-2 py-3 transition-[grid-template-columns,opacity] duration-300 motion-reduce:transition-none"
               data-testid="daily-progress-chart-grid"
               style={{ gridTemplateColumns: bucketColumnTemplate }}
             >
@@ -492,14 +493,14 @@ function DailyProgressChart({
                 className="pointer-events-none absolute left-2 right-2 top-3 z-10 h-48 overflow-visible"
                 data-testid="daily-progress-trend-svg"
                 preserveAspectRatio="none"
-                viewBox="0 0 100 100"
+                viewBox={`0 0 ${chartViewBoxWidth} 100`}
               >
                 <line
                   data-testid="daily-progress-x-axis"
                   x1="0"
-                  x2="100"
-                  y1="100"
-                  y2="100"
+                  x2={chartViewBoxWidth}
+                  y1={CHART_BASELINE_Y}
+                  y2={CHART_BASELINE_Y}
                   className="stroke-zinc-300"
                   strokeWidth="1"
                   vectorEffect="non-scaling-stroke"
@@ -580,6 +581,9 @@ type WritingProgressChartEntry = {
   netWordCountChange: number;
 };
 
+const CHART_BASELINE_Y = 98;
+const CHART_TOP_Y = 4;
+
 function buildWritingProgressChartEntries(
   recentDays: BookDashboardResponse["writingProgress"]["recentDays"],
   progressPeriod: WritingProgressPeriod
@@ -598,11 +602,16 @@ function buildTrendLinePoints(entries: WritingProgressChartEntry[], chartReferen
   }
 
   return entries.map((entry, index) => {
-    const x = ((index + 0.5) / entries.length) * 100;
+    const x = getChartSlotCenter(index);
     const positiveWordCount = Math.max(entry.netWordCountChange, 0);
-    const y = chartReference > 0 ? 100 - clampPercent((positiveWordCount * 100) / chartReference) : 100;
+    const progressPercent = chartReference > 0 ? clampPercent((positiveWordCount * 100) / chartReference) : 0;
+    const y = CHART_BASELINE_Y - ((CHART_BASELINE_Y - CHART_TOP_Y) * progressPercent) / 100;
     return `${formatChartPoint(x)},${formatChartPoint(y)}`;
   }).join(" ");
+}
+
+function getChartSlotCenter(index: number) {
+  return index + 0.5;
 }
 
 function getWritingProgressPeriodLabel(
