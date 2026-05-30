@@ -253,7 +253,7 @@ function DailyWritingGoalCard({
 }) {
   const queryClient = useQueryClient();
   const today = dashboard.writingProgress.today;
-  const currentDailyTargetWordCount = dashboard.dailyTargetWordCount ?? today.dailyTargetWordCount;
+  const currentDailyTargetWordCount = dashboard.dailyTargetWordCount;
   const [isEditing, setIsEditing] = useState(false);
   const [savedTargetValue, setSavedTargetValue] = useState<number | null>(currentDailyTargetWordCount ?? null);
   const [targetValue, setTargetValue] = useState(currentDailyTargetWordCount?.toString() ?? "");

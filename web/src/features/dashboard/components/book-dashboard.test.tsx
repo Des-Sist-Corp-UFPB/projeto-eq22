@@ -295,6 +295,27 @@ describe("BookDashboard", () => {
     await waitFor(() => expect(screen.getByText("Nenhuma meta diária definida.")).toBeInTheDocument());
   });
 
+  test("meta diária removida não reaparece a partir do snapshot histórico de hoje", () => {
+    const dashboardWithRemovedCurrentGoal = {
+      ...dashboardWithScenes,
+      dailyTargetWordCount: null,
+      writingProgress: {
+        ...dashboardWithScenes.writingProgress,
+        today: {
+          ...dashboardWithScenes.writingProgress.today,
+          dailyTargetWordCount: 500,
+        },
+      },
+    };
+    mocks.useBookDashboard.mockReturnValue({ isLoading: false, isError: false, data: dashboardWithRemovedCurrentGoal });
+
+    renderWithClient(<BookDashboard bookId="book-1" />);
+
+    expect(screen.getByText("Nenhuma meta diária definida.")).toBeInTheDocument();
+    expect(screen.getByText("Hoje: 300 palavras")).toBeInTheDocument();
+    expect(screen.queryByText("Hoje: 300 / 500 palavras")).not.toBeInTheDocument();
+  });
+
   test("clicar em card de status abre modal e clicar em cena troca o conteudo do mesmo modal", () => {
     mocks.useBookDashboard.mockReturnValue({ isLoading: false, isError: false, data: dashboardWithScenes });
 
