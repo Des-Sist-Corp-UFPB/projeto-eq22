@@ -459,7 +459,7 @@ function DailyProgressChart({
         </div>
       </div>
 
-      <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,1fr)_240px]">
+      <div className="mt-3 space-y-3">
         {chartEntries.length === 0 ? (
           <div className="rounded-md border border-dashed border-zinc-300 bg-zinc-50 p-3">
             <p className="text-sm font-medium text-zinc-900">Nenhum progresso recente registrado.</p>
@@ -472,7 +472,7 @@ function DailyProgressChart({
             className="pb-1"
           >
             <div
-              className="grid h-36 w-full items-end gap-1 rounded-md border border-zinc-200 bg-zinc-50 px-2 py-2"
+              className="grid h-64 w-full items-end gap-1 rounded-md border border-zinc-200 bg-zinc-50 px-2 py-3"
               data-testid="daily-progress-chart-grid"
               style={{ gridTemplateColumns: bucketColumnTemplate }}
             >
@@ -483,7 +483,7 @@ function DailyProgressChart({
 
                 return (
                   <div key={entry.key} className="flex h-full min-w-0 flex-col items-center justify-end gap-0.5" data-testid="daily-progress-bucket">
-                    <div className="relative flex h-20 w-full items-end justify-center">
+                    <div className="relative flex h-48 w-full items-end justify-center">
                       {goalLineTop != null ? (
                         <span aria-hidden="true" className="absolute left-0 right-0 border-t border-dashed border-emerald-300" style={{ top: `${goalLineTop}%` }} />
                       ) : null}
@@ -505,20 +505,17 @@ function DailyProgressChart({
           </div>
         )}
 
-        <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3 lg:min-h-44">
-          <h4 className="text-sm font-semibold text-zinc-950">Resumo do período</h4>
-          <dl className="mt-3 grid gap-2">
-            <SummaryMetric label="Total no período" value={formatSignedWords(totalWords)} />
-            <SummaryMetric label="Média por bucket" value={formatSignedWords(averageWords)} />
-            <SummaryMetric label="Buckets com escrita" value={formatNumber(writingBuckets)} />
-            <SummaryMetric
-              label="Melhor bucket"
-              value={bestBucket ? formatSignedWords(bestBucket.netWordCountChange) : "0 palavras"}
-              detail={bestBucket ? bestBucket.accessibleLabel : undefined}
-            />
-            <SummaryMetric label="Dias em que bateu a meta" value={goalHitDays == null ? "Sem meta" : formatNumber(goalHitDays)} />
-          </dl>
-        </div>
+        <dl className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5" data-testid="daily-progress-summary-grid">
+          <SummaryMetric label="Total no período" value={formatSignedWords(totalWords)} />
+          <SummaryMetric label="Média por bucket" value={formatSignedWords(averageWords)} />
+          <SummaryMetric label="Buckets com escrita" value={formatNumber(writingBuckets)} />
+          <SummaryMetric
+            label="Melhor bucket"
+            value={bestBucket ? formatSignedWords(bestBucket.netWordCountChange) : "0 palavras"}
+            detail={bestBucket ? bestBucket.accessibleLabel : undefined}
+          />
+          <SummaryMetric label="Dias em que bateu a meta" value={goalHitDays == null ? "Sem meta" : formatNumber(goalHitDays)} />
+        </dl>
       </div>
     </section>
   );

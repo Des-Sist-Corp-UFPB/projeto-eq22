@@ -92,6 +92,13 @@ describe("BookDashboard", () => {
     expect(screen.getByRole("button", { name: "6 meses" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "12 meses" })).toBeInTheDocument();
     const chart = screen.getByRole("img", { name: /vertical.*escrita/ });
+    const summaryGrid = screen.getByTestId("daily-progress-summary-grid");
+    expect(chart.compareDocumentPosition(summaryGrid)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(within(summaryGrid).getByText("Total no período")).toBeInTheDocument();
+    expect(within(summaryGrid).getByText("Média por bucket")).toBeInTheDocument();
+    expect(within(summaryGrid).getByText("Buckets com escrita")).toBeInTheDocument();
+    expect(within(summaryGrid).getByText("Melhor bucket")).toBeInTheDocument();
+    expect(within(summaryGrid).getByText("Dias em que bateu a meta")).toBeInTheDocument();
     expect(within(chart).queryByRole("list")).not.toBeInTheDocument();
     expect(screen.getByText("08/05 - 14/05")).toBeInTheDocument();
     expect(within(chart).getByText("14/05")).toBeInTheDocument();
