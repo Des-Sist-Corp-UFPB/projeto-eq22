@@ -86,6 +86,71 @@ describe("SceneKanbanPanel", () => {
     });
   });
 
+  test("ignores a second move for the same scene while allowing a different scene move", async () => {
+    const firstMove = createDeferredSceneResponse("scene-complete", "PLANNED");
+    const secondMove = createDeferredSceneResponse("scene-complete-2", "PLANNED");
+    updateSceneMock.mockImplementation((sceneId) => {
+      if (sceneId === "scene-complete") {
+        return firstMove.promise;
+      }
+      if (sceneId === "scene-complete-2") {
+        return secondMove.promise;
+      }
+      return Promise.resolve({ id: sceneId, status: "PLANNED" } as Awaited<ReturnType<typeof updateScene>>);
+    });
+    renderKanban();
+
+    fireEvent.change(screen.getByLabelText("Status de Cena completa"), { target: { value: "PLANNED" } });
+    await waitFor(() => {
+      expect(updateSceneMock).toHaveBeenCalledTimes(1);
+    });
+
+    fireEvent.change(screen.getByLabelText("Status de Cena completa"), { target: { value: "WRITTEN" } });
+    expect(updateSceneMock).toHaveBeenCalledTimes(1);
+
+    fireEvent.change(screen.getByLabelText("Status de Cena completa 2"), { target: { value: "PLANNED" } });
+    await waitFor(() => {
+      expect(updateSceneMock).toHaveBeenCalledTimes(2);
+    });
+    expect(screen.getByLabelText("Status de Cena completa")).toBeDisabled();
+    expect(screen.getByLabelText("Status de Cena completa 2")).toBeDisabled();
+  });
+
+  test("settling one scene move does not clear another scene pending state", async () => {
+    const firstMove = createDeferredSceneResponse("scene-complete", "PLANNED");
+    const secondMove = createDeferredSceneResponse("scene-complete-2", "PLANNED");
+    updateSceneMock.mockImplementation((sceneId) => {
+      if (sceneId === "scene-complete") {
+        return firstMove.promise;
+      }
+      if (sceneId === "scene-complete-2") {
+        return secondMove.promise;
+      }
+      return Promise.resolve({ id: sceneId, status: "PLANNED" } as Awaited<ReturnType<typeof updateScene>>);
+    });
+    renderKanban();
+
+    fireEvent.change(screen.getByLabelText("Status de Cena completa"), { target: { value: "PLANNED" } });
+    fireEvent.change(screen.getByLabelText("Status de Cena completa 2"), { target: { value: "PLANNED" } });
+    await waitFor(() => {
+      expect(screen.getByLabelText("Status de Cena completa")).toBeDisabled();
+      expect(screen.getByLabelText("Status de Cena completa 2")).toBeDisabled();
+    });
+
+    firstMove.resolve();
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Status de Cena completa")).not.toBeDisabled();
+      expect(screen.getByLabelText("Status de Cena completa 2")).toBeDisabled();
+    });
+
+    secondMove.resolve();
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Status de Cena completa 2")).not.toBeDisabled();
+    });
+  });
+
   test("blocks incomplete scenes moving to planned and opens planning CTA", () => {
     const onOpenSceneInEditor = vi.fn();
     const onOpenScenePlanning = vi.fn();
@@ -227,10 +292,20 @@ const outlineWithScenes: BookOutline = {
               planningGaps: [],
             },
             {
+              id: "scene-complete-2",
+              title: "Cena completa 2",
+              status: "DRAFT",
+              sortOrder: 1,
+              wordCount: 100,
+              povCharacterId: "ada",
+              povCharacterName: "Ada",
+              planningGaps: [],
+            },
+            {
               id: "scene-incomplete",
               title: "Cena incompleta",
               status: "IDEA",
-              sortOrder: 1,
+              sortOrder: 2,
               wordCount: 300,
               povCharacterId: null,
               povCharacterName: null,
@@ -242,3 +317,15 @@ const outlineWithScenes: BookOutline = {
     },
   ],
 };
+
+function createDeferredSceneResponse(sceneId: string, status: SceneStatus) {
+  let resolvePromise: () => void = () => undefined;
+  const promise = new Promise<Awaited<ReturnType<typeof updateScene>>>((resolve) => {
+    resolvePromise = () => resolve({ id: sceneId, status } as Awaited<ReturnType<typeof updateScene>>);
+  });
+
+  return {
+    promise,
+    resolve: resolvePromise,
+  };
+}

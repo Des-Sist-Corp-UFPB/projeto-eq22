@@ -63,12 +63,12 @@ export function SceneKanbanPanel({
 }: SceneKanbanPanelProps) {
   const queryClient = useQueryClient();
   const [statusOverrides, setStatusOverrides] = useState<KanbanStatusOverrides>({});
-  const [pendingSceneId, setPendingSceneId] = useState<string | null>(null);
+  const [pendingSceneIds, setPendingSceneIds] = useState<Set<string>>(() => new Set());
   const [activeSceneId, setActiveSceneId] = useState<string | null>(null);
   const [pendingTransition, setPendingTransition] = useState<PendingTransition | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const pendingSceneIdRef = useRef<string | null>(null);
-  pendingSceneIdRef.current = pendingSceneId;
+  const pendingSceneIdsRef = useRef<Set<string>>(new Set());
+  pendingSceneIdsRef.current = pendingSceneIds;
   const model = useMemo(
     () => (outline ? buildKanbanModel(outline, statusOverrides) : null),
     [outline, statusOverrides]
@@ -84,9 +84,6 @@ export function SceneKanbanPanel({
       void queryClient.invalidateQueries({ queryKey: queryKeys.scene(scene.id) });
       void queryClient.invalidateQueries({ queryKey: queryKeys.bookDashboard(bookId) });
     },
-    onSettled: () => {
-      setPendingSceneId(null);
-    },
   });
 
   useEffect(() => {
@@ -94,8 +91,7 @@ export function SceneKanbanPanel({
       return;
     }
 
-    const pendingSceneIds = pendingSceneIdRef.current ? new Set([pendingSceneIdRef.current]) : new Set<string>();
-    setStatusOverrides((previous) => reconcileKanbanStatusOverrides(outline, previous, pendingSceneIds));
+    setStatusOverrides((previous) => reconcileKanbanStatusOverrides(outline, previous, pendingSceneIdsRef.current));
   }, [outline]);
 
   if (isLoading) {
@@ -160,6 +156,10 @@ export function SceneKanbanPanel({
   }
 
   function requestStatusChange(scene: KanbanSceneCardModel, targetStatus: SceneStatus) {
+    if (pendingSceneIdsRef.current.has(scene.id)) {
+      return;
+    }
+
     setErrorMessage(null);
     const decision = getKanbanTransitionDecision(scene, targetStatus);
 
@@ -181,7 +181,11 @@ export function SceneKanbanPanel({
   }
 
   async function applyStatusChange(scene: KanbanSceneCardModel, targetStatus: SceneStatus) {
-    setPendingSceneId(scene.id);
+    if (pendingSceneIdsRef.current.has(scene.id)) {
+      return;
+    }
+
+    addPendingSceneId(scene.id);
     setStatusOverrides((previous) => ({ ...previous, [scene.id]: targetStatus }));
 
     try {
@@ -189,7 +193,27 @@ export function SceneKanbanPanel({
     } catch (error) {
       setStatusOverrides((previous) => removeStatusOverride(previous, scene.id));
       setErrorMessage(readMutationError(error));
+    } finally {
+      removePendingSceneId(scene.id);
     }
+  }
+
+  function addPendingSceneId(sceneId: string) {
+    const nextPendingSceneIds = new Set(pendingSceneIdsRef.current);
+    nextPendingSceneIds.add(sceneId);
+    pendingSceneIdsRef.current = nextPendingSceneIds;
+    setPendingSceneIds(nextPendingSceneIds);
+  }
+
+  function removePendingSceneId(sceneId: string) {
+    if (!pendingSceneIdsRef.current.has(sceneId)) {
+      return;
+    }
+
+    const nextPendingSceneIds = new Set(pendingSceneIdsRef.current);
+    nextPendingSceneIds.delete(sceneId);
+    pendingSceneIdsRef.current = nextPendingSceneIds;
+    setPendingSceneIds(nextPendingSceneIds);
   }
 
   function handleOpenPlanning() {
@@ -230,7 +254,7 @@ export function SceneKanbanPanel({
                   <KanbanColumn
                     key={column.status}
                     column={column}
-                    pendingSceneId={pendingSceneId}
+                    pendingSceneIds={pendingSceneIds}
                     onOpenSceneInEditor={onOpenSceneInEditor}
                     onRequestStatusChange={requestStatusChange}
                   />
@@ -276,12 +300,12 @@ function KanbanHeader() {
 
 function KanbanColumn({
   column,
-  pendingSceneId,
+  pendingSceneIds,
   onOpenSceneInEditor,
   onRequestStatusChange,
 }: {
   column: KanbanColumnModel;
-  pendingSceneId: string | null;
+  pendingSceneIds: Set<string>;
   onOpenSceneInEditor: (sceneId: string) => void;
   onRequestStatusChange: (scene: KanbanSceneCardModel, targetStatus: SceneStatus) => void;
 }) {
@@ -316,7 +340,7 @@ function KanbanColumn({
             <DraggableKanbanSceneCard
               key={scene.id}
               scene={scene}
-              pending={pendingSceneId === scene.id}
+              pending={pendingSceneIds.has(scene.id)}
               onOpenSceneInEditor={onOpenSceneInEditor}
               onRequestStatusChange={onRequestStatusChange}
             />
