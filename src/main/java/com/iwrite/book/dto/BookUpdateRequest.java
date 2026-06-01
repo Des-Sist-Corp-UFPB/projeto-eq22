@@ -4,6 +4,9 @@ import com.fasterxml.jackson.annotation.JsonSetter;
 import com.iwrite.book.entity.BookStatus;
 import jakarta.validation.constraints.Positive;
 
+import java.time.DayOfWeek;
+import java.util.List;
+
 public class BookUpdateRequest {
 
     private String title;
@@ -18,6 +21,9 @@ public class BookUpdateRequest {
     @Positive
     private Integer dailyTargetWordCount;
     private boolean dailyTargetWordCountPresent;
+
+    private List<DayOfWeek> plannedWritingDays;
+    private boolean plannedWritingDaysPresent;
 
     public String title() {
         return title;
@@ -51,6 +57,14 @@ public class BookUpdateRequest {
         return dailyTargetWordCountPresent;
     }
 
+    public List<DayOfWeek> plannedWritingDays() {
+        return plannedWritingDays;
+    }
+
+    public boolean isPlannedWritingDaysPresent() {
+        return plannedWritingDaysPresent;
+    }
+
     public void setTitle(String title) {
         this.title = title;
     }
@@ -77,5 +91,11 @@ public class BookUpdateRequest {
     public void setDailyTargetWordCount(Integer dailyTargetWordCount) {
         this.dailyTargetWordCount = dailyTargetWordCount;
         this.dailyTargetWordCountPresent = true;
+    }
+
+    @JsonSetter("plannedWritingDays")
+    public void setPlannedWritingDays(List<DayOfWeek> plannedWritingDays) {
+        this.plannedWritingDays = plannedWritingDays;
+        this.plannedWritingDaysPresent = true;
     }
 }

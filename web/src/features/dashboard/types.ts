@@ -1,4 +1,5 @@
 import type { SceneStatus } from "@/features/scenes/types";
+import type { DayOfWeek } from "@/features/books/types";
 
 export type PlanningProgressResponse = {
   plannedScenesCount: number;
@@ -64,9 +65,30 @@ export type DailyWritingProgressResponse = {
   progressPercent: number | null;
 };
 
+export type WritingConsistencyResponse = {
+  currentStreakDays: number;
+  bestStreakDays: number;
+  writingDaysThisMonth: number;
+  recentWindowDays: number;
+  recentWritingDays: number;
+  recentWritingDaysPercent: number;
+  recentPlannedWritingDays: number;
+  recentSuccessfulPlannedWritingDays: number;
+  recentPlannedWritingDaysPercent: number;
+};
+
 export type WritingProgressDashboardResponse = {
   today: DailyWritingProgressResponse;
   recentDays: DailyWritingProgressResponse[];
+  consistency: WritingConsistencyResponse;
+};
+
+export type WritingScheduleResponse = {
+  plannedWritingDays: DayOfWeek[];
+  plannedWritingDaysPerWeek: number;
+  restDays: DayOfWeek[];
+  todayPlannedWritingDay: boolean;
+  currentScheduleEffectiveFrom: string;
 };
 
 export type BookDashboardResponse = {
@@ -82,6 +104,7 @@ export type BookDashboardResponse = {
   totalChapters: number;
   totalScenes: number;
   writingProgress: WritingProgressDashboardResponse;
+  writingSchedule: WritingScheduleResponse;
   planningProgress: PlanningProgressResponse;
   scenesByStatus: StatusCountResponse[];
   povStats: PovStatsResponse[];

@@ -15,6 +15,7 @@ import com.iwrite.dashboard.dto.PovStatsResponse;
 import com.iwrite.dashboard.dto.StatusCountResponse;
 import com.iwrite.dashboard.dto.WritingConsistencyResponse;
 import com.iwrite.dashboard.dto.WritingProgressDashboardResponse;
+import com.iwrite.dashboard.dto.WritingScheduleResponse;
 import com.iwrite.item.entity.Item;
 import com.iwrite.location.entity.Location;
 import com.iwrite.scene.entity.Scene;
@@ -24,10 +25,12 @@ import com.iwrite.section.entity.BookSection;
 import com.iwrite.section.repository.BookSectionRepository;
 import com.iwrite.writingprogress.entity.DailyWritingProgress;
 import com.iwrite.writingprogress.service.DailyWritingProgressService;
+import com.iwrite.writingprogress.service.WritingScheduleService;
 import com.iwrite.writingprogress.service.WritingProgressPeriod;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDate;
 import java.util.Comparator;
 import java.util.EnumMap;
 import java.util.HashMap;
@@ -43,19 +46,22 @@ public class BookDashboardService {
     private final ChapterRepository chapterRepository;
     private final SceneRepository sceneRepository;
     private final DailyWritingProgressService dailyWritingProgressService;
+    private final WritingScheduleService writingScheduleService;
 
     public BookDashboardService(
             BookService bookService,
             BookSectionRepository sectionRepository,
             ChapterRepository chapterRepository,
             SceneRepository sceneRepository,
-            DailyWritingProgressService dailyWritingProgressService
+            DailyWritingProgressService dailyWritingProgressService,
+            WritingScheduleService writingScheduleService
     ) {
         this.bookService = bookService;
         this.sectionRepository = sectionRepository;
         this.chapterRepository = chapterRepository;
         this.sceneRepository = sceneRepository;
         this.dailyWritingProgressService = dailyWritingProgressService;
+        this.writingScheduleService = writingScheduleService;
     }
 
     @Transactional(readOnly = true)
@@ -89,6 +95,7 @@ public class BookDashboardService {
                 chapterRepository.countByBookId(bookId),
                 totalScenes,
                 buildWritingProgress(bookId, totalWordCount, progressPeriod),
+                buildWritingSchedule(bookId),
                 new PlanningProgressResponse(plannedScenesCount, totalScenes, plannedScenesPercent(plannedScenesCount, totalScenes)),
                 buildStatusCounts(scenes),
                 buildPovStats(scenes),
@@ -105,9 +112,26 @@ public class BookDashboardService {
                 .stream()
                 .map(this::toDailyWritingProgressResponse)
                 .toList();
-        WritingConsistencyResponse consistency = dailyWritingProgressService.getWritingConsistency(bookId);
+        WritingConsistencyResponse consistency = dailyWritingProgressService.getWritingConsistency(bookId, progressPeriod);
 
         return new WritingProgressDashboardResponse(toDailyWritingProgressResponse(today), recentDays, consistency);
+    }
+
+    private WritingScheduleResponse buildWritingSchedule(UUID bookId) {
+        var activeSchedule = writingScheduleService.getActiveSchedule(bookId);
+        List<java.time.DayOfWeek> plannedWritingDays = writingScheduleService.orderedDays(activeSchedule.getPlannedDays());
+        LocalDate today = dailyWritingProgressService.today();
+        boolean todayPlannedWritingDay = writingScheduleService.getScheduleForDate(bookId, today)
+                .getPlannedDays()
+                .contains(today.getDayOfWeek());
+
+        return new WritingScheduleResponse(
+                plannedWritingDays,
+                plannedWritingDays.size(),
+                writingScheduleService.restDays(plannedWritingDays),
+                todayPlannedWritingDay,
+                activeSchedule.getEffectiveFrom()
+        );
     }
 
     private DailyWritingProgressResponse toDailyWritingProgressResponse(DailyWritingProgress progress) {

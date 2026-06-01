@@ -10,6 +10,8 @@ function book(overrides: Partial<Book> & Pick<Book, "id" | "status">): Book {
     description: null,
     status: overrides.status,
     targetWordCount: null,
+    dailyTargetWordCount: null,
+    plannedWritingDays: ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY"],
     createdAt: overrides.createdAt ?? "2026-01-01T00:00:00.000Z",
     updatedAt: overrides.updatedAt ?? "2026-01-01T00:00:00.000Z",
   };

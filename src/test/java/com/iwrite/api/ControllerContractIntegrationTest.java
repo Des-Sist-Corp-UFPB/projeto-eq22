@@ -198,6 +198,29 @@ class ControllerContractIntegrationTest extends PostgresIntegrationTest {
     }
 
     @Test
+    void patchBookPlannedWritingDaysUpdatesRoutine() throws Exception {
+        var book = createBook("HTTP schedule");
+
+        mockMvc.perform(patch("/api/books/{bookId}", book.id())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of("plannedWritingDays", List.of("MONDAY", "WEDNESDAY")))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.plannedWritingDays[0]").value("MONDAY"))
+                .andExpect(jsonPath("$.plannedWritingDays[1]").value("WEDNESDAY"));
+    }
+
+    @Test
+    void patchBookRejectsEmptyPlannedWritingDays() throws Exception {
+        var book = createBook("HTTP empty schedule");
+
+        mockMvc.perform(patch("/api/books/{bookId}", book.id())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of("plannedWritingDays", List.of()))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.messages", hasItem(containsString("plannedWritingDays"))));
+    }
+
+    @Test
     void patchBookRejectsInvalidTargetWordCount() throws Exception {
         var book = createBook("HTTP invalid target");
 
