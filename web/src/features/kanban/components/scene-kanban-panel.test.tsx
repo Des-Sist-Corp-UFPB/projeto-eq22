@@ -113,6 +113,24 @@ describe("SceneKanbanPanel", () => {
     });
   });
 
+  test("clears drag overlay when keyboard drag is cancelled", async () => {
+    renderKanban();
+
+    const dragHandle = screen.getByRole("button", { name: "Mover cena Cena completa" });
+    dragHandle.focus();
+    fireEvent.keyDown(dragHandle, { key: " ", code: "Space" });
+
+    await waitFor(() => {
+      expect(screen.getAllByRole("button", { name: "Abrir cena Cena completa" })).toHaveLength(2);
+    });
+
+    fireEvent.keyDown(dragHandle, { key: "Escape", code: "Escape" });
+
+    await waitFor(() => {
+      expect(screen.getAllByRole("button", { name: "Abrir cena Cena completa" })).toHaveLength(1);
+    });
+  });
+
   test("rolls back optimistic status after API failure", async () => {
     updateSceneMock.mockRejectedValueOnce(new Error("Falha"));
     renderKanban();

@@ -125,8 +125,12 @@ export function SceneKanbanPanel({
     setActiveSceneId(String(event.active.id));
   }
 
-  function handleDragEnd(event: DragEndEvent) {
+  function clearActiveDrag() {
     setActiveSceneId(null);
+  }
+
+  function handleDragEnd(event: DragEndEvent) {
+    clearActiveDrag();
     const targetStatus = event.over?.id as SceneStatus | undefined;
     if (!targetStatus || !isSceneStatus(targetStatus)) {
       return;
@@ -199,7 +203,12 @@ export function SceneKanbanPanel({
       <div className="mx-auto grid max-w-7xl gap-4">
         <KanbanHeader />
         {errorMessage ? <FeedbackMessage variant="error">{errorMessage}</FeedbackMessage> : null}
-        <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
+        <DndContext
+          sensors={sensors}
+          onDragStart={handleDragStart}
+          onDragEnd={handleDragEnd}
+          onDragCancel={clearActiveDrag}
+        >
           <div className="overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm shadow-zinc-200/60">
             <div className="max-h-[calc(100vh-12rem)] overflow-auto">
               <div className="flex min-w-max gap-3 p-3">
