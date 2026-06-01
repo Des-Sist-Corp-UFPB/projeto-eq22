@@ -44,6 +44,7 @@ type SceneKanbanPanelProps = {
   isLoading: boolean;
   isError: boolean;
   onOpenSceneInEditor: (sceneId: string) => void;
+  onOpenScenePlanning: (sceneId: string) => void;
 };
 
 type PendingTransition = {
@@ -58,6 +59,7 @@ export function SceneKanbanPanel({
   isLoading,
   isError,
   onOpenSceneInEditor,
+  onOpenScenePlanning,
 }: SceneKanbanPanelProps) {
   const queryClient = useQueryClient();
   const [statusOverrides, setStatusOverrides] = useState<KanbanStatusOverrides>({});
@@ -197,7 +199,7 @@ export function SceneKanbanPanel({
 
     const sceneId = pendingTransition.scene.id;
     setPendingTransition(null);
-    onOpenSceneInEditor(sceneId);
+    onOpenScenePlanning(sceneId);
   }
 
   function handleConfirmAdvancedTransition() {

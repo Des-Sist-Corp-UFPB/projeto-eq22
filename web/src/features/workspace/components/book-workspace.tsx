@@ -90,6 +90,7 @@ export function BookWorkspace({ bookId, initialSceneId }: BookWorkspaceProps) {
   const [isFocusMode, setIsFocusMode] = useState(false);
   const [isFullscreenAvailable, setIsFullscreenAvailable] = useState(false);
   const [isFullscreenActive, setIsFullscreenActive] = useState(false);
+  const [planningPanelOpenRequest, setPlanningPanelOpenRequest] = useState(0);
   const outlineQuery = useQuery({
     queryKey: queryKeys.outline(bookId),
     queryFn: () => getOutline(bookId),
@@ -172,6 +173,15 @@ export function BookWorkspace({ bookId, initialSceneId }: BookWorkspaceProps) {
   const handleOpenSceneInEditor = useCallback(
     (sceneId: string) => {
       setMode("scenes");
+      handleSelectScene(sceneId);
+    },
+    [handleSelectScene]
+  );
+
+  const handleOpenScenePlanning = useCallback(
+    (sceneId: string) => {
+      setMode("scenes");
+      setPlanningPanelOpenRequest((request) => request + 1);
       handleSelectScene(sceneId);
     },
     [handleSelectScene]
@@ -397,6 +407,7 @@ export function BookWorkspace({ bookId, initialSceneId }: BookWorkspaceProps) {
               isLoading={outlineQuery.isLoading}
               isError={outlineQuery.isError}
               onOpenSceneInEditor={handleOpenSceneInEditor}
+              onOpenScenePlanning={handleOpenScenePlanning}
             />
           ) : mode === "scenes" ? (
             <SceneEditor
@@ -409,6 +420,7 @@ export function BookWorkspace({ bookId, initialSceneId }: BookWorkspaceProps) {
               onExitFocusMode={handleExitFocusMode}
               onToggleFullscreen={handleToggleFullscreen}
               onSceneDeleted={handleSceneDeleted}
+              planningPanelOpenRequest={planningPanelOpenRequest}
             />
           ) : mode === "characters" ? (
             <CharactersPanel bookId={bookId} />

@@ -31,6 +31,7 @@ describe("SceneKanbanPanel", () => {
         isLoading
         isError={false}
         onOpenSceneInEditor={onOpenSceneInEditor}
+        onOpenScenePlanning={vi.fn()}
       />
     );
 
@@ -43,6 +44,7 @@ describe("SceneKanbanPanel", () => {
         isLoading={false}
         isError
         onOpenSceneInEditor={onOpenSceneInEditor}
+        onOpenScenePlanning={vi.fn()}
       />
     );
     expect(screen.getByText("Nao foi possivel carregar o kanban.")).toBeInTheDocument();
@@ -54,6 +56,7 @@ describe("SceneKanbanPanel", () => {
         isLoading={false}
         isError={false}
         onOpenSceneInEditor={onOpenSceneInEditor}
+        onOpenScenePlanning={vi.fn()}
       />
     );
     expect(screen.getByText("Este livro ainda nao tem cenas.")).toBeInTheDocument();
@@ -85,7 +88,8 @@ describe("SceneKanbanPanel", () => {
 
   test("blocks incomplete scenes moving to planned and opens planning CTA", () => {
     const onOpenSceneInEditor = vi.fn();
-    renderKanban(onOpenSceneInEditor);
+    const onOpenScenePlanning = vi.fn();
+    renderKanban(onOpenSceneInEditor, onOpenScenePlanning);
 
     fireEvent.change(screen.getByLabelText("Status de Cena incompleta"), { target: { value: "PLANNED" } });
 
@@ -96,7 +100,8 @@ describe("SceneKanbanPanel", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Abrir planejamento" }));
 
-    expect(onOpenSceneInEditor).toHaveBeenCalledWith("scene-incomplete");
+    expect(onOpenScenePlanning).toHaveBeenCalledWith("scene-incomplete");
+    expect(onOpenSceneInEditor).not.toHaveBeenCalled();
   });
 
   test("asks confirmation before moving incomplete scenes to advanced statuses", async () => {
@@ -149,6 +154,7 @@ describe("SceneKanbanPanel", () => {
         isLoading={false}
         isError={false}
         onOpenSceneInEditor={onOpenSceneInEditor}
+        onOpenScenePlanning={vi.fn()}
       />
     );
 
@@ -156,7 +162,7 @@ describe("SceneKanbanPanel", () => {
   });
 });
 
-function renderKanban(onOpenSceneInEditor = vi.fn()) {
+function renderKanban(onOpenSceneInEditor = vi.fn(), onOpenScenePlanning = vi.fn()) {
   return renderWithClient(
     <SceneKanbanPanel
       bookId="book-1"
@@ -164,6 +170,7 @@ function renderKanban(onOpenSceneInEditor = vi.fn()) {
       isLoading={false}
       isError={false}
       onOpenSceneInEditor={onOpenSceneInEditor}
+      onOpenScenePlanning={onOpenScenePlanning}
     />
   );
 }

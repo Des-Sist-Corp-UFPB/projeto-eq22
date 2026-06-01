@@ -76,6 +76,30 @@ vi.mock("@/features/notebook/components/notebook-panel", () => ({
   NotebookPanel: () => <h1>Caderno</h1>,
 }));
 
+vi.mock("@/features/characters/api/characters-hooks", () => ({
+  useCharacters: () => ({
+    isLoading: false,
+    isError: false,
+    data: [],
+  }),
+}));
+
+vi.mock("@/features/locations/api/locations-hooks", () => ({
+  useLocations: () => ({
+    isLoading: false,
+    isError: false,
+    data: [],
+  }),
+}));
+
+vi.mock("@/features/items/api/items-hooks", () => ({
+  useItems: () => ({
+    isLoading: false,
+    isError: false,
+    data: [],
+  }),
+}));
+
 vi.mock("@/features/dashboard/components/book-dashboard", () => ({
   BookDashboard: ({
     onOpenSceneInEditor,
@@ -485,6 +509,25 @@ describe("BookWorkspace initial scene selection", () => {
 
     expect(await screen.findByRole("heading", { name: sceneForPlanning.title })).toBeInTheDocument();
     expect(screen.getByText("Livro")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Expandir planejamento da cena" })).toHaveAttribute("aria-expanded", "false");
+    expect(mocks.routerReplace).toHaveBeenCalledWith(`/books/book-1?sceneId=${sceneForPlanning.id}`, { scroll: false });
+  });
+
+  test("abre planejamento a partir do kanban bloqueado e atualiza a URL", async () => {
+    renderWithClient(<BookWorkspace bookId="book-1" />);
+
+    await screen.findByText("Livro");
+    fireEvent.click(screen.getByRole("button", { name: "Kanban" }));
+    expect(await screen.findByRole("heading", { name: "Kanban" })).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText(`Status de ${sceneForPlanning.title}`), { target: { value: "PLANNED" } });
+    expect(screen.getByRole("dialog", { name: "Planejamento incompleto" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Abrir planejamento" }));
+
+    expect(await screen.findByRole("heading", { name: sceneForPlanning.title })).toBeInTheDocument();
+    expect(screen.getByText("Livro")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Recolher planejamento da cena" })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByLabelText("Objetivo")).toBeInTheDocument();
     expect(mocks.routerReplace).toHaveBeenCalledWith(`/books/book-1?sceneId=${sceneForPlanning.id}`, { scroll: false });
   });
 

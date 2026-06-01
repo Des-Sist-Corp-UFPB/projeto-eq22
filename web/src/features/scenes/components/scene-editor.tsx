@@ -30,6 +30,7 @@ type SceneEditorProps = {
   onExitFocusMode?: () => void;
   onToggleFullscreen?: () => void;
   onSceneDeleted: () => void;
+  planningPanelOpenRequest?: number;
 };
 
 type SaveContentVariables = {
@@ -48,6 +49,7 @@ export function SceneEditor({
   onExitFocusMode,
   onToggleFullscreen,
   onSceneDeleted,
+  planningPanelOpenRequest = 0,
 }: SceneEditorProps) {
   const queryClient = useQueryClient();
   const activeSceneIdRef = useRef<string | null>(sceneId);
@@ -126,6 +128,14 @@ export function SceneEditor({
       setIsPlanningPanelOpen(false);
     }
   }, []);
+
+  useEffect(() => {
+    if (!sceneId || planningPanelOpenRequest <= 0) {
+      return;
+    }
+
+    setIsPlanningPanelOpen(true);
+  }, [planningPanelOpenRequest, sceneId]);
 
   useEffect(() => clearPendingAutosave, [clearPendingAutosave]);
 
