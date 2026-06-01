@@ -1,5 +1,6 @@
 package com.iwrite.writingprogress.service;
 
+import com.iwrite.book.dto.BookRequest;
 import com.iwrite.book.dto.BookUpdateRequest;
 import com.iwrite.book.entity.Book;
 import com.iwrite.dashboard.service.BookDashboardService;
@@ -15,9 +16,11 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
 
 import java.time.Clock;
+import java.time.DayOfWeek;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -139,7 +142,7 @@ class DailyWritingProgressIntegrationTest extends PostgresIntegrationTest {
     }
 
     @Test
-    void dashboardCurrentStreakFallsBackToYesterdayWhenTodayIsMissingOrZero() {
+    void dashboardCurrentStreakFallsBackToYesterdayWhenTodayIsMissing() {
         LocalDate today = TODAY;
 
         var missingTodayBook = createBook("current streak missing today");
@@ -147,16 +150,21 @@ class DailyWritingProgressIntegrationTest extends PostgresIntegrationTest {
         saveProgress(persistedMissingTodayBook, today.minusDays(2), 0, 1);
         saveProgress(persistedMissingTodayBook, today.minusDays(1), 1, 3);
 
+        assertThat(dashboardService.getDashboard(missingTodayBook.id()).writingProgress().consistency().currentStreakDays())
+                .isEqualTo(2);
+    }
+
+    @Test
+    void dashboardCurrentStreakBreaksWhenTodayIsZero() {
+        LocalDate today = TODAY;
         var zeroTodayBook = createBook("current streak zero today");
         Book persistedZeroTodayBook = bookService.getBook(zeroTodayBook.id());
         saveProgress(persistedZeroTodayBook, today.minusDays(2), 0, 1);
         saveProgress(persistedZeroTodayBook, today.minusDays(1), 1, 3);
         saveProgress(persistedZeroTodayBook, today, 3, 3);
 
-        assertThat(dashboardService.getDashboard(missingTodayBook.id()).writingProgress().consistency().currentStreakDays())
-                .isEqualTo(2);
         assertThat(dashboardService.getDashboard(zeroTodayBook.id()).writingProgress().consistency().currentStreakDays())
-                .isEqualTo(2);
+                .isZero();
     }
 
     @Test
@@ -254,6 +262,80 @@ class DailyWritingProgressIntegrationTest extends PostgresIntegrationTest {
         assertThat(consistency.recentWindowDays()).isEqualTo(7);
         assertThat(consistency.recentWritingDays()).isEqualTo(2);
         assertThat(consistency.recentWritingDaysPercent()).isEqualTo((2 * 100.0) / 7);
+        assertThat(consistency.recentPlannedWritingDays()).isEqualTo(7);
+        assertThat(consistency.recentSuccessfulPlannedWritingDays()).isEqualTo(2);
+        assertThat(consistency.recentPlannedWritingDaysPercent()).isEqualTo((2 * 100.0) / 7);
+    }
+
+    @Test
+    void futureScheduleChangeDoesNotReinterpretCurrentHistoricalStreak() {
+        var book = createBook("future schedule does not rewrite today");
+        LocalDate today = TODAY;
+        Book persistedBook = bookService.getBook(book.id());
+        saveProgress(persistedBook, today.minusDays(1), 0, 1);
+        saveProgress(persistedBook, today, 1, 2);
+
+        BookUpdateRequest scheduleRequest = new BookUpdateRequest();
+        scheduleRequest.setPlannedWritingDays(List.of(DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, DayOfWeek.THURSDAY, DayOfWeek.FRIDAY));
+        bookService.update(book.id(), scheduleRequest);
+
+        var dashboard = dashboardService.getDashboard(book.id());
+
+        assertThat(dashboard.writingProgress().consistency().currentStreakDays()).isEqualTo(2);
+        assertThat(dashboard.writingSchedule().plannedWritingDays())
+                .containsExactly(DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, DayOfWeek.THURSDAY, DayOfWeek.FRIDAY);
+        assertThat(dashboard.writingSchedule().todayPlannedWritingDay()).isTrue();
+        assertThat(dashboard.writingSchedule().currentScheduleEffectiveFrom()).isEqualTo(today.plusDays(1));
+    }
+
+    @Test
+    void restDayWritingIsRecordedButDoesNotIncrementPlannedStreak() {
+        var book = bookService.create(new BookRequest(
+                "rest day bonus",
+                null,
+                null,
+                null,
+                null,
+                null,
+                List.of(DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, DayOfWeek.THURSDAY, DayOfWeek.FRIDAY)
+        ));
+        LocalDate today = TODAY;
+        Book persistedBook = bookService.getBook(book.id());
+        saveProgress(persistedBook, today.minusDays(1), 0, 2);
+        saveProgress(persistedBook, today, 2, 5);
+
+        var dashboard = dashboardService.getDashboard(book.id());
+        var consistency = dashboard.writingProgress().consistency();
+
+        assertThat(dashboard.writingSchedule().todayPlannedWritingDay()).isFalse();
+        assertThat(dashboard.writingProgress().today().netWordCountChange()).isEqualTo(3);
+        assertThat(consistency.currentStreakDays()).isEqualTo(1);
+        assertThat(consistency.writingDaysThisMonth()).isEqualTo(2);
+    }
+
+    @Test
+    void recentPlannedConsistencyUsesPlannedDaysAsDenominator() {
+        var book = bookService.create(new BookRequest(
+                "planned denominator",
+                null,
+                null,
+                null,
+                null,
+                null,
+                List.of(DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, DayOfWeek.THURSDAY, DayOfWeek.FRIDAY)
+        ));
+        LocalDate today = TODAY;
+        Book persistedBook = bookService.getBook(book.id());
+        saveProgress(persistedBook, today.minusDays(5), 0, 1);
+        saveProgress(persistedBook, today, 1, 3);
+
+        var consistency = dashboardService.getDashboard(book.id()).writingProgress().consistency();
+
+        assertThat(consistency.recentWindowDays()).isEqualTo(7);
+        assertThat(consistency.recentWritingDays()).isEqualTo(2);
+        assertThat(consistency.recentPlannedWritingDays()).isEqualTo(5);
+        assertThat(consistency.recentSuccessfulPlannedWritingDays()).isEqualTo(1);
+        assertThat(consistency.recentPlannedWritingDaysPercent()).isEqualTo(20.0);
     }
 
     private void saveProgress(Book book, LocalDate progressDate, int startWordCount, int endWordCount) {

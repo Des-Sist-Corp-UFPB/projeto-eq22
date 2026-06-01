@@ -6,6 +6,9 @@ public record WritingConsistencyResponse(
         int writingDaysThisMonth,
         int recentWindowDays,
         int recentWritingDays,
-        double recentWritingDaysPercent
+        double recentWritingDaysPercent,
+        int recentPlannedWritingDays,
+        int recentSuccessfulPlannedWritingDays,
+        double recentPlannedWritingDaysPercent
 ) {
 }

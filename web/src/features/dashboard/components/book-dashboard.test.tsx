@@ -283,6 +283,66 @@ describe("BookDashboard", () => {
     expect(screen.getByText("Hoje: 0 / 750 palavras")).toBeInTheDocument();
   });
 
+  test("mostra resumo da rotina e salva predefinicao de dias uteis", async () => {
+    mocks.useBookDashboard.mockReturnValue({ isLoading: false, isError: false, data: dashboardWithScenes });
+
+    renderWithClient(<BookDashboard bookId="book-1" />);
+
+    expect(screen.getByText("7 dias/semana")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Editar rotina" }));
+    fireEvent.click(screen.getByRole("button", { name: "Dias uteis" }));
+    fireEvent.click(screen.getByRole("button", { name: "Salvar rotina" }));
+
+    await waitFor(() => expect(mocks.updateBook).toHaveBeenCalledWith("book-1", {
+      plannedWritingDays: ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"],
+    }));
+    expect(screen.getByText(/mudanca passa a valer amanha/i)).toBeInTheDocument();
+  });
+
+  test("rotina personalizada exige pelo menos um dia selecionado", () => {
+    mocks.useBookDashboard.mockReturnValue({ isLoading: false, isError: false, data: dashboardWithScenes });
+
+    renderWithClient(<BookDashboard bookId="book-1" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Editar rotina" }));
+    for (const label of ["Seg", "Ter", "Qua", "Qui", "Sex", "Sab", "Dom"]) {
+      fireEvent.click(screen.getByRole("button", { name: label }));
+    }
+    fireEvent.click(screen.getByRole("button", { name: "Salvar rotina" }));
+
+    expect(screen.getByText("Selecione pelo menos um dia de escrita.")).toBeInTheDocument();
+    expect(mocks.updateBook).not.toHaveBeenCalled();
+  });
+
+  test("mostra dia de descanso com progresso extra", () => {
+    const restDayDashboard = {
+      ...dashboardWithScenes,
+      writingSchedule: {
+        plannedWritingDays: ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"],
+        plannedWritingDaysPerWeek: 5,
+        restDays: ["SATURDAY", "SUNDAY"],
+        todayPlannedWritingDay: false,
+        currentScheduleEffectiveFrom: "2026-05-14",
+      },
+      writingProgress: {
+        ...dashboardWithScenes.writingProgress,
+        today: {
+          ...dashboardWithScenes.writingProgress.today,
+          netWordCountChange: 120,
+        },
+      },
+    };
+    mocks.useBookDashboard.mockReturnValue({ isLoading: false, isError: false, data: restDayDashboard });
+
+    renderWithClient(<BookDashboard bookId="book-1" />);
+
+    expect(screen.getByText(/5 dias\/semana/)).toBeInTheDocument();
+    expect(screen.getByText("Hoje e um dia de descanso planejado.")).toBeInTheDocument();
+    expect(screen.getByText("Extra hoje: 120 palavras")).toBeInTheDocument();
+    expect(screen.queryByText("Hoje: 120 / 500 palavras")).not.toBeInTheDocument();
+  });
+
   test("remover meta diária volta para estado sem meta", async () => {
     mocks.useBookDashboard.mockReturnValue({ isLoading: false, isError: false, data: dashboardWithScenes });
 

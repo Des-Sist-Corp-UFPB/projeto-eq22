@@ -3,6 +3,7 @@ package com.iwrite.writingprogress.service;
 import com.iwrite.book.entity.Book;
 import com.iwrite.book.service.BookService;
 import com.iwrite.dashboard.dto.WritingConsistencyResponse;
+import com.iwrite.writingprogress.entity.BookWritingSchedule;
 import com.iwrite.writingprogress.entity.DailyWritingProgress;
 import com.iwrite.writingprogress.repository.DailyWritingProgressRepository;
 import org.springframework.stereotype.Service;
@@ -10,28 +11,30 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
 import java.time.LocalDate;
-import java.util.HashSet;
 import java.util.List;
-import java.util.Set;
+import java.util.Map;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 import java.util.UUID;
 
 @Service
 public class DailyWritingProgressService {
 
     private static final int WRITING_DAY_THRESHOLD = 0;
-    private static final int RECENT_CONSISTENCY_WINDOW_DAYS = 7;
-
     private final BookService bookService;
     private final DailyWritingProgressRepository progressRepository;
+    private final WritingScheduleService writingScheduleService;
     private final Clock clock;
 
     public DailyWritingProgressService(
             BookService bookService,
             DailyWritingProgressRepository progressRepository,
+            WritingScheduleService writingScheduleService,
             Clock clock
     ) {
         this.bookService = bookService;
         this.progressRepository = progressRepository;
+        this.writingScheduleService = writingScheduleService;
         this.clock = clock;
     }
 
@@ -73,72 +76,141 @@ public class DailyWritingProgressService {
 
     @Transactional(readOnly = true)
     public WritingConsistencyResponse getWritingConsistency(UUID bookId) {
-        LocalDate today = today();
-        List<DailyWritingProgress> positiveProgress = progressRepository
-                .findByBookIdAndNetWordCountChangeGreaterThanOrderByProgressDateAsc(bookId, WRITING_DAY_THRESHOLD);
-        Set<LocalDate> positiveDates = positiveDates(positiveProgress);
+        return getWritingConsistency(bookId, WritingProgressPeriod.DEFAULT);
+    }
 
-        int recentWritingDays = countPositiveProgressBetween(
-                bookId,
-                today.minusDays(RECENT_CONSISTENCY_WINDOW_DAYS - 1),
-                today
-        );
+    @Transactional(readOnly = true)
+    public WritingConsistencyResponse getWritingConsistency(UUID bookId, WritingProgressPeriod period) {
+        LocalDate today = today();
+        LocalDate earliestScheduleDate = writingScheduleService.getEarliestEffectiveFrom(bookId);
+        LocalDate calculationStartDate = progressRepository.findFirstByBookIdOrderByProgressDateAsc(bookId)
+                .map(DailyWritingProgress::getProgressDate)
+                .filter(progressDate -> progressDate.isBefore(earliestScheduleDate))
+                .orElse(earliestScheduleDate);
+        LocalDate recentStartDate = period.startDateInclusive(today);
+        List<DailyWritingProgress> progressHistory = progressRepository
+                .findByBookIdAndProgressDateBetweenOrderByProgressDateAsc(bookId, calculationStartDate, today);
+        Map<LocalDate, DailyWritingProgress> progressByDate = progressHistory.stream()
+                .collect(Collectors.toMap(DailyWritingProgress::getProgressDate, Function.identity()));
+        List<BookWritingSchedule> fullScheduleHistory =
+                writingScheduleService.getSchedulesForRange(bookId, calculationStartDate, today);
+        List<BookWritingSchedule> recentScheduleHistory =
+                writingScheduleService.getSchedulesForRange(bookId, recentStartDate, today);
+
+        int recentWritingDays = countPositiveProgressBetween(bookId, recentStartDate, today);
+        int recentWindowDays = Math.toIntExact(java.time.temporal.ChronoUnit.DAYS.between(recentStartDate, today) + 1);
+        int recentPlannedWritingDays = countPlannedDays(recentStartDate, today, recentScheduleHistory);
+        int recentSuccessfulPlannedWritingDays = countSuccessfulPlannedDays(recentStartDate, today, progressByDate, recentScheduleHistory);
 
         return new WritingConsistencyResponse(
-                currentStreakDays(today, positiveDates),
-                bestStreakDays(positiveProgress),
+                currentStreakDays(calculationStartDate, today, progressByDate, fullScheduleHistory),
+                bestStreakDays(calculationStartDate, today, progressByDate, fullScheduleHistory),
                 countPositiveProgressBetween(bookId, today.withDayOfMonth(1), today),
-                RECENT_CONSISTENCY_WINDOW_DAYS,
+                recentWindowDays,
                 recentWritingDays,
-                (recentWritingDays * 100.0) / RECENT_CONSISTENCY_WINDOW_DAYS
+                recentWindowDays == 0 ? 0.0 : (recentWritingDays * 100.0) / recentWindowDays,
+                recentPlannedWritingDays,
+                recentSuccessfulPlannedWritingDays,
+                recentPlannedWritingDays == 0 ? 0.0 : (recentSuccessfulPlannedWritingDays * 100.0) / recentPlannedWritingDays
         );
     }
 
-    private Set<LocalDate> positiveDates(List<DailyWritingProgress> positiveProgress) {
-        Set<LocalDate> dates = new HashSet<>();
-        for (DailyWritingProgress progress : positiveProgress) {
-            dates.add(progress.getProgressDate());
-        }
-        return dates;
-    }
-
-    private int currentStreakDays(LocalDate today, Set<LocalDate> positiveDates) {
-        LocalDate streakEndDate;
-        if (positiveDates.contains(today)) {
-            streakEndDate = today;
-        } else if (positiveDates.contains(today.minusDays(1))) {
-            streakEndDate = today.minusDays(1);
-        } else {
-            return 0;
-        }
-
+    private int currentStreakDays(
+            LocalDate earliestScheduleDate,
+            LocalDate today,
+            Map<LocalDate, DailyWritingProgress> progressByDate,
+            List<BookWritingSchedule> schedules
+    ) {
         int streakDays = 0;
-        LocalDate progressDate = streakEndDate;
-        while (positiveDates.contains(progressDate)) {
-            streakDays++;
-            progressDate = progressDate.minusDays(1);
+        LocalDate progressDate = today;
+
+        while (!progressDate.isBefore(earliestScheduleDate)) {
+            if (!writingScheduleService.isPlannedWritingDay(progressDate, schedules)) {
+                progressDate = progressDate.minusDays(1);
+                continue;
+            }
+
+            DailyWritingProgress progress = progressByDate.get(progressDate);
+            if (progressDate.equals(today) && progress == null) {
+                progressDate = progressDate.minusDays(1);
+                continue;
+            }
+            if (progress != null && progress.getNetWordCountChange() > WRITING_DAY_THRESHOLD) {
+                streakDays++;
+                progressDate = progressDate.minusDays(1);
+                continue;
+            }
+
+            break;
         }
+
         return streakDays;
     }
 
-    private int bestStreakDays(List<DailyWritingProgress> positiveProgress) {
+    private int bestStreakDays(
+            LocalDate earliestScheduleDate,
+            LocalDate today,
+            Map<LocalDate, DailyWritingProgress> progressByDate,
+            List<BookWritingSchedule> schedules
+    ) {
         int bestStreakDays = 0;
         int currentStreakDays = 0;
-        LocalDate previousProgressDate = null;
+        LocalDate progressDate = earliestScheduleDate;
 
-        for (DailyWritingProgress progress : positiveProgress) {
-            LocalDate progressDate = progress.getProgressDate();
-            if (previousProgressDate != null && progressDate.equals(previousProgressDate.plusDays(1))) {
-                currentStreakDays++;
-            } else {
-                currentStreakDays = 1;
+        while (!progressDate.isAfter(today)) {
+            if (!writingScheduleService.isPlannedWritingDay(progressDate, schedules)) {
+                progressDate = progressDate.plusDays(1);
+                continue;
             }
 
-            bestStreakDays = Math.max(bestStreakDays, currentStreakDays);
-            previousProgressDate = progressDate;
+            DailyWritingProgress progress = progressByDate.get(progressDate);
+            if (progress != null && progress.getNetWordCountChange() > WRITING_DAY_THRESHOLD) {
+                currentStreakDays++;
+                bestStreakDays = Math.max(bestStreakDays, currentStreakDays);
+            } else {
+                currentStreakDays = 0;
+            }
+
+            progressDate = progressDate.plusDays(1);
         }
 
         return bestStreakDays;
+    }
+
+    private int countPlannedDays(
+            LocalDate startDate,
+            LocalDate endDate,
+            List<BookWritingSchedule> schedules
+    ) {
+        int plannedDays = 0;
+        LocalDate progressDate = startDate;
+        while (!progressDate.isAfter(endDate)) {
+            if (writingScheduleService.isPlannedWritingDay(progressDate, schedules)) {
+                plannedDays++;
+            }
+            progressDate = progressDate.plusDays(1);
+        }
+        return plannedDays;
+    }
+
+    private int countSuccessfulPlannedDays(
+            LocalDate startDate,
+            LocalDate endDate,
+            Map<LocalDate, DailyWritingProgress> progressByDate,
+            List<BookWritingSchedule> schedules
+    ) {
+        int successfulPlannedDays = 0;
+        LocalDate progressDate = startDate;
+        while (!progressDate.isAfter(endDate)) {
+            DailyWritingProgress progress = progressByDate.get(progressDate);
+            if (writingScheduleService.isPlannedWritingDay(progressDate, schedules)
+                    && progress != null
+                    && progress.getNetWordCountChange() > WRITING_DAY_THRESHOLD) {
+                successfulPlannedDays++;
+            }
+            progressDate = progressDate.plusDays(1);
+        }
+        return successfulPlannedDays;
     }
 
     private int countPositiveProgressBetween(UUID bookId, LocalDate startDate, LocalDate endDate) {
@@ -174,7 +246,7 @@ public class DailyWritingProgressService {
         return progress;
     }
 
-    private LocalDate today() {
+    public LocalDate today() {
         return LocalDate.now(clock);
     }
 }

@@ -8,9 +8,11 @@ import com.iwrite.book.entity.BookStatus;
 import com.iwrite.book.repository.BookRepository;
 import com.iwrite.common.exception.ResourceNotFoundException;
 import com.iwrite.common.validation.RequestValidation;
+import com.iwrite.writingprogress.service.WritingScheduleService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.DayOfWeek;
 import java.util.List;
 import java.util.UUID;
 
@@ -18,22 +20,25 @@ import java.util.UUID;
 public class BookService {
 
     private final BookRepository bookRepository;
+    private final WritingScheduleService writingScheduleService;
 
-    public BookService(BookRepository bookRepository) {
+    public BookService(BookRepository bookRepository, WritingScheduleService writingScheduleService) {
         this.bookRepository = bookRepository;
+        this.writingScheduleService = writingScheduleService;
     }
 
     @Transactional(readOnly = true)
     public List<BookResponse> findAll() {
         return bookRepository.findAll()
                 .stream()
-                .map(BookResponse::fromEntity)
+                .map(book -> BookResponse.fromEntity(book, writingScheduleService.getActivePlannedWritingDays(book.getId())))
                 .toList();
     }
 
     @Transactional(readOnly = true)
     public BookResponse findById(UUID bookId) {
-        return BookResponse.fromEntity(getBook(bookId));
+        Book book = getBook(bookId);
+        return BookResponse.fromEntity(book, writingScheduleService.getActivePlannedWritingDays(bookId));
     }
 
     @Transactional
@@ -46,7 +51,9 @@ public class BookService {
         book.setTargetWordCount(request.targetWordCount());
         book.setDailyTargetWordCount(request.dailyTargetWordCount());
 
-        return BookResponse.fromEntity(bookRepository.save(book));
+        Book savedBook = bookRepository.save(book);
+        List<DayOfWeek> plannedWritingDays = writingScheduleService.createInitialSchedule(savedBook, request.plannedWritingDays());
+        return BookResponse.fromEntity(savedBook, plannedWritingDays);
     }
 
     @Transactional
@@ -73,7 +80,11 @@ public class BookService {
             book.setDailyTargetWordCount(request.dailyTargetWordCount());
         }
 
-        return BookResponse.fromEntity(book);
+        List<DayOfWeek> plannedWritingDays = request.isPlannedWritingDaysPresent()
+                ? writingScheduleService.changeSchedule(book, request.plannedWritingDays())
+                : writingScheduleService.getActivePlannedWritingDays(bookId);
+
+        return BookResponse.fromEntity(book, plannedWritingDays);
     }
 
     @Transactional

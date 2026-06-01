@@ -16,6 +16,7 @@ public record BookDashboardResponse(
         int totalChapters,
         int totalScenes,
         WritingProgressDashboardResponse writingProgress,
+        WritingScheduleResponse writingSchedule,
         PlanningProgressResponse planningProgress,
         List<StatusCountResponse> scenesByStatus,
         List<PovStatsResponse> povStats,

@@ -12,7 +12,15 @@ public interface DailyWritingProgressRepository extends JpaRepository<DailyWriti
 
     Optional<DailyWritingProgress> findByBookIdAndProgressDate(UUID bookId, LocalDate progressDate);
 
+    Optional<DailyWritingProgress> findFirstByBookIdOrderByProgressDateAsc(UUID bookId);
+
     List<DailyWritingProgress> findByBookIdAndProgressDateBetweenOrderByProgressDateDesc(
+            UUID bookId,
+            LocalDate startDate,
+            LocalDate endDate
+    );
+
+    List<DailyWritingProgress> findByBookIdAndProgressDateBetweenOrderByProgressDateAsc(
             UUID bookId,
             LocalDate startDate,
             LocalDate endDate

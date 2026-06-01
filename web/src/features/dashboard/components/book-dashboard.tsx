@@ -10,6 +10,7 @@ import { ErrorState, LoadingState } from "@/components/ui/feedback";
 import { FeedbackMessage } from "@/components/ui/feedback-message";
 import { Input } from "@/components/ui/input";
 import { updateBook } from "@/features/books/api/books-api";
+import type { DayOfWeek } from "@/features/books/types";
 import type { WritingProgressPeriod } from "@/features/dashboard/api/dashboard-api";
 import { useBookDashboard } from "@/features/dashboard/api/dashboard-hooks";
 import {
@@ -253,10 +254,13 @@ function DailyWritingGoalCard({
 }) {
   const queryClient = useQueryClient();
   const today = dashboard.writingProgress.today;
+  const writingSchedule = dashboard.writingSchedule;
   const currentDailyTargetWordCount = dashboard.dailyTargetWordCount;
   const [isEditing, setIsEditing] = useState(false);
+  const [isEditingRoutine, setIsEditingRoutine] = useState(false);
   const [savedTargetValue, setSavedTargetValue] = useState<number | null>(currentDailyTargetWordCount ?? null);
   const [targetValue, setTargetValue] = useState(currentDailyTargetWordCount?.toString() ?? "");
+  const [selectedRoutineDays, setSelectedRoutineDays] = useState<DayOfWeek[]>(writingSchedule.plannedWritingDays);
   const [validationMessage, setValidationMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
@@ -269,10 +273,23 @@ function DailyWritingGoalCard({
     },
   });
 
+  const updateScheduleMutation = useMutation({
+    mutationFn: (plannedWritingDays: DayOfWeek[]) => updateBook(dashboard.bookId, { plannedWritingDays }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.bookDashboard(dashboard.bookId) });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.book(dashboard.bookId) });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.books });
+    },
+  });
+
   useEffect(() => {
     setSavedTargetValue(currentDailyTargetWordCount ?? null);
     setTargetValue(currentDailyTargetWordCount?.toString() ?? "");
   }, [currentDailyTargetWordCount]);
+
+  useEffect(() => {
+    setSelectedRoutineDays(writingSchedule.plannedWritingDays);
+  }, [writingSchedule.plannedWritingDays]);
 
   function startEditing() {
     setValidationMessage(null);
@@ -280,10 +297,23 @@ function DailyWritingGoalCard({
     setIsEditing(true);
   }
 
+  function startEditingRoutine() {
+    setValidationMessage(null);
+    setSuccessMessage(null);
+    setSelectedRoutineDays(writingSchedule.plannedWritingDays);
+    setIsEditingRoutine(true);
+  }
+
   function cancelEditing() {
     setValidationMessage(null);
     setTargetValue(currentDailyTargetWordCount?.toString() ?? "");
     setIsEditing(false);
+  }
+
+  function cancelRoutineEditing() {
+    setValidationMessage(null);
+    setSelectedRoutineDays(writingSchedule.plannedWritingDays);
+    setIsEditingRoutine(false);
   }
 
   function saveTarget() {
@@ -318,50 +348,155 @@ function DailyWritingGoalCard({
     });
   }
 
+  function saveRoutine() {
+    setValidationMessage(null);
+    setSuccessMessage(null);
+
+    if (selectedRoutineDays.length === 0) {
+      setValidationMessage("Selecione pelo menos um dia de escrita.");
+      return;
+    }
+
+    updateScheduleMutation.mutate(selectedRoutineDays, {
+      onSuccess: () => {
+        setSuccessMessage("Rotina de escrita salva. A mudanca passa a valer amanha.");
+        setIsEditingRoutine(false);
+      },
+    });
+  }
+
+  function applyRoutinePreset(days: DayOfWeek[]) {
+    setValidationMessage(null);
+    setSelectedRoutineDays(days);
+  }
+
+  function toggleRoutineDay(day: DayOfWeek) {
+    setValidationMessage(null);
+    setSelectedRoutineDays((currentDays) => {
+      if (currentDays.includes(day)) {
+        return currentDays.filter((currentDay) => currentDay !== day);
+      }
+
+      return ORDERED_WEEKDAYS.filter((weekday) => currentDays.includes(weekday) || weekday === day);
+    });
+  }
+
   const errorMessage = getBookTargetErrorMessage(updateTargetMutation.error);
+  const scheduleErrorMessage = getBookTargetErrorMessage(updateScheduleMutation.error);
   const effectiveDailyTargetWordCount = savedTargetValue;
   const hasTarget = effectiveDailyTargetWordCount != null;
+  const isTodayPlannedWritingDay = writingSchedule.todayPlannedWritingDay;
   const progressPercent = hasTarget ? (today.netWordCountChange * 100.0) / effectiveDailyTargetWordCount : (today.progressPercent ?? 0);
   const visualProgressPercent = clampPercent(progressPercent);
+  const routineSummary = formatRoutineSummary(writingSchedule.plannedWritingDays, writingSchedule.restDays);
+  const activeRoutinePreset = getRoutinePreset(selectedRoutineDays);
 
   return (
     <Card className="p-4 transition-[transform,background-color,box-shadow] duration-150 ease-out hover:scale-[1.01] hover:bg-white hover:shadow-sm hover:shadow-zinc-200/70">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h2 className="text-base font-semibold text-zinc-950">Meta diária</h2>
-          <p className="mt-1 text-sm text-zinc-500">Acompanhe o avanço de escrita registrado hoje.</p>
+          <h2 className="text-base font-semibold text-zinc-950">Rotina e meta diaria</h2>
+          <p className="mt-1 text-sm text-zinc-500">Acompanhe os dias planejados e o avanco de escrita registrado hoje.</p>
+          <p className="mt-2 text-sm font-medium text-zinc-900">{routineSummary}</p>
         </div>
-        {!isEditing ? (
-          <Button type="button" variant="secondary" size="sm" onClick={startEditing}>
-            {hasTarget ? "Editar meta diária" : "Definir meta diária"}
-          </Button>
+        {!isEditing && !isEditingRoutine ? (
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" variant="secondary" size="sm" onClick={startEditingRoutine}>
+              Editar rotina
+            </Button>
+            <Button type="button" variant="secondary" size="sm" onClick={startEditing}>
+              {hasTarget ? "Editar meta diária" : "Definir meta diária"}
+            </Button>
+          </div>
         ) : null}
       </div>
 
-      {!hasTarget && !isEditing ? (
+      {isEditingRoutine ? (
+        <div className="mt-4 grid gap-3 rounded-md border border-zinc-200 bg-zinc-50 p-3">
+          <div>
+            <p className="text-sm font-medium text-zinc-900">Rotina semanal</p>
+            <p className="mt-1 text-xs text-zinc-500">Mudancas na rotina passam a valer amanha.</p>
+          </div>
+          <div className="flex flex-wrap gap-1 rounded-md border border-zinc-200 bg-white p-1" aria-label="Predefinicao da rotina de escrita">
+            {ROUTINE_PRESETS.map((preset) => (
+              <Button
+                key={preset.value}
+                type="button"
+                variant={activeRoutinePreset === preset.value ? "primary" : "secondary"}
+                size="sm"
+                onClick={() => {
+                  if (preset.value !== "custom") {
+                    applyRoutinePreset(preset.days);
+                  }
+                }}
+                disabled={updateScheduleMutation.isPending}
+              >
+                {preset.label}
+              </Button>
+            ))}
+          </div>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-7" aria-label="Dias de escrita planejados">
+            {ORDERED_WEEKDAYS.map((day) => (
+              <button
+                key={day}
+                type="button"
+                aria-pressed={selectedRoutineDays.includes(day)}
+                onClick={() => toggleRoutineDay(day)}
+                disabled={updateScheduleMutation.isPending}
+                className={`min-h-10 rounded-md border px-2 py-2 text-sm font-medium transition ${selectedRoutineDays.includes(day) ? "border-zinc-950 bg-zinc-950 text-white" : "border-zinc-300 bg-white text-zinc-700 hover:border-zinc-500"}`}
+              >
+                {WEEKDAY_SHORT_LABELS[day]}
+              </button>
+            ))}
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" size="sm" onClick={saveRoutine} disabled={updateScheduleMutation.isPending}>
+              {updateScheduleMutation.isPending ? "Salvando..." : "Salvar rotina"}
+            </Button>
+            <Button type="button" variant="ghost" size="sm" onClick={cancelRoutineEditing} disabled={updateScheduleMutation.isPending}>
+              Cancelar
+            </Button>
+          </div>
+        </div>
+      ) : null}
+
+      {!hasTarget && !isEditing && !isEditingRoutine ? (
         <div className="mt-4 rounded-md border border-dashed border-zinc-300 bg-zinc-50 p-4">
           <p className="text-sm font-medium text-zinc-900">Nenhuma meta diária definida.</p>
           <p className="mt-1 text-sm text-zinc-500">
             Defina uma meta opcional para acompanhar o progresso de hoje e dos últimos dias.
           </p>
-          <p className="mt-3 text-sm text-zinc-700">Hoje: {formatSignedWords(today.netWordCountChange)}</p>
+          {!isTodayPlannedWritingDay ? (
+            <p className="mt-3 text-sm font-medium text-zinc-900">Hoje e um dia de descanso planejado.</p>
+          ) : null}
+          <p className="mt-3 text-sm text-zinc-700">{isTodayPlannedWritingDay ? "Hoje" : "Extra hoje"}: {formatSignedWords(today.netWordCountChange)}</p>
         </div>
       ) : null}
 
-      {hasTarget && !isEditing ? (
+      {hasTarget && !isEditing && !isEditingRoutine ? (
         <div className="mt-4 grid gap-3">
-          <div className="flex flex-wrap items-end justify-between gap-3">
-            <div>
-              <p className="text-2xl font-semibold text-zinc-950">
-                Hoje: {formatSignedNumber(today.netWordCountChange)} / {formatNumber(effectiveDailyTargetWordCount ?? 0)} palavras
-              </p>
-              <p className="mt-1 text-sm text-zinc-500">{formatPercent(progressPercent)} da meta diária</p>
+          {!isTodayPlannedWritingDay ? (
+            <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3">
+              <p className="text-sm font-medium text-zinc-900">Hoje e um dia de descanso planejado.</p>
+              <p className="mt-1 text-sm text-zinc-600">Extra hoje: {formatSignedWords(today.netWordCountChange)}</p>
             </div>
-            <Badge variant="outline">{formatDashboardDate(today.date)}</Badge>
-          </div>
-          <div className="h-3 overflow-hidden rounded-full bg-zinc-100">
-            <div className="h-full rounded-full bg-emerald-500" style={{ width: `${visualProgressPercent}%` }} />
-          </div>
+          ) : null}
+          {isTodayPlannedWritingDay ? (
+            <div className="flex flex-wrap items-end justify-between gap-3">
+              <div>
+                <p className="text-2xl font-semibold text-zinc-950">
+                  Hoje: {formatSignedNumber(today.netWordCountChange)} / {formatNumber(effectiveDailyTargetWordCount ?? 0)} palavras
+                </p>
+                <p className="mt-1 text-sm text-zinc-500">{formatPercent(progressPercent)} da meta diária</p>
+              </div>
+              <Badge variant="outline">{formatDashboardDate(today.date)}</Badge>
+            </div>
+          ) : null}
+          {isTodayPlannedWritingDay ? (
+            <div className="h-3 overflow-hidden rounded-full bg-zinc-100">
+              <div className="h-full rounded-full bg-emerald-500" style={{ width: `${visualProgressPercent}%` }} />
+            </div>
+          ) : null}
         </div>
       ) : null}
 
@@ -406,6 +541,7 @@ function DailyWritingGoalCard({
 
       {validationMessage ? <FeedbackMessage variant="error" className="mt-3">{validationMessage}</FeedbackMessage> : null}
       {errorMessage ? <FeedbackMessage variant="error" className="mt-3">{errorMessage}</FeedbackMessage> : null}
+      {scheduleErrorMessage ? <FeedbackMessage variant="error" className="mt-3">{scheduleErrorMessage}</FeedbackMessage> : null}
       {successMessage ? <FeedbackMessage variant="success" className="mt-3">{successMessage}</FeedbackMessage> : null}
     </Card>
   );
@@ -720,6 +856,35 @@ const WRITING_PROGRESS_PERIODS: Array<{ value: WritingProgressPeriod; label: str
   { value: "3m", label: "3 meses", description: "Últimos 3 meses" },
   { value: "6m", label: "6 meses", description: "Últimos 6 meses" },
   { value: "12m", label: "12 meses", description: "Últimos 12 meses" },
+];
+
+const ORDERED_WEEKDAYS: DayOfWeek[] = ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY"];
+const WEEKDAYS: DayOfWeek[] = ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"];
+
+const WEEKDAY_LABELS: Record<DayOfWeek, string> = {
+  MONDAY: "segunda",
+  TUESDAY: "terca",
+  WEDNESDAY: "quarta",
+  THURSDAY: "quinta",
+  FRIDAY: "sexta",
+  SATURDAY: "sabado",
+  SUNDAY: "domingo",
+};
+
+const WEEKDAY_SHORT_LABELS: Record<DayOfWeek, string> = {
+  MONDAY: "Seg",
+  TUESDAY: "Ter",
+  WEDNESDAY: "Qua",
+  THURSDAY: "Qui",
+  FRIDAY: "Sex",
+  SATURDAY: "Sab",
+  SUNDAY: "Dom",
+};
+
+const ROUTINE_PRESETS: Array<{ value: "every-day" | "weekdays" | "custom"; label: string; days: DayOfWeek[] }> = [
+  { value: "every-day", label: "Todos os dias", days: ORDERED_WEEKDAYS },
+  { value: "weekdays", label: "Dias uteis", days: WEEKDAYS },
+  { value: "custom", label: "Personalizada", days: [] },
 ];
 
 function WordTargetCard({ dashboard }: { dashboard: BookDashboardResponse }) {
@@ -1048,6 +1213,39 @@ function clampPercent(value: number) {
   }
 
   return Math.max(0, Math.min(100, value));
+}
+
+function getRoutinePreset(days: DayOfWeek[]) {
+  if (sameWeekdays(days, ORDERED_WEEKDAYS)) {
+    return "every-day";
+  }
+  if (sameWeekdays(days, WEEKDAYS)) {
+    return "weekdays";
+  }
+
+  return "custom";
+}
+
+function sameWeekdays(first: DayOfWeek[], second: DayOfWeek[]) {
+  return first.length === second.length && ORDERED_WEEKDAYS.every((day) => first.includes(day) === second.includes(day));
+}
+
+function formatRoutineSummary(plannedWritingDays: DayOfWeek[], restDays: DayOfWeek[]) {
+  const daysPerWeek = plannedWritingDays.length;
+  if (restDays.length === 0) {
+    return `${formatNumber(daysPerWeek)} dias/semana`;
+  }
+
+  return `${formatNumber(daysPerWeek)} dias/semana · descanso em ${formatWeekdayList(restDays)}`;
+}
+
+function formatWeekdayList(days: DayOfWeek[]) {
+  const labels = days.map((day) => WEEKDAY_LABELS[day]);
+  if (labels.length <= 1) {
+    return labels[0] ?? "";
+  }
+
+  return `${labels.slice(0, -1).join(", ")} e ${labels[labels.length - 1]}`;
 }
 
 function getBookTargetErrorMessage(error: unknown) {
