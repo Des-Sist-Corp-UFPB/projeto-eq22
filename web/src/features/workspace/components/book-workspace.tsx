@@ -11,6 +11,7 @@ import type { DashboardWorkspaceTab } from "@/features/dashboard/components/dash
 import { BookDashboard } from "@/features/dashboard/components/book-dashboard";
 import { ExportManuscriptButton } from "@/features/export/components/export-manuscript-button";
 import { ItemsPanel } from "@/features/items/components/items-panel";
+import { SceneKanbanPanel } from "@/features/kanban/components/scene-kanban-panel";
 import { LocationsPanel } from "@/features/locations/components/locations-panel";
 import { NotebookPanel } from "@/features/notebook/components/notebook-panel";
 import { getOutline } from "@/features/outline/api/outline-api";
@@ -20,7 +21,15 @@ import { SceneEditor } from "@/features/scenes/components/scene-editor";
 import { SceneStoryboardPanel } from "@/features/storyboard/components/scene-storyboard-panel";
 import { queryKeys } from "@/lib/query/keys";
 
-type WorkspaceMode = "overview" | "storyboard" | "scenes" | "characters" | "locations" | "items" | "notebook";
+type WorkspaceMode =
+  | "overview"
+  | "storyboard"
+  | "kanban"
+  | "scenes"
+  | "characters"
+  | "locations"
+  | "items"
+  | "notebook";
 const FOCUS_MODE_STORAGE_KEY = "iwrite.focusMode.enabled";
 
 type BookWorkspaceProps = {
@@ -310,6 +319,14 @@ export function BookWorkspace({ bookId, initialSceneId }: BookWorkspaceProps) {
             <Button
               type="button"
               size="sm"
+              variant={mode === "kanban" ? "primary" : "ghost"}
+              onClick={() => handleModeChange("kanban")}
+            >
+              Kanban
+            </Button>
+            <Button
+              type="button"
+              size="sm"
               variant={mode === "scenes" ? "primary" : "ghost"}
               onClick={() => handleModeChange("scenes")}
             >
@@ -368,6 +385,14 @@ export function BookWorkspace({ bookId, initialSceneId }: BookWorkspaceProps) {
             />
           ) : mode === "storyboard" ? (
             <SceneStoryboardPanel
+              outline={outline}
+              isLoading={outlineQuery.isLoading}
+              isError={outlineQuery.isError}
+              onOpenSceneInEditor={handleOpenSceneInEditor}
+            />
+          ) : mode === "kanban" ? (
+            <SceneKanbanPanel
+              bookId={bookId}
               outline={outline}
               isLoading={outlineQuery.isLoading}
               isError={outlineQuery.isError}

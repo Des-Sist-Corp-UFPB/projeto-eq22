@@ -474,6 +474,20 @@ describe("BookWorkspace initial scene selection", () => {
     expect(mocks.routerReplace).toHaveBeenCalledWith(`/books/book-1?sceneId=${sceneForPlanning.id}`, { scroll: false });
   });
 
+  test("abre cena do kanban no editor e atualiza a URL", async () => {
+    renderWithClient(<BookWorkspace bookId="book-1" />);
+
+    await screen.findByText("Livro");
+    fireEvent.click(screen.getByRole("button", { name: "Kanban" }));
+    expect(await screen.findByRole("heading", { name: "Kanban" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: `Abrir cena ${sceneForPlanning.title}` }));
+
+    expect(await screen.findByRole("heading", { name: sceneForPlanning.title })).toBeInTheDocument();
+    expect(screen.getByText("Livro")).toBeInTheDocument();
+    expect(mocks.routerReplace).toHaveBeenCalledWith(`/books/book-1?sceneId=${sceneForPlanning.id}`, { scroll: false });
+  });
+
   test("abre abas de entidades a partir do dashboard", async () => {
     renderWithClient(<BookWorkspace bookId="book-1" />);
 

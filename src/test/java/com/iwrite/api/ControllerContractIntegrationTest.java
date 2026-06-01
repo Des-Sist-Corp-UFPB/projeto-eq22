@@ -20,6 +20,7 @@ import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.nullValue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -149,6 +150,95 @@ class ControllerContractIntegrationTest extends PostgresIntegrationTest {
                         ))))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.messages", hasItem(containsString("Scene not found"))));
+    }
+
+    @Test
+    void patchSceneStatusRejectsIncompletePlannedTransition() throws Exception {
+        StoryWorld world = createStoryWorld("HTTP planned incomplete");
+
+        mockMvc.perform(patch("/api/scenes/{sceneId}", world.scene().id())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of("status", "PLANNED"))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.messages", hasItem(containsString("Scene status PLANNED requires complete planning"))))
+                .andExpect(jsonPath("$.messages", hasItem(containsString("POV"))))
+                .andExpect(jsonPath("$.messages", hasItem(containsString("Objetivo"))))
+                .andExpect(jsonPath("$.messages", hasItem(containsString("Conflito"))))
+                .andExpect(jsonPath("$.messages", hasItem(containsString("Resultado"))));
+    }
+
+    @Test
+    void patchSceneStatusAllowsCompletePlannedTransition() throws Exception {
+        StoryWorld world = createStoryWorld("HTTP planned complete");
+        completeScenePlanning(world);
+
+        mockMvc.perform(patch("/api/scenes/{sceneId}", world.scene().id())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of("status", "PLANNED"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("PLANNED"));
+    }
+
+    @Test
+    void patchSceneStatusAllowsIncompleteAdvancedTransition() throws Exception {
+        StoryWorld world = createStoryWorld("HTTP draft incomplete");
+
+        mockMvc.perform(patch("/api/scenes/{sceneId}", world.scene().id())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of("status", "DRAFT"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("DRAFT"));
+    }
+
+    @Test
+    void patchScenePlanningRejectsMakingPlannedSceneIncomplete() throws Exception {
+        StoryWorld world = createStoryWorld("HTTP planned clear");
+        completeScenePlanning(world);
+
+        mockMvc.perform(patch("/api/scenes/{sceneId}", world.scene().id())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of("status", "PLANNED"))))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(patch("/api/scenes/{sceneId}/planning", world.scene().id())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "goal": null,
+                                  "conflict": "Conflict",
+                                  "outcome": "Outcome",
+                                  "planningNotes": "Notes",
+                                  "povCharacterId": "%s",
+                                  "participantCharacterIds": ["%s"],
+                                  "mainLocationId": "%s",
+                                  "itemIds": ["%s"]
+                                }
+                                """.formatted(
+                                world.character().id(),
+                                world.character().id(),
+                                world.location().id(),
+                                world.item().id()
+                        )))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.messages", hasItem(containsString("Objetivo"))));
+    }
+
+    @Test
+    void postSceneRejectsPlannedStatusWithoutPlanningFields() throws Exception {
+        var book = createBook("HTTP create planned");
+        var section = createSection(book, "Part");
+        var chapter = createChapter(section, "Chapter");
+
+        mockMvc.perform(post("/api/chapters/{chapterId}/scenes", chapter.id())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of(
+                                "title", "Planned too early",
+                                "status", "PLANNED",
+                                "contentText", "",
+                                "contentJson", "{\"type\":\"doc\"}"
+                        ))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.messages", hasItem(containsString("Scene status PLANNED requires complete planning"))));
     }
 
     @Test
@@ -291,5 +381,21 @@ class ControllerContractIntegrationTest extends PostgresIntegrationTest {
 
     private String json(Object value) throws Exception {
         return objectMapper.writeValueAsString(value);
+    }
+
+    private void completeScenePlanning(StoryWorld world) throws Exception {
+        mockMvc.perform(patch("/api/scenes/{sceneId}/planning", world.scene().id())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of(
+                                "goal", "Goal",
+                                "conflict", "Conflict",
+                                "outcome", "Outcome",
+                                "planningNotes", "Notes",
+                                "povCharacterId", world.character().id(),
+                                "participantCharacterIds", List.of(world.character().id()),
+                                "mainLocationId", world.location().id(),
+                                "itemIds", List.of(world.item().id())
+                        ))))
+                .andExpect(status().isOk());
     }
 }
