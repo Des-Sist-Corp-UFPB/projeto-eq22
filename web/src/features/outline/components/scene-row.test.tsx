@@ -12,6 +12,9 @@ const scene: OutlineScene = {
   status: "DRAFT",
   sortOrder: 0,
   wordCount: 1200,
+  povCharacterId: null,
+  povCharacterName: null,
+  planningGaps: [],
 };
 
 function renderSceneRow(props?: Partial<React.ComponentProps<typeof SceneRow>>) {

@@ -15,6 +15,7 @@ import com.iwrite.section.repository.BookSectionRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -45,7 +46,7 @@ public class OutlineService {
         Book book = bookService.getBook(bookId);
         List<BookSection> sections = sectionRepository.findByBookIdOrderBySortOrderAsc(bookId);
         List<Chapter> chapters = chapterRepository.findByBookIdOrderBySortOrderAsc(bookId);
-        List<Scene> scenes = sceneRepository.findByBookIdOrderBySortOrderAsc(bookId);
+        List<Scene> scenes = sceneRepository.findOutlineScenesByBookId(bookId);
 
         Map<UUID, List<Scene>> scenesByChapter = scenes.stream()
                 .collect(Collectors.groupingBy(scene -> scene.getChapter().getId()));
@@ -100,7 +101,10 @@ public class OutlineService {
                         scene.getTitle(),
                         scene.getStatus(),
                         scene.getSortOrder(),
-                        scene.getWordCount()
+                        scene.getWordCount(),
+                        scene.getPovCharacter() == null ? null : scene.getPovCharacter().getId(),
+                        scene.getPovCharacter() == null ? null : scene.getPovCharacter().getName(),
+                        planningGaps(scene)
                 ))
                 .toList();
 
@@ -116,5 +120,26 @@ public class OutlineService {
                 chapterWordCount,
                 sceneResponses
         );
+    }
+
+    private List<String> planningGaps(Scene scene) {
+        List<String> gaps = new ArrayList<>();
+        if (scene.getPovCharacter() == null) {
+            gaps.add("POV");
+        }
+        if (!hasText(scene.getGoal())) {
+            gaps.add("Objetivo");
+        }
+        if (!hasText(scene.getConflict())) {
+            gaps.add("Conflito");
+        }
+        if (!hasText(scene.getOutcome())) {
+            gaps.add("Resultado");
+        }
+        return gaps;
+    }
+
+    private boolean hasText(String value) {
+        return value != null && !value.trim().isEmpty();
     }
 }

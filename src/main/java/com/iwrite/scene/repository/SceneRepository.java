@@ -12,6 +12,17 @@ public interface SceneRepository extends JpaRepository<Scene, UUID> {
 
     List<Scene> findByBookIdOrderBySortOrderAsc(UUID bookId);
 
+    @Query("""
+            select scene
+            from Scene scene
+            join fetch scene.chapter chapter
+            join fetch chapter.section section
+            left join fetch scene.povCharacter
+            where scene.book.id = :bookId
+            order by section.sortOrder, chapter.sortOrder, scene.sortOrder
+            """)
+    List<Scene> findOutlineScenesByBookId(@Param("bookId") UUID bookId);
+
     List<Scene> findByChapterIdOrderBySortOrderAsc(UUID chapterId);
 
     int countByChapterId(UUID chapterId);

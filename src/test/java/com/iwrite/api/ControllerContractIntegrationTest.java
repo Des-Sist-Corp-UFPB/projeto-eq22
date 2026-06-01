@@ -13,8 +13,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
+import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.hasItem;
+import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.nullValue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
@@ -56,6 +58,44 @@ class ControllerContractIntegrationTest extends PostgresIntegrationTest {
         mockMvc.perform(get("/api/books/{bookId}/dashboard", missingBookId))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.messages", hasItem(containsString("Book not found"))));
+    }
+
+    @Test
+    void getOutlineReturnsStoryboardMetadataWithoutSceneContent() throws Exception {
+        StoryWorld world = createStoryWorld("HTTP outline storyboard");
+        createScene(world.chapter(), "Scene without planning", SceneStatus.IDEA, 1, "");
+
+        mockMvc.perform(patch("/api/scenes/{sceneId}/planning", world.scene().id())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of(
+                                "goal", "Goal",
+                                "conflict", "Conflict",
+                                "outcome", "Outcome",
+                                "planningNotes", "Notes",
+                                "povCharacterId", world.character().id(),
+                                "participantCharacterIds", List.of(world.character().id()),
+                                "mainLocationId", world.location().id(),
+                                "itemIds", List.of(world.item().id())
+                        ))))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(get("/api/books/{bookId}/outline", world.book().id()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.sections[0].title").value("Part HTTP outline storyboard"))
+                .andExpect(jsonPath("$.sections[0].chapters[0].title").value("Chapter HTTP outline storyboard"))
+                .andExpect(jsonPath("$.sections[0].chapters[0].scenes[0].title").value("Scene HTTP outline storyboard"))
+                .andExpect(jsonPath("$.sections[0].chapters[0].scenes[0].povCharacterId").value(world.character().id().toString()))
+                .andExpect(jsonPath("$.sections[0].chapters[0].scenes[0].povCharacterName").value(world.character().name()))
+                .andExpect(jsonPath("$.sections[0].chapters[0].scenes[0].planningGaps", hasSize(0)))
+                .andExpect(jsonPath("$.sections[0].chapters[0].scenes[0].contentText").doesNotExist())
+                .andExpect(jsonPath("$.sections[0].chapters[0].scenes[0].contentJson").doesNotExist())
+                .andExpect(jsonPath("$.sections[0].chapters[0].scenes[1].title").value("Scene without planning"))
+                .andExpect(jsonPath("$.sections[0].chapters[0].scenes[1].povCharacterId").value(nullValue()))
+                .andExpect(jsonPath("$.sections[0].chapters[0].scenes[1].povCharacterName").value(nullValue()))
+                .andExpect(jsonPath(
+                        "$.sections[0].chapters[0].scenes[1].planningGaps",
+                        contains("POV", "Objetivo", "Conflito", "Resultado")
+                ));
     }
 
     @Test

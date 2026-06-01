@@ -32,6 +32,9 @@ const outline: BookOutline = {
               status: sceneForPlanning.status,
               sortOrder: sceneForPlanning.sortOrder,
               wordCount: sceneForPlanning.wordCount,
+              povCharacterId: null,
+              povCharacterName: null,
+              planningGaps: ["POV", "Objetivo", "Conflito", "Resultado"],
             },
           ],
         },
@@ -140,6 +143,9 @@ const outlineWithAlternateScene: BookOutline = {
           status: alternateSceneForPlanning.status,
           sortOrder: alternateSceneForPlanning.sortOrder,
           wordCount: alternateSceneForPlanning.wordCount,
+          povCharacterId: null,
+          povCharacterName: null,
+          planningGaps: ["POV", "Objetivo", "Conflito", "Resultado"],
         },
       ],
     })),
@@ -448,6 +454,20 @@ describe("BookWorkspace initial scene selection", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /Vis.o geral/ }));
     fireEvent.click(await screen.findByRole("button", { name: "Abrir cena do dashboard" }));
+
+    expect(await screen.findByRole("heading", { name: sceneForPlanning.title })).toBeInTheDocument();
+    expect(screen.getByText("Livro")).toBeInTheDocument();
+    expect(mocks.routerReplace).toHaveBeenCalledWith(`/books/book-1?sceneId=${sceneForPlanning.id}`, { scroll: false });
+  });
+
+  test("abre cena do storyboard no editor e atualiza a URL", async () => {
+    renderWithClient(<BookWorkspace bookId="book-1" />);
+
+    await screen.findByText("Livro");
+    fireEvent.click(screen.getByRole("button", { name: "Storyboard" }));
+    expect(await screen.findByRole("heading", { name: "Storyboard" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getAllByRole("button", { name: `Abrir cena ${sceneForPlanning.title}` })[0]);
 
     expect(await screen.findByRole("heading", { name: sceneForPlanning.title })).toBeInTheDocument();
     expect(screen.getByText("Livro")).toBeInTheDocument();

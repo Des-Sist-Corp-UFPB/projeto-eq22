@@ -9,6 +9,9 @@ export type OutlineScene = {
   status: SceneStatus;
   sortOrder: number;
   wordCount: number;
+  povCharacterId: string | null;
+  povCharacterName: string | null;
+  planningGaps: string[];
 };
 
 export type OutlineChapter = {

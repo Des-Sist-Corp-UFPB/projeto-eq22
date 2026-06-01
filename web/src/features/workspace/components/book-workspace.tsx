@@ -17,9 +17,10 @@ import { getOutline } from "@/features/outline/api/outline-api";
 import { OutlineSidebar } from "@/features/outline/components/outline-sidebar";
 import type { BookOutline } from "@/features/outline/types";
 import { SceneEditor } from "@/features/scenes/components/scene-editor";
+import { SceneStoryboardPanel } from "@/features/storyboard/components/scene-storyboard-panel";
 import { queryKeys } from "@/lib/query/keys";
 
-type WorkspaceMode = "overview" | "scenes" | "characters" | "locations" | "items" | "notebook";
+type WorkspaceMode = "overview" | "storyboard" | "scenes" | "characters" | "locations" | "items" | "notebook";
 const FOCUS_MODE_STORAGE_KEY = "iwrite.focusMode.enabled";
 
 type BookWorkspaceProps = {
@@ -301,6 +302,14 @@ export function BookWorkspace({ bookId, initialSceneId }: BookWorkspaceProps) {
             <Button
               type="button"
               size="sm"
+              variant={mode === "storyboard" ? "primary" : "ghost"}
+              onClick={() => handleModeChange("storyboard")}
+            >
+              Storyboard
+            </Button>
+            <Button
+              type="button"
+              size="sm"
               variant={mode === "scenes" ? "primary" : "ghost"}
               onClick={() => handleModeChange("scenes")}
             >
@@ -356,6 +365,13 @@ export function BookWorkspace({ bookId, initialSceneId }: BookWorkspaceProps) {
               bookId={bookId}
               onOpenSceneInEditor={handleOpenSceneInEditor}
               onOpenWorkspaceTab={handleOpenWorkspaceTab}
+            />
+          ) : mode === "storyboard" ? (
+            <SceneStoryboardPanel
+              outline={outline}
+              isLoading={outlineQuery.isLoading}
+              isError={outlineQuery.isError}
+              onOpenSceneInEditor={handleOpenSceneInEditor}
             />
           ) : mode === "scenes" ? (
             <SceneEditor

@@ -10,6 +10,9 @@ const scene: OutlineScene = {
   status: "DRAFT",
   sortOrder: 0,
   wordCount: 300,
+  povCharacterId: null,
+  povCharacterName: null,
+  planningGaps: [],
 };
 
 const chapter: OutlineChapter = {
