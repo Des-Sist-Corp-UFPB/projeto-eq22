@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   DndContext,
   DragOverlay,
@@ -30,6 +30,8 @@ import {
   buildKanbanModel,
   getKanbanTransitionDecision,
   KANBAN_STATUS_COLUMNS,
+  reconcileKanbanStatusOverrides,
+  type KanbanStatusOverrides,
   type KanbanColumnModel,
   type KanbanSceneCardModel,
 } from "@/features/kanban/utils/kanban-model";
@@ -58,11 +60,13 @@ export function SceneKanbanPanel({
   onOpenSceneInEditor,
 }: SceneKanbanPanelProps) {
   const queryClient = useQueryClient();
-  const [statusOverrides, setStatusOverrides] = useState<Partial<Record<string, SceneStatus>>>({});
+  const [statusOverrides, setStatusOverrides] = useState<KanbanStatusOverrides>({});
   const [pendingSceneId, setPendingSceneId] = useState<string | null>(null);
   const [activeSceneId, setActiveSceneId] = useState<string | null>(null);
   const [pendingTransition, setPendingTransition] = useState<PendingTransition | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const pendingSceneIdRef = useRef<string | null>(null);
+  pendingSceneIdRef.current = pendingSceneId;
   const model = useMemo(
     () => (outline ? buildKanbanModel(outline, statusOverrides) : null),
     [outline, statusOverrides]
@@ -82,6 +86,15 @@ export function SceneKanbanPanel({
       setPendingSceneId(null);
     },
   });
+
+  useEffect(() => {
+    if (!outline) {
+      return;
+    }
+
+    const pendingSceneIds = pendingSceneIdRef.current ? new Set([pendingSceneIdRef.current]) : new Set<string>();
+    setStatusOverrides((previous) => reconcileKanbanStatusOverrides(outline, previous, pendingSceneIds));
+  }, [outline]);
 
   if (isLoading) {
     return (
@@ -166,14 +179,13 @@ export function SceneKanbanPanel({
   }
 
   async function applyStatusChange(scene: KanbanSceneCardModel, targetStatus: SceneStatus) {
-    const previousStatus = scene.status;
     setPendingSceneId(scene.id);
     setStatusOverrides((previous) => ({ ...previous, [scene.id]: targetStatus }));
 
     try {
       await mutation.mutateAsync({ sceneId: scene.id, status: targetStatus });
     } catch (error) {
-      setStatusOverrides((previous) => ({ ...previous, [scene.id]: previousStatus }));
+      setStatusOverrides((previous) => removeStatusOverride(previous, scene.id));
       setErrorMessage(readMutationError(error));
     }
   }
@@ -503,6 +515,16 @@ function readMutationError(error: unknown) {
   }
 
   return "Nao foi possivel mover a cena agora. A coluna foi restaurada.";
+}
+
+function removeStatusOverride(statusOverrides: KanbanStatusOverrides, sceneId: string) {
+  if (!statusOverrides[sceneId]) {
+    return statusOverrides;
+  }
+
+  const nextOverrides = { ...statusOverrides };
+  delete nextOverrides[sceneId];
+  return nextOverrides;
 }
 
 function formatNumber(value: number) {

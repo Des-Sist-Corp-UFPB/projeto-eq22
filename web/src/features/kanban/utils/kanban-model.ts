@@ -40,9 +40,11 @@ export type KanbanTransitionDecision =
   | { type: "blocked-planned" }
   | { type: "confirm-advanced" };
 
+export type KanbanStatusOverrides = Partial<Record<string, SceneStatus>>;
+
 export function buildKanbanModel(
   outline: BookOutline,
-  statusOverrides: Partial<Record<string, SceneStatus>> = {}
+  statusOverrides: KanbanStatusOverrides = {}
 ): KanbanModel {
   const scenes: KanbanSceneCardModel[] = [];
   let manuscriptIndex = 0;
@@ -78,6 +80,34 @@ export function buildKanbanModel(
   return { columns, scenes };
 }
 
+export function reconcileKanbanStatusOverrides(
+  outline: BookOutline,
+  statusOverrides: KanbanStatusOverrides,
+  pendingSceneIds: ReadonlySet<string> = new Set()
+): KanbanStatusOverrides {
+  const serverStatuses = getOutlineSceneStatuses(outline);
+  let didChange = false;
+  const nextOverrides = { ...statusOverrides };
+
+  for (const [sceneId] of Object.entries(statusOverrides)) {
+    if (pendingSceneIds.has(sceneId)) {
+      continue;
+    }
+
+    if (!serverStatuses.has(sceneId)) {
+      delete nextOverrides[sceneId];
+      didChange = true;
+      continue;
+    }
+
+    // Fresh outline data is authoritative once there is no pending mutation for this scene.
+    delete nextOverrides[sceneId];
+    didChange = true;
+  }
+
+  return didChange ? nextOverrides : statusOverrides;
+}
+
 export function getKanbanTransitionDecision(
   scene: KanbanSceneCardModel,
   targetStatus: SceneStatus
@@ -103,4 +133,16 @@ export function getKanbanTransitionDecision(
 
 function compareBySortOrder<T extends { sortOrder: number }>(first: T, second: T) {
   return first.sortOrder - second.sortOrder;
+}
+
+function getOutlineSceneStatuses(outline: BookOutline) {
+  const statuses = new Map<string, SceneStatus>();
+  for (const section of outline.sections) {
+    for (const chapter of section.chapters) {
+      for (const scene of chapter.scenes) {
+        statuses.set(scene.id, scene.status);
+      }
+    }
+  }
+  return statuses;
 }

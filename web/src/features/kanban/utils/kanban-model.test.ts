@@ -1,9 +1,11 @@
 import { describe, expect, test } from "vitest";
 import type { BookOutline } from "@/features/outline/types";
+import type { SceneStatus } from "@/features/scenes/types";
 import {
   buildKanbanModel,
   getKanbanTransitionDecision,
   KANBAN_STATUS_COLUMNS,
+  reconcileKanbanStatusOverrides,
 } from "@/features/kanban/utils/kanban-model";
 
 describe("buildKanbanModel", () => {
@@ -48,6 +50,21 @@ describe("buildKanbanModel", () => {
     expect(getKanbanTransitionDecision(incompleteScene!, "PLANNED")).toEqual({ type: "blocked-planned" });
     expect(getKanbanTransitionDecision(incompleteScene!, "WRITTEN")).toEqual({ type: "confirm-advanced" });
     expect(getKanbanTransitionDecision(completeScene!, "PLANNED")).toEqual({ type: "allowed" });
+  });
+
+  test("clears a successful override after outline reflects the moved status", () => {
+    const refreshedOutline = outlineWithSceneStatus("scene-draft-1", "PLANNED");
+
+    expect(reconcileKanbanStatusOverrides(refreshedOutline, { "scene-draft-1": "PLANNED" })).toEqual({});
+  });
+
+  test("trusts a later outline refetch instead of shadowing it with a stale override", () => {
+    const refreshedOutline = outlineWithSceneStatus("scene-draft-1", "REVISED");
+    const overrides = reconcileKanbanStatusOverrides(refreshedOutline, { "scene-draft-1": "PLANNED" });
+    const model = buildKanbanModel(refreshedOutline, overrides);
+
+    expect(overrides).toEqual({});
+    expect(model.scenes.find((scene) => scene.id === "scene-draft-1")?.status).toBe("REVISED");
   });
 });
 
@@ -158,5 +175,18 @@ function scene({
     povCharacterId: planningGaps.length > 0 ? null : "ada",
     povCharacterName: planningGaps.length > 0 ? null : "Ada",
     planningGaps,
+  };
+}
+
+function outlineWithSceneStatus(sceneId: string, status: SceneStatus): BookOutline {
+  return {
+    ...kanbanOutline,
+    sections: kanbanOutline.sections.map((section) => ({
+      ...section,
+      chapters: section.chapters.map((chapter) => ({
+        ...chapter,
+        scenes: chapter.scenes.map((scene) => (scene.id === sceneId ? { ...scene, status } : scene)),
+      })),
+    })),
   };
 }

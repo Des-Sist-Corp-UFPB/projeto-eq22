@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 import { SceneKanbanPanel } from "@/features/kanban/components/scene-kanban-panel";
 import type { BookOutline } from "@/features/outline/types";
 import { updateScene } from "@/features/scenes/api/scenes-api";
+import type { SceneStatus } from "@/features/scenes/types";
 import { renderWithClient } from "@/test/test-utils";
 
 vi.mock("@/features/scenes/api/scenes-api", () => ({
@@ -133,12 +134,25 @@ describe("SceneKanbanPanel", () => {
 
   test("rolls back optimistic status after API failure", async () => {
     updateSceneMock.mockRejectedValueOnce(new Error("Falha"));
-    renderKanban();
+    const onOpenSceneInEditor = vi.fn();
+    const { rerender } = renderKanban(onOpenSceneInEditor);
 
     fireEvent.change(screen.getByLabelText("Status de Cena completa"), { target: { value: "PLANNED" } });
 
     expect(await screen.findByText("Nao foi possivel mover a cena agora. A coluna foi restaurada.")).toBeInTheDocument();
     expect(screen.getByLabelText("Status de Cena completa")).toHaveValue("DRAFT");
+
+    rerender(
+      <SceneKanbanPanel
+        bookId="book-1"
+        outline={outlineWithSceneStatus("scene-complete", "REVISED")}
+        isLoading={false}
+        isError={false}
+        onOpenSceneInEditor={onOpenSceneInEditor}
+      />
+    );
+
+    expect(screen.getByLabelText("Status de Cena completa")).toHaveValue("REVISED");
   });
 });
 
@@ -152,6 +166,19 @@ function renderKanban(onOpenSceneInEditor = vi.fn()) {
       onOpenSceneInEditor={onOpenSceneInEditor}
     />
   );
+}
+
+function outlineWithSceneStatus(sceneId: string, status: SceneStatus): BookOutline {
+  return {
+    ...outlineWithScenes,
+    sections: outlineWithScenes.sections.map((section) => ({
+      ...section,
+      chapters: section.chapters.map((chapter) => ({
+        ...chapter,
+        scenes: chapter.scenes.map((scene) => (scene.id === sceneId ? { ...scene, status } : scene)),
+      })),
+    })),
+  };
 }
 
 const emptyOutline: BookOutline = {
