@@ -12,6 +12,9 @@ export function useUpdateScenePlanning(bookId: string, sceneId: string) {
     mutationFn: (payload: ScenePlanningRequest) => updateScenePlanning(sceneId, payload),
     onSuccess: (scene) => {
       queryClient.setQueryData(queryKeys.scene(scene.id), scene);
+      void queryClient.invalidateQueries({ queryKey: queryKeys.scene(scene.id) });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.outline(bookId) });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.bookDashboard(bookId) });
     },
   });
 }
