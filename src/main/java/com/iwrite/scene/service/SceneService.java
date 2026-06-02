@@ -110,7 +110,8 @@ public class SceneService {
             scene.setSummary(request.summary());
         }
         if (request.status() != null) {
-            if (request.status() == SceneStatus.PLANNED) {
+            boolean enteringPlanned = scene.getStatus() != SceneStatus.PLANNED && request.status() == SceneStatus.PLANNED;
+            if (enteringPlanned) {
                 rejectIncompletePlanning(scene);
             }
             scene.setStatus(request.status());
@@ -142,6 +143,9 @@ public class SceneService {
     public SceneResponse updatePlanning(UUID sceneId, ScenePlanningRequest request) {
         Scene scene = getScene(sceneId);
         UUID bookId = scene.getBook().getId();
+        List<String> gapsBefore = scene.getStatus() == SceneStatus.PLANNED
+                ? planningCompletenessService.planningGaps(scene)
+                : List.of();
 
         scene.setGoal(request.goal());
         scene.setConflict(request.conflict());
@@ -152,7 +156,7 @@ public class SceneService {
         scene.setParticipantCharacters(findParticipantsForBook(bookId, request.participantCharacterIds()));
         scene.setItems(findItemsForBook(bookId, request.itemIds()));
         if (scene.getStatus() == SceneStatus.PLANNED) {
-            rejectIncompletePlanning(scene);
+            rejectIntroducedPlanningGaps(scene, gapsBefore);
         }
 
         return SceneResponse.fromEntity(scene);
@@ -281,6 +285,16 @@ public class SceneService {
         if (!planningCompletenessService.isComplete(scene)) {
             throw new BadRequestException(
                     "Scene status PLANNED requires complete planning. Missing fields: "
+                            + planningCompletenessService.formatMissingPlanningFields(scene)
+            );
+        }
+    }
+
+    private void rejectIntroducedPlanningGaps(Scene scene, List<String> gapsBefore) {
+        List<String> gapsAfter = planningCompletenessService.planningGaps(scene);
+        if (gapsAfter.stream().anyMatch(gap -> !gapsBefore.contains(gap))) {
+            throw new BadRequestException(
+                    "Scene status PLANNED cannot lose required planning fields. Missing fields: "
                             + planningCompletenessService.formatMissingPlanningFields(scene)
             );
         }

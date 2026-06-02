@@ -2,6 +2,7 @@ package com.iwrite.api;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.iwrite.scene.entity.SceneStatus;
+import com.iwrite.scene.repository.SceneRepository;
 import com.iwrite.support.PostgresIntegrationTest;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -32,6 +33,9 @@ class ControllerContractIntegrationTest extends PostgresIntegrationTest {
 
     @Autowired
     private ObjectMapper objectMapper;
+
+    @Autowired
+    private SceneRepository sceneRepository;
 
     @Test
     void getDashboardReturnsBookMetrics() throws Exception {
@@ -168,6 +172,24 @@ class ControllerContractIntegrationTest extends PostgresIntegrationTest {
     }
 
     @Test
+    void patchSceneMetadataAllowsLegacyIncompletePlannedSceneToKeepPlannedStatus() throws Exception {
+        StoryWorld world = createStoryWorld("HTTP legacy planned metadata");
+        markSceneAsLegacyPlanned(world);
+
+        mockMvc.perform(patch("/api/scenes/{sceneId}", world.scene().id())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of(
+                                "title", "Updated legacy planned",
+                                "summary", "Metadata only",
+                                "status", "PLANNED"
+                        ))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.title").value("Updated legacy planned"))
+                .andExpect(jsonPath("$.summary").value("Metadata only"))
+                .andExpect(jsonPath("$.status").value("PLANNED"));
+    }
+
+    @Test
     void patchSceneStatusAllowsCompletePlannedTransition() throws Exception {
         StoryWorld world = createStoryWorld("HTTP planned complete");
         completeScenePlanning(world);
@@ -188,6 +210,33 @@ class ControllerContractIntegrationTest extends PostgresIntegrationTest {
                         .content(json(Map.of("status", "DRAFT"))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("DRAFT"));
+    }
+
+    @Test
+    void patchScenePlanningAllowsPartialRepairForLegacyIncompletePlannedScene() throws Exception {
+        StoryWorld world = createStoryWorld("HTTP legacy planned repair");
+        markSceneAsLegacyPlanned(world);
+
+        mockMvc.perform(patch("/api/scenes/{sceneId}/planning", world.scene().id())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "goal": "Goal",
+                                  "conflict": null,
+                                  "outcome": null,
+                                  "planningNotes": "Partial repair",
+                                  "povCharacterId": null,
+                                  "participantCharacterIds": [],
+                                  "mainLocationId": null,
+                                  "itemIds": []
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.goal").value("Goal"))
+                .andExpect(jsonPath("$.conflict").value(nullValue()))
+                .andExpect(jsonPath("$.outcome").value(nullValue()))
+                .andExpect(jsonPath("$.povCharacter").value(nullValue()))
+                .andExpect(jsonPath("$.status").value("PLANNED"));
     }
 
     @Test
@@ -397,5 +446,11 @@ class ControllerContractIntegrationTest extends PostgresIntegrationTest {
                                 "itemIds", List.of(world.item().id())
                         ))))
                 .andExpect(status().isOk());
+    }
+
+    private void markSceneAsLegacyPlanned(StoryWorld world) {
+        var scene = sceneRepository.findById(world.scene().id()).orElseThrow();
+        scene.setStatus(SceneStatus.PLANNED);
+        sceneRepository.saveAndFlush(scene);
     }
 }
