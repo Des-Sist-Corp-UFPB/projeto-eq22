@@ -76,6 +76,30 @@ vi.mock("@/features/notebook/components/notebook-panel", () => ({
   NotebookPanel: () => <h1>Caderno</h1>,
 }));
 
+vi.mock("@/features/characters/api/characters-hooks", () => ({
+  useCharacters: () => ({
+    isLoading: false,
+    isError: false,
+    data: [],
+  }),
+}));
+
+vi.mock("@/features/locations/api/locations-hooks", () => ({
+  useLocations: () => ({
+    isLoading: false,
+    isError: false,
+    data: [],
+  }),
+}));
+
+vi.mock("@/features/items/api/items-hooks", () => ({
+  useItems: () => ({
+    isLoading: false,
+    isError: false,
+    data: [],
+  }),
+}));
+
 vi.mock("@/features/dashboard/components/book-dashboard", () => ({
   BookDashboard: ({
     onOpenSceneInEditor,
@@ -141,7 +165,7 @@ const outlineWithAlternateScene: BookOutline = {
           id: alternateSceneForPlanning.id,
           title: alternateSceneForPlanning.title,
           status: alternateSceneForPlanning.status,
-          sortOrder: alternateSceneForPlanning.sortOrder,
+          sortOrder: sceneForPlanning.sortOrder + 1,
           wordCount: alternateSceneForPlanning.wordCount,
           povCharacterId: null,
           povCharacterName: null,
@@ -472,6 +496,97 @@ describe("BookWorkspace initial scene selection", () => {
     expect(await screen.findByRole("heading", { name: sceneForPlanning.title })).toBeInTheDocument();
     expect(screen.getByText("Livro")).toBeInTheDocument();
     expect(mocks.routerReplace).toHaveBeenCalledWith(`/books/book-1?sceneId=${sceneForPlanning.id}`, { scroll: false });
+  });
+
+  test("abre cena do kanban no editor e atualiza a URL", async () => {
+    renderWithClient(<BookWorkspace bookId="book-1" />);
+
+    await screen.findByText("Livro");
+    fireEvent.click(screen.getByRole("button", { name: "Kanban" }));
+    expect(await screen.findByRole("heading", { name: "Kanban" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: `Abrir cena ${sceneForPlanning.title}` }));
+
+    expect(await screen.findByRole("heading", { name: sceneForPlanning.title })).toBeInTheDocument();
+    expect(screen.getByText("Livro")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Expandir planejamento da cena" })).toHaveAttribute("aria-expanded", "false");
+    expect(mocks.routerReplace).toHaveBeenCalledWith(`/books/book-1?sceneId=${sceneForPlanning.id}`, { scroll: false });
+  });
+
+  test("abre planejamento a partir do kanban bloqueado e atualiza a URL", async () => {
+    renderWithClient(<BookWorkspace bookId="book-1" />);
+
+    await screen.findByText("Livro");
+    fireEvent.click(screen.getByRole("button", { name: "Kanban" }));
+    expect(await screen.findByRole("heading", { name: "Kanban" })).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText(`Status de ${sceneForPlanning.title}`), { target: { value: "PLANNED" } });
+    expect(screen.getByRole("dialog", { name: "Planejamento incompleto" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Abrir planejamento" }));
+
+    expect(await screen.findByRole("heading", { name: sceneForPlanning.title })).toBeInTheDocument();
+    expect(screen.getByText("Livro")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Recolher planejamento da cena" })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByLabelText("Objetivo")).toBeInTheDocument();
+    expect(mocks.routerReplace).toHaveBeenCalledWith(`/books/book-1?sceneId=${sceneForPlanning.id}`, { scroll: false });
+  });
+
+  test("nao reaplica pedido antigo de planejamento ao selecionar outra cena normalmente", async () => {
+    mocks.getOutline.mockResolvedValue(outlineWithAlternateScene);
+    mocks.getScene.mockImplementation((sceneId: string) =>
+      Promise.resolve(sceneId === alternateSceneForPlanning.id ? alternateSceneForPlanning : sceneForPlanning)
+    );
+    renderWithClient(<BookWorkspace bookId="book-1" />);
+
+    await screen.findByText("Livro");
+    fireEvent.click(screen.getByRole("button", { name: "Kanban" }));
+    expect(await screen.findByRole("heading", { name: "Kanban" })).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText(`Status de ${sceneForPlanning.title}`), { target: { value: "PLANNED" } });
+    fireEvent.click(screen.getByRole("button", { name: "Abrir planejamento" }));
+
+    expect(await screen.findByRole("heading", { name: sceneForPlanning.title })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Recolher planejamento da cena" }));
+    expect(screen.getByRole("button", { name: "Expandir planejamento da cena" })).toHaveAttribute("aria-expanded", "false");
+
+    const alternateSceneRow = screen.getByText(alternateSceneForPlanning.title).closest("button");
+    expect(alternateSceneRow).not.toBeNull();
+    fireEvent.click(alternateSceneRow as HTMLButtonElement);
+
+    expect(await screen.findByRole("heading", { name: alternateSceneForPlanning.title })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Expandir planejamento da cena" })).toHaveAttribute("aria-expanded", "false");
+    expect(mocks.routerReplace).toHaveBeenCalledWith(`/books/book-1?sceneId=${alternateSceneForPlanning.id}`, {
+      scroll: false,
+    });
+  });
+
+  test("novo pedido do kanban ainda abre planejamento para outra cena", async () => {
+    mocks.getOutline.mockResolvedValue(outlineWithAlternateScene);
+    mocks.getScene.mockImplementation((sceneId: string) =>
+      Promise.resolve(sceneId === alternateSceneForPlanning.id ? alternateSceneForPlanning : sceneForPlanning)
+    );
+    renderWithClient(<BookWorkspace bookId="book-1" />);
+
+    await screen.findByText("Livro");
+    fireEvent.click(screen.getByRole("button", { name: "Kanban" }));
+    expect(await screen.findByRole("heading", { name: "Kanban" })).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText(`Status de ${sceneForPlanning.title}`), { target: { value: "PLANNED" } });
+    fireEvent.click(screen.getByRole("button", { name: "Abrir planejamento" }));
+
+    expect(await screen.findByRole("heading", { name: sceneForPlanning.title })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Recolher planejamento da cena" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Kanban" }));
+    expect(await screen.findByRole("heading", { name: "Kanban" })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText(`Status de ${alternateSceneForPlanning.title}`), { target: { value: "PLANNED" } });
+    fireEvent.click(screen.getByRole("button", { name: "Abrir planejamento" }));
+
+    expect(await screen.findByRole("heading", { name: alternateSceneForPlanning.title })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Recolher planejamento da cena" })).toHaveAttribute("aria-expanded", "true");
+    expect(mocks.routerReplace).toHaveBeenCalledWith(`/books/book-1?sceneId=${alternateSceneForPlanning.id}`, {
+      scroll: false,
+    });
   });
 
   test("abre abas de entidades a partir do dashboard", async () => {

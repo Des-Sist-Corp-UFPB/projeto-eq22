@@ -21,6 +21,7 @@ import com.iwrite.location.entity.Location;
 import com.iwrite.scene.entity.Scene;
 import com.iwrite.scene.entity.SceneStatus;
 import com.iwrite.scene.repository.SceneRepository;
+import com.iwrite.scene.service.ScenePlanningCompletenessService;
 import com.iwrite.section.entity.BookSection;
 import com.iwrite.section.repository.BookSectionRepository;
 import com.iwrite.writingprogress.entity.DailyWritingProgress;
@@ -47,6 +48,7 @@ public class BookDashboardService {
     private final SceneRepository sceneRepository;
     private final DailyWritingProgressService dailyWritingProgressService;
     private final WritingScheduleService writingScheduleService;
+    private final ScenePlanningCompletenessService planningCompletenessService;
 
     public BookDashboardService(
             BookService bookService,
@@ -54,7 +56,8 @@ public class BookDashboardService {
             ChapterRepository chapterRepository,
             SceneRepository sceneRepository,
             DailyWritingProgressService dailyWritingProgressService,
-            WritingScheduleService writingScheduleService
+            WritingScheduleService writingScheduleService,
+            ScenePlanningCompletenessService planningCompletenessService
     ) {
         this.bookService = bookService;
         this.sectionRepository = sectionRepository;
@@ -62,6 +65,7 @@ public class BookDashboardService {
         this.sceneRepository = sceneRepository;
         this.dailyWritingProgressService = dailyWritingProgressService;
         this.writingScheduleService = writingScheduleService;
+        this.planningCompletenessService = planningCompletenessService;
     }
 
     @Transactional(readOnly = true)
@@ -289,10 +293,7 @@ public class BookDashboardService {
     }
 
     private boolean isPlanned(Scene scene) {
-        return scene.getPovCharacter() != null
-                && hasText(scene.getGoal())
-                && hasText(scene.getConflict())
-                && hasText(scene.getOutcome());
+        return planningCompletenessService.isComplete(scene);
     }
 
     private boolean hasText(String value) {

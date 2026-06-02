@@ -11,16 +11,25 @@ import type { DashboardWorkspaceTab } from "@/features/dashboard/components/dash
 import { BookDashboard } from "@/features/dashboard/components/book-dashboard";
 import { ExportManuscriptButton } from "@/features/export/components/export-manuscript-button";
 import { ItemsPanel } from "@/features/items/components/items-panel";
+import { SceneKanbanPanel } from "@/features/kanban/components/scene-kanban-panel";
 import { LocationsPanel } from "@/features/locations/components/locations-panel";
 import { NotebookPanel } from "@/features/notebook/components/notebook-panel";
 import { getOutline } from "@/features/outline/api/outline-api";
 import { OutlineSidebar } from "@/features/outline/components/outline-sidebar";
 import type { BookOutline } from "@/features/outline/types";
-import { SceneEditor } from "@/features/scenes/components/scene-editor";
+import { SceneEditor, type PlanningPanelOpenIntent } from "@/features/scenes/components/scene-editor";
 import { SceneStoryboardPanel } from "@/features/storyboard/components/scene-storyboard-panel";
 import { queryKeys } from "@/lib/query/keys";
 
-type WorkspaceMode = "overview" | "storyboard" | "scenes" | "characters" | "locations" | "items" | "notebook";
+type WorkspaceMode =
+  | "overview"
+  | "storyboard"
+  | "kanban"
+  | "scenes"
+  | "characters"
+  | "locations"
+  | "items"
+  | "notebook";
 const FOCUS_MODE_STORAGE_KEY = "iwrite.focusMode.enabled";
 
 type BookWorkspaceProps = {
@@ -81,6 +90,7 @@ export function BookWorkspace({ bookId, initialSceneId }: BookWorkspaceProps) {
   const [isFocusMode, setIsFocusMode] = useState(false);
   const [isFullscreenAvailable, setIsFullscreenAvailable] = useState(false);
   const [isFullscreenActive, setIsFullscreenActive] = useState(false);
+  const [planningPanelOpenIntent, setPlanningPanelOpenIntent] = useState<PlanningPanelOpenIntent | null>(null);
   const outlineQuery = useQuery({
     queryKey: queryKeys.outline(bookId),
     queryFn: () => getOutline(bookId),
@@ -163,6 +173,18 @@ export function BookWorkspace({ bookId, initialSceneId }: BookWorkspaceProps) {
   const handleOpenSceneInEditor = useCallback(
     (sceneId: string) => {
       setMode("scenes");
+      handleSelectScene(sceneId);
+    },
+    [handleSelectScene]
+  );
+
+  const handleOpenScenePlanning = useCallback(
+    (sceneId: string) => {
+      setMode("scenes");
+      setPlanningPanelOpenIntent((intent) => ({
+        sceneId,
+        requestId: (intent?.requestId ?? 0) + 1,
+      }));
       handleSelectScene(sceneId);
     },
     [handleSelectScene]
@@ -310,6 +332,14 @@ export function BookWorkspace({ bookId, initialSceneId }: BookWorkspaceProps) {
             <Button
               type="button"
               size="sm"
+              variant={mode === "kanban" ? "primary" : "ghost"}
+              onClick={() => handleModeChange("kanban")}
+            >
+              Kanban
+            </Button>
+            <Button
+              type="button"
+              size="sm"
               variant={mode === "scenes" ? "primary" : "ghost"}
               onClick={() => handleModeChange("scenes")}
             >
@@ -373,6 +403,15 @@ export function BookWorkspace({ bookId, initialSceneId }: BookWorkspaceProps) {
               isError={outlineQuery.isError}
               onOpenSceneInEditor={handleOpenSceneInEditor}
             />
+          ) : mode === "kanban" ? (
+            <SceneKanbanPanel
+              bookId={bookId}
+              outline={outline}
+              isLoading={outlineQuery.isLoading}
+              isError={outlineQuery.isError}
+              onOpenSceneInEditor={handleOpenSceneInEditor}
+              onOpenScenePlanning={handleOpenScenePlanning}
+            />
           ) : mode === "scenes" ? (
             <SceneEditor
               bookId={bookId}
@@ -384,6 +423,7 @@ export function BookWorkspace({ bookId, initialSceneId }: BookWorkspaceProps) {
               onExitFocusMode={handleExitFocusMode}
               onToggleFullscreen={handleToggleFullscreen}
               onSceneDeleted={handleSceneDeleted}
+              planningPanelOpenIntent={planningPanelOpenIntent}
             />
           ) : mode === "characters" ? (
             <CharactersPanel bookId={bookId} />

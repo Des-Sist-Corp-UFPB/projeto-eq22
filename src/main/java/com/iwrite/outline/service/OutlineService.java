@@ -10,12 +10,12 @@ import com.iwrite.outline.dto.OutlineSceneResponse;
 import com.iwrite.outline.dto.OutlineSectionResponse;
 import com.iwrite.scene.entity.Scene;
 import com.iwrite.scene.repository.SceneRepository;
+import com.iwrite.scene.service.ScenePlanningCompletenessService;
 import com.iwrite.section.entity.BookSection;
 import com.iwrite.section.repository.BookSectionRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -28,17 +28,20 @@ public class OutlineService {
     private final BookSectionRepository sectionRepository;
     private final ChapterRepository chapterRepository;
     private final SceneRepository sceneRepository;
+    private final ScenePlanningCompletenessService planningCompletenessService;
 
     public OutlineService(
             BookService bookService,
             BookSectionRepository sectionRepository,
             ChapterRepository chapterRepository,
-            SceneRepository sceneRepository
+            SceneRepository sceneRepository,
+            ScenePlanningCompletenessService planningCompletenessService
     ) {
         this.bookService = bookService;
         this.sectionRepository = sectionRepository;
         this.chapterRepository = chapterRepository;
         this.sceneRepository = sceneRepository;
+        this.planningCompletenessService = planningCompletenessService;
     }
 
     @Transactional(readOnly = true)
@@ -104,7 +107,7 @@ public class OutlineService {
                         scene.getWordCount(),
                         scene.getPovCharacter() == null ? null : scene.getPovCharacter().getId(),
                         scene.getPovCharacter() == null ? null : scene.getPovCharacter().getName(),
-                        planningGaps(scene)
+                        planningCompletenessService.planningGaps(scene)
                 ))
                 .toList();
 
@@ -120,26 +123,5 @@ public class OutlineService {
                 chapterWordCount,
                 sceneResponses
         );
-    }
-
-    private List<String> planningGaps(Scene scene) {
-        List<String> gaps = new ArrayList<>();
-        if (scene.getPovCharacter() == null) {
-            gaps.add("POV");
-        }
-        if (!hasText(scene.getGoal())) {
-            gaps.add("Objetivo");
-        }
-        if (!hasText(scene.getConflict())) {
-            gaps.add("Conflito");
-        }
-        if (!hasText(scene.getOutcome())) {
-            gaps.add("Resultado");
-        }
-        return gaps;
-    }
-
-    private boolean hasText(String value) {
-        return value != null && !value.trim().isEmpty();
     }
 }

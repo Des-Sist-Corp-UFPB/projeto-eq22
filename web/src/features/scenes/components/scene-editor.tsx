@@ -30,12 +30,18 @@ type SceneEditorProps = {
   onExitFocusMode?: () => void;
   onToggleFullscreen?: () => void;
   onSceneDeleted: () => void;
+  planningPanelOpenIntent?: PlanningPanelOpenIntent | null;
 };
 
 type SaveContentVariables = {
   targetSceneId: string;
   contentJson: string;
   contentText: string;
+};
+
+export type PlanningPanelOpenIntent = {
+  sceneId: string;
+  requestId: number;
 };
 
 export function SceneEditor({
@@ -48,6 +54,7 @@ export function SceneEditor({
   onExitFocusMode,
   onToggleFullscreen,
   onSceneDeleted,
+  planningPanelOpenIntent = null,
 }: SceneEditorProps) {
   const queryClient = useQueryClient();
   const activeSceneIdRef = useRef<string | null>(sceneId);
@@ -58,6 +65,7 @@ export function SceneEditor({
   const currentContentTextRef = useRef("");
   const lastSavedContentJsonRef = useRef("");
   const lastSavedContentTextRef = useRef("");
+  const consumedPlanningOpenRequestIdRef = useRef<number | null>(null);
   const [title, setTitle] = useState("");
   const [summary, setSummary] = useState("");
   const [status, setStatus] = useState<SceneStatus>("IDEA");
@@ -126,6 +134,23 @@ export function SceneEditor({
       setIsPlanningPanelOpen(false);
     }
   }, []);
+
+  useEffect(() => {
+    if (!sceneId || !planningPanelOpenIntent) {
+      return;
+    }
+
+    if (planningPanelOpenIntent.sceneId !== sceneId) {
+      return;
+    }
+
+    if (consumedPlanningOpenRequestIdRef.current === planningPanelOpenIntent.requestId) {
+      return;
+    }
+
+    consumedPlanningOpenRequestIdRef.current = planningPanelOpenIntent.requestId;
+    setIsPlanningPanelOpen(true);
+  }, [planningPanelOpenIntent, sceneId]);
 
   useEffect(() => clearPendingAutosave, [clearPendingAutosave]);
 

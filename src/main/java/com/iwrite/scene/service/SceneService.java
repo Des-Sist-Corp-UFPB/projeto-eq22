@@ -44,6 +44,7 @@ public class SceneService {
     private final LocationService locationService;
     private final ItemService itemService;
     private final DailyWritingProgressService dailyWritingProgressService;
+    private final ScenePlanningCompletenessService planningCompletenessService;
 
     public SceneService(
             SceneRepository sceneRepository,
@@ -52,7 +53,8 @@ public class SceneService {
             CharacterService characterService,
             LocationService locationService,
             ItemService itemService,
-            DailyWritingProgressService dailyWritingProgressService
+            DailyWritingProgressService dailyWritingProgressService,
+            ScenePlanningCompletenessService planningCompletenessService
     ) {
         this.sceneRepository = sceneRepository;
         this.chapterService = chapterService;
@@ -61,6 +63,7 @@ public class SceneService {
         this.locationService = locationService;
         this.itemService = itemService;
         this.dailyWritingProgressService = dailyWritingProgressService;
+        this.planningCompletenessService = planningCompletenessService;
     }
 
     @Transactional(readOnly = true)
@@ -85,6 +88,9 @@ public class SceneService {
         scene.setContentJson(request.contentJson());
         scene.setContentText(request.contentText());
         scene.setWordCount(newWordCount);
+        if (scene.getStatus() == SceneStatus.PLANNED) {
+            rejectIncompletePlanning(scene);
+        }
 
         Scene savedScene = sceneRepository.save(scene);
         dailyWritingProgressService.recordWordCountChange(bookId, totalBefore, totalBefore + newWordCount);
@@ -104,6 +110,10 @@ public class SceneService {
             scene.setSummary(request.summary());
         }
         if (request.status() != null) {
+            boolean enteringPlanned = scene.getStatus() != SceneStatus.PLANNED && request.status() == SceneStatus.PLANNED;
+            if (enteringPlanned) {
+                rejectIncompletePlanning(scene);
+            }
             scene.setStatus(request.status());
         }
         if (request.sortOrder() != null) {
@@ -133,6 +143,9 @@ public class SceneService {
     public SceneResponse updatePlanning(UUID sceneId, ScenePlanningRequest request) {
         Scene scene = getScene(sceneId);
         UUID bookId = scene.getBook().getId();
+        List<String> gapsBefore = scene.getStatus() == SceneStatus.PLANNED
+                ? planningCompletenessService.planningGaps(scene)
+                : List.of();
 
         scene.setGoal(request.goal());
         scene.setConflict(request.conflict());
@@ -142,6 +155,9 @@ public class SceneService {
         scene.setMainLocation(findLocationForBook(bookId, request.mainLocationId()));
         scene.setParticipantCharacters(findParticipantsForBook(bookId, request.participantCharacterIds()));
         scene.setItems(findItemsForBook(bookId, request.itemIds()));
+        if (scene.getStatus() == SceneStatus.PLANNED) {
+            rejectIntroducedPlanningGaps(scene, gapsBefore);
+        }
 
         return SceneResponse.fromEntity(scene);
     }
@@ -263,6 +279,25 @@ public class SceneService {
 
     private int wordCount(Scene scene) {
         return scene.getWordCount() == null ? 0 : scene.getWordCount();
+    }
+
+    private void rejectIncompletePlanning(Scene scene) {
+        if (!planningCompletenessService.isComplete(scene)) {
+            throw new BadRequestException(
+                    "Scene status PLANNED requires complete planning. Missing fields: "
+                            + planningCompletenessService.formatMissingPlanningFields(scene)
+            );
+        }
+    }
+
+    private void rejectIntroducedPlanningGaps(Scene scene, List<String> gapsBefore) {
+        List<String> gapsAfter = planningCompletenessService.planningGaps(scene);
+        if (gapsAfter.stream().anyMatch(gap -> !gapsBefore.contains(gap))) {
+            throw new BadRequestException(
+                    "Scene status PLANNED cannot lose required planning fields. Missing fields: "
+                            + planningCompletenessService.formatMissingPlanningFields(scene)
+            );
+        }
     }
 
     @FunctionalInterface
