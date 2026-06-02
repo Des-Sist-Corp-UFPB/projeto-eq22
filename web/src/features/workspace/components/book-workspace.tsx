@@ -17,7 +17,7 @@ import { NotebookPanel } from "@/features/notebook/components/notebook-panel";
 import { getOutline } from "@/features/outline/api/outline-api";
 import { OutlineSidebar } from "@/features/outline/components/outline-sidebar";
 import type { BookOutline } from "@/features/outline/types";
-import { SceneEditor } from "@/features/scenes/components/scene-editor";
+import { SceneEditor, type PlanningPanelOpenIntent } from "@/features/scenes/components/scene-editor";
 import { SceneStoryboardPanel } from "@/features/storyboard/components/scene-storyboard-panel";
 import { queryKeys } from "@/lib/query/keys";
 
@@ -90,7 +90,7 @@ export function BookWorkspace({ bookId, initialSceneId }: BookWorkspaceProps) {
   const [isFocusMode, setIsFocusMode] = useState(false);
   const [isFullscreenAvailable, setIsFullscreenAvailable] = useState(false);
   const [isFullscreenActive, setIsFullscreenActive] = useState(false);
-  const [planningPanelOpenRequest, setPlanningPanelOpenRequest] = useState(0);
+  const [planningPanelOpenIntent, setPlanningPanelOpenIntent] = useState<PlanningPanelOpenIntent | null>(null);
   const outlineQuery = useQuery({
     queryKey: queryKeys.outline(bookId),
     queryFn: () => getOutline(bookId),
@@ -181,7 +181,10 @@ export function BookWorkspace({ bookId, initialSceneId }: BookWorkspaceProps) {
   const handleOpenScenePlanning = useCallback(
     (sceneId: string) => {
       setMode("scenes");
-      setPlanningPanelOpenRequest((request) => request + 1);
+      setPlanningPanelOpenIntent((intent) => ({
+        sceneId,
+        requestId: (intent?.requestId ?? 0) + 1,
+      }));
       handleSelectScene(sceneId);
     },
     [handleSelectScene]
@@ -420,7 +423,7 @@ export function BookWorkspace({ bookId, initialSceneId }: BookWorkspaceProps) {
               onExitFocusMode={handleExitFocusMode}
               onToggleFullscreen={handleToggleFullscreen}
               onSceneDeleted={handleSceneDeleted}
-              planningPanelOpenRequest={planningPanelOpenRequest}
+              planningPanelOpenIntent={planningPanelOpenIntent}
             />
           ) : mode === "characters" ? (
             <CharactersPanel bookId={bookId} />

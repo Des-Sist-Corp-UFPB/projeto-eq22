@@ -165,7 +165,7 @@ const outlineWithAlternateScene: BookOutline = {
           id: alternateSceneForPlanning.id,
           title: alternateSceneForPlanning.title,
           status: alternateSceneForPlanning.status,
-          sortOrder: alternateSceneForPlanning.sortOrder,
+          sortOrder: sceneForPlanning.sortOrder + 1,
           wordCount: alternateSceneForPlanning.wordCount,
           povCharacterId: null,
           povCharacterName: null,
@@ -529,6 +529,64 @@ describe("BookWorkspace initial scene selection", () => {
     expect(screen.getByRole("button", { name: "Recolher planejamento da cena" })).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByLabelText("Objetivo")).toBeInTheDocument();
     expect(mocks.routerReplace).toHaveBeenCalledWith(`/books/book-1?sceneId=${sceneForPlanning.id}`, { scroll: false });
+  });
+
+  test("nao reaplica pedido antigo de planejamento ao selecionar outra cena normalmente", async () => {
+    mocks.getOutline.mockResolvedValue(outlineWithAlternateScene);
+    mocks.getScene.mockImplementation((sceneId: string) =>
+      Promise.resolve(sceneId === alternateSceneForPlanning.id ? alternateSceneForPlanning : sceneForPlanning)
+    );
+    renderWithClient(<BookWorkspace bookId="book-1" />);
+
+    await screen.findByText("Livro");
+    fireEvent.click(screen.getByRole("button", { name: "Kanban" }));
+    expect(await screen.findByRole("heading", { name: "Kanban" })).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText(`Status de ${sceneForPlanning.title}`), { target: { value: "PLANNED" } });
+    fireEvent.click(screen.getByRole("button", { name: "Abrir planejamento" }));
+
+    expect(await screen.findByRole("heading", { name: sceneForPlanning.title })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Recolher planejamento da cena" }));
+    expect(screen.getByRole("button", { name: "Expandir planejamento da cena" })).toHaveAttribute("aria-expanded", "false");
+
+    const alternateSceneRow = screen.getByText(alternateSceneForPlanning.title).closest("button");
+    expect(alternateSceneRow).not.toBeNull();
+    fireEvent.click(alternateSceneRow as HTMLButtonElement);
+
+    expect(await screen.findByRole("heading", { name: alternateSceneForPlanning.title })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Expandir planejamento da cena" })).toHaveAttribute("aria-expanded", "false");
+    expect(mocks.routerReplace).toHaveBeenCalledWith(`/books/book-1?sceneId=${alternateSceneForPlanning.id}`, {
+      scroll: false,
+    });
+  });
+
+  test("novo pedido do kanban ainda abre planejamento para outra cena", async () => {
+    mocks.getOutline.mockResolvedValue(outlineWithAlternateScene);
+    mocks.getScene.mockImplementation((sceneId: string) =>
+      Promise.resolve(sceneId === alternateSceneForPlanning.id ? alternateSceneForPlanning : sceneForPlanning)
+    );
+    renderWithClient(<BookWorkspace bookId="book-1" />);
+
+    await screen.findByText("Livro");
+    fireEvent.click(screen.getByRole("button", { name: "Kanban" }));
+    expect(await screen.findByRole("heading", { name: "Kanban" })).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText(`Status de ${sceneForPlanning.title}`), { target: { value: "PLANNED" } });
+    fireEvent.click(screen.getByRole("button", { name: "Abrir planejamento" }));
+
+    expect(await screen.findByRole("heading", { name: sceneForPlanning.title })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Recolher planejamento da cena" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Kanban" }));
+    expect(await screen.findByRole("heading", { name: "Kanban" })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText(`Status de ${alternateSceneForPlanning.title}`), { target: { value: "PLANNED" } });
+    fireEvent.click(screen.getByRole("button", { name: "Abrir planejamento" }));
+
+    expect(await screen.findByRole("heading", { name: alternateSceneForPlanning.title })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Recolher planejamento da cena" })).toHaveAttribute("aria-expanded", "true");
+    expect(mocks.routerReplace).toHaveBeenCalledWith(`/books/book-1?sceneId=${alternateSceneForPlanning.id}`, {
+      scroll: false,
+    });
   });
 
   test("abre abas de entidades a partir do dashboard", async () => {
