@@ -1,14 +1,12 @@
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen } from "@testing-library/react";
 import { beforeEach, expect, test, vi } from "vitest";
 import { SceneVersionHistoryPanel } from "@/features/scenes/components/scene-version-history-panel";
-import type { Scene } from "@/features/scenes/types";
 import { sceneForPlanning } from "@/test/fixtures";
 import { renderWithClient } from "@/test/test-utils";
 
 const apiMocks = vi.hoisted(() => ({
   listSceneVersions: vi.fn(),
   getSceneVersion: vi.fn(),
-  restoreSceneVersion: vi.fn(),
 }));
 
 vi.mock("@/features/scenes/api/scenes-api", () => apiMocks);
@@ -17,16 +15,9 @@ beforeEach(() => {
   vi.restoreAllMocks();
   apiMocks.listSceneVersions.mockReset();
   apiMocks.getSceneVersion.mockReset();
-  apiMocks.restoreSceneVersion.mockReset();
 });
 
-test("mostra versoes, carrega previa e restaura com confirmacao", async () => {
-  const restoredScene: Scene = {
-    ...sceneForPlanning,
-    contentText: "Texto restaurado",
-    contentRevision: 3,
-  };
-  const onRestored = vi.fn();
+test("dirty restore shows save discard and cancel actions", async () => {
   apiMocks.listSceneVersions.mockResolvedValue({
     items: [
       {
@@ -56,26 +47,25 @@ test("mostra versoes, carrega previa e restaura com confirmacao", async () => {
     contentJson: "{}",
     contentText: "Texto antigo completo",
   });
-  apiMocks.restoreSceneVersion.mockResolvedValue(restoredScene);
-  vi.spyOn(window, "confirm").mockReturnValue(true);
 
   renderWithClient(
     <SceneVersionHistoryPanel
       sceneId={sceneForPlanning.id}
-      expectedContentRevision={2}
+      hasUnsavedContent
       restoreDisabled={false}
+      restorePending={false}
+      restoreError={null}
       onClose={vi.fn()}
-      onRestored={onRestored}
+      onRestoreVersion={vi.fn()}
     />
   );
 
-  expect(await screen.findByText("Antes do salvamento manual")).toBeInTheDocument();
+  expect(await screen.findByText("Salvamento manual")).toBeInTheDocument();
   expect(await screen.findByText("Texto antigo completo")).toBeInTheDocument();
 
-  fireEvent.click(screen.getByRole("button", { name: "Restaurar versão" }));
+  fireEvent.click(screen.getByRole("button", { name: "Restaurar versao" }));
 
-  await waitFor(() => {
-    expect(apiMocks.restoreSceneVersion).toHaveBeenCalledWith(sceneForPlanning.id, "version-1", 2);
-    expect(onRestored).toHaveBeenCalledWith(restoredScene);
-  });
+  expect(screen.getByRole("button", { name: "Salvar alterações e restaurar" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Descartar alterações locais e restaurar" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Cancelar" })).toBeInTheDocument();
 });

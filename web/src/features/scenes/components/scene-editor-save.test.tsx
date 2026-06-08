@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   getScene: vi.fn(),
   updateScene: vi.fn(),
   updateSceneContent: vi.fn(),
+  restoreSceneVersion: vi.fn(),
   deleteScene: vi.fn(),
   randomUUID: vi.fn(),
 }));
@@ -17,6 +18,7 @@ vi.mock("@/features/scenes/api/scenes-api", () => ({
   getScene: mocks.getScene,
   updateScene: mocks.updateScene,
   updateSceneContent: mocks.updateSceneContent,
+  restoreSceneVersion: mocks.restoreSceneVersion,
   deleteScene: mocks.deleteScene,
 }));
 
@@ -52,6 +54,7 @@ describe("SceneEditor content save contract", () => {
     mocks.getScene.mockResolvedValue({ ...sceneForPlanning, contentRevision: 3 });
     mocks.updateScene.mockResolvedValue(sceneForPlanning);
     mocks.updateSceneContent.mockResolvedValue({ ...sceneForPlanning, contentText: "Novo texto", contentRevision: 4 });
+    mocks.restoreSceneVersion.mockResolvedValue(sceneForPlanning);
     mocks.deleteScene.mockResolvedValue(undefined);
   });
 

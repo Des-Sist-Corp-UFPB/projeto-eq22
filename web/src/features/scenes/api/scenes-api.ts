@@ -1,6 +1,7 @@
 import { apiRequest } from "@/lib/api/client";
 import type {
   Scene,
+  RestoreSceneVersionRequest,
   SceneVersionDetail,
   SceneVersionPage,
   UpdateSceneContentRequest,
@@ -39,9 +40,9 @@ export function getSceneVersion(sceneId: string, versionId: string) {
   return apiRequest<SceneVersionDetail>(`/api/scenes/${sceneId}/versions/${versionId}`);
 }
 
-export function restoreSceneVersion(sceneId: string, versionId: string, expectedContentRevision: number) {
+export function restoreSceneVersion(sceneId: string, versionId: string, request: RestoreSceneVersionRequest) {
   return apiRequest<Scene>(`/api/scenes/${sceneId}/versions/${versionId}/restore`, {
     method: "POST",
-    body: { expectedContentRevision },
+    body: request,
   });
 }

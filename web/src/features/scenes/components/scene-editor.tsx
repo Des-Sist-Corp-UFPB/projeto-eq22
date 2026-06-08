@@ -5,13 +5,13 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { ErrorState, LoadingState } from "@/components/ui/feedback";
-import { deleteScene, getScene, updateScene, updateSceneContent } from "@/features/scenes/api/scenes-api";
+import { deleteScene, getScene, restoreSceneVersion, updateScene, updateSceneContent } from "@/features/scenes/api/scenes-api";
 import { SceneContentEditor } from "@/features/scenes/components/scene-content-editor";
 import { SceneEditorHeader, type ContentSaveStatus } from "@/features/scenes/components/scene-editor-header";
 import { SceneEmptyState } from "@/features/scenes/components/scene-empty-state";
 import { SceneMetadataForm } from "@/features/scenes/components/scene-metadata-form";
 import { ScenePlanningPanel } from "@/features/scenes/components/scene-planning-panel";
-import { SceneVersionHistoryPanel } from "@/features/scenes/components/scene-version-history-panel";
+import { SceneVersionHistoryPanel, type SceneVersionRestoreMode } from "@/features/scenes/components/scene-version-history-panel";
 import type { Scene, SceneStatus, SceneVersionSource } from "@/features/scenes/types";
 import { queryKeys } from "@/lib/query/keys";
 
@@ -43,6 +43,13 @@ type SaveContentVariables = {
   operationId: string;
 };
 
+type RestoreVersionVariables = {
+  targetSceneId: string;
+  versionId: string;
+  expectedContentRevision: number;
+  operationId: string;
+};
+
 export type PlanningPanelOpenIntent = {
   sceneId: string;
   requestId: number;
@@ -64,7 +71,9 @@ export function SceneEditor({
   const activeSceneIdRef = useRef<string | null>(sceneId);
   const loadedSceneIdRef = useRef<string | null>(null);
   const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const autosaveGenerationRef = useRef(0);
   const contentSavePendingRef = useRef(false);
+  const contentSavePromiseRef = useRef<Promise<Scene | null> | null>(null);
   const currentContentJsonRef = useRef("");
   const currentContentTextRef = useRef("");
   const lastSavedContentJsonRef = useRef("");
@@ -82,6 +91,8 @@ export function SceneEditor({
   const [isPlanningPanelOpen, setIsPlanningPanelOpen] = useState(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [editorContentVersion, setEditorContentVersion] = useState(0);
+  const [restoreError, setRestoreError] = useState<string | null>(null);
+  const [restoreWorkflowPending, setRestoreWorkflowPending] = useState(false);
 
   const sceneQuery = useQuery({
     queryKey: sceneId ? queryKeys.scene(sceneId) : ["scenes", "empty"],
@@ -113,6 +124,14 @@ export function SceneEditor({
       }),
   });
 
+  const restoreMutation = useMutation({
+    mutationFn: ({ targetSceneId, versionId, expectedContentRevision, operationId }: RestoreVersionVariables) =>
+      restoreSceneVersion(targetSceneId, versionId, {
+        expectedContentRevision,
+        operationId,
+      }),
+  });
+
   const deleteMutation = useMutation({
     mutationFn: () => deleteScene(sceneId as string),
     onSuccess: () => {
@@ -130,6 +149,11 @@ export function SceneEditor({
       autosaveTimerRef.current = null;
     }
   }, []);
+
+  const cancelQueuedAutosaves = useCallback(() => {
+    autosaveGenerationRef.current += 1;
+    clearPendingAutosave();
+  }, [clearPendingAutosave]);
 
   useEffect(() => {
     contentSavePendingRef.current = contentMutation.isPending;
@@ -165,9 +189,10 @@ export function SceneEditor({
   useEffect(() => clearPendingAutosave, [clearPendingAutosave]);
 
   useEffect(() => {
-    clearPendingAutosave();
+    cancelQueuedAutosaves();
     activeSceneIdRef.current = sceneId;
     loadedSceneIdRef.current = null;
+    contentSavePromiseRef.current = null;
     currentContentJsonRef.current = "";
     currentContentTextRef.current = "";
     lastSavedContentJsonRef.current = "";
@@ -175,6 +200,9 @@ export function SceneEditor({
     contentRevisionRef.current = 0;
     metadataMutation.reset();
     contentMutation.reset();
+    restoreMutation.reset();
+    setRestoreError(null);
+    setRestoreWorkflowPending(false);
     setTitle("");
     setSummary("");
     setStatus("IDEA");
@@ -185,7 +213,7 @@ export function SceneEditor({
     setLoadedSceneId(null);
     setIsHistoryOpen(false);
     setEditorContentVersion((version) => version + 1);
-  }, [clearPendingAutosave, sceneId]);
+  }, [cancelQueuedAutosaves, sceneId]);
 
   useEffect(() => {
     const queriedScene = sceneQuery.data;
@@ -223,13 +251,12 @@ export function SceneEditor({
     nextContentJson: string,
     nextContentText: string,
     source: SceneVersionSource
-  ) {
+  ): Promise<Scene | null> {
     if (!targetSceneId || targetSceneId !== activeSceneIdRef.current) {
-      return;
+      return null;
     }
 
-    try {
-      const savedScene = await contentMutation.mutateAsync({
+    const savePromise = contentMutation.mutateAsync({
         targetSceneId,
         contentJson: nextContentJson,
         contentText: nextContentText,
@@ -237,12 +264,15 @@ export function SceneEditor({
         expectedContentRevision: contentRevisionRef.current,
         operationId: crypto.randomUUID(),
       });
+    contentSavePromiseRef.current = savePromise;
 
+    try {
+      const savedScene = await savePromise;
       void queryClient.setQueryData(queryKeys.scene(savedScene.id), savedScene);
       void queryClient.invalidateQueries({ queryKey: queryKeys.outline(bookId) });
 
       if (activeSceneIdRef.current !== targetSceneId || savedScene.id !== targetSceneId) {
-        return;
+        return savedScene;
       }
 
       const savedContentJson = savedScene.contentJson ?? "";
@@ -262,13 +292,19 @@ export function SceneEditor({
       lastSavedContentTextRef.current = savedContentText;
       setLastSavedContentJson(savedContentJson);
       setLastSavedContentText(savedContentText);
+      return savedScene;
     } catch {
+      return null;
       // A mutation mantém o estado de erro para a UI; o conteúdo local fica preservado.
+    } finally {
+      if (contentSavePromiseRef.current === savePromise) {
+        contentSavePromiseRef.current = null;
+      }
     }
   }
 
   function handleSaveContent(targetSceneId: string) {
-    clearPendingAutosave();
+    cancelQueuedAutosaves();
     void saveSceneContent(targetSceneId, currentContentJsonRef.current, currentContentTextRef.current, "MANUAL_SAVE");
   }
 
@@ -283,8 +319,13 @@ export function SceneEditor({
       return;
     }
 
+    const scheduledGeneration = autosaveGenerationRef.current;
     autosaveTimerRef.current = setTimeout(() => {
       autosaveTimerRef.current = null;
+
+      if (scheduledGeneration !== autosaveGenerationRef.current) {
+        return;
+      }
 
       if (targetSceneId !== activeSceneIdRef.current || loadedSceneIdRef.current !== targetSceneId) {
         return;
@@ -301,6 +342,62 @@ export function SceneEditor({
 
       void saveSceneContent(targetSceneId, nextContentJson, nextContentText, "AUTO_SAVE");
     }, CONTENT_AUTOSAVE_DELAY_MS);
+  }
+
+  async function awaitInFlightContentSave() {
+    const savePromise = contentSavePromiseRef.current;
+    if (!savePromise) {
+      return true;
+    }
+
+    const savedScene = await savePromise;
+    return savedScene !== null;
+  }
+
+  async function handleRestoreVersion(versionId: string, mode: SceneVersionRestoreMode) {
+    const targetSceneId = activeSceneIdRef.current;
+    if (!targetSceneId) {
+      return;
+    }
+
+    setRestoreError(null);
+    setRestoreWorkflowPending(true);
+    cancelQueuedAutosaves();
+
+    try {
+      const inFlightSaveSucceeded = await awaitInFlightContentSave();
+      if (!inFlightSaveSucceeded || activeSceneIdRef.current !== targetSceneId) {
+        setRestoreError("Nao foi possivel confirmar o conteudo atual. Recarregue a cena e tente novamente.");
+        return;
+      }
+
+      let expectedContentRevision = contentRevisionRef.current;
+      if (mode === "SAVE_AND_RESTORE") {
+        const savedScene = await saveSceneContent(
+          targetSceneId,
+          currentContentJsonRef.current,
+          currentContentTextRef.current,
+          "MANUAL_SAVE"
+        );
+        if (!savedScene || activeSceneIdRef.current !== targetSceneId) {
+          setRestoreError("Nao foi possivel salvar as alteracoes locais antes de restaurar.");
+          return;
+        }
+        expectedContentRevision = savedScene.contentRevision;
+      }
+
+      const restoredScene = await restoreMutation.mutateAsync({
+        targetSceneId,
+        versionId,
+        expectedContentRevision,
+        operationId: crypto.randomUUID(),
+      });
+      handleVersionRestored(restoredScene);
+    } catch {
+      setRestoreError("Nao foi possivel restaurar. Recarregue a cena e tente novamente.");
+    } finally {
+      setRestoreWorkflowPending(false);
+    }
   }
 
   function handleVersionRestored(restoredScene: Scene) {
@@ -321,6 +418,9 @@ export function SceneEditor({
     setLastSavedContentText(restoredContentText);
     setEditorContentVersion((version) => version + 1);
     setIsHistoryOpen(false);
+    setRestoreError(null);
+    void queryClient.setQueryData(queryKeys.scene(restoredScene.id), restoredScene);
+    void queryClient.invalidateQueries({ queryKey: queryKeys.sceneVersions(restoredScene.id) });
     void queryClient.invalidateQueries({ queryKey: queryKeys.outline(bookId) });
     void queryClient.invalidateQueries({ queryKey: queryKeys.bookDashboard(bookId) });
   }
@@ -418,7 +518,10 @@ export function SceneEditor({
           onExitFocusMode={onExitFocusMode}
           onToggleFullscreen={onToggleFullscreen}
           onSaveContent={() => handleSaveContent(scene.id)}
-          onOpenHistory={() => setIsHistoryOpen(true)}
+          onOpenHistory={() => {
+            setRestoreError(null);
+            setIsHistoryOpen(true);
+          }}
           onDeleteScene={handleDeleteScene}
         />
 
@@ -515,10 +618,12 @@ export function SceneEditor({
       {isHistoryOpen ? (
         <SceneVersionHistoryPanel
           sceneId={scene.id}
-          expectedContentRevision={contentRevisionRef.current}
-          restoreDisabled={contentMutation.isPending}
+          hasUnsavedContent={hasUnsavedContent}
+          restoreDisabled={restoreWorkflowPending}
+          restorePending={restoreWorkflowPending}
+          restoreError={restoreError}
           onClose={() => setIsHistoryOpen(false)}
-          onRestored={handleVersionRestored}
+          onRestoreVersion={handleRestoreVersion}
         />
       ) : null}
     </section>

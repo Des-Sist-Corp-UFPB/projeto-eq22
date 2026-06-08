@@ -39,6 +39,7 @@ import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.Function;
@@ -192,6 +193,11 @@ public class SceneService {
     @Transactional
     public SceneResponse restoreVersion(UUID sceneId, UUID versionId, SceneVersionRestoreRequest request) {
         Scene scene = getSceneForUpdate(sceneId);
+        rejectMissingOperationId(request.operationId());
+        SceneResponse idempotentRetryResponse = idempotentRestoreRetryResponse(scene, versionId, request);
+        if (idempotentRetryResponse != null) {
+            return idempotentRetryResponse;
+        }
         rejectStaleContentRevision(scene, request.expectedContentRevision());
         SceneVersion version = sceneVersionService.getCurrentSceneVersion(sceneId, versionId);
 
@@ -199,12 +205,32 @@ public class SceneService {
             return SceneResponse.fromEntity(scene);
         }
 
+        UUID bookId = scene.getBook().getId();
+        int totalBefore = Math.toIntExact(sceneRepository.sumWordCountByBookId(bookId));
+        int previousWordCount = wordCount(scene);
         int newWordCount = wordCountService.countWords(version.getContentText());
+        int manuscriptWordDelta = newWordCount - previousWordCount;
+        long revisionBefore = scene.getContentRevision();
+
         sceneVersionService.checkpointBeforeRestore(scene);
         scene.setContentJson(version.getContentJson());
         scene.setContentText(version.getContentText());
         scene.setWordCount(newWordCount);
         scene.incrementContentRevision();
+        wordCountEventService.record(new WordCountEventCommand(
+                bookId,
+                scene.getId(),
+                scene.getId(),
+                scene.getTitle(),
+                BookWordCountEventType.VERSION_RESTORE,
+                0,
+                manuscriptWordDelta,
+                request.operationId(),
+                request.operationId(),
+                revisionBefore,
+                scene.getContentRevision(),
+                totalBefore + manuscriptWordDelta
+        ));
 
         return SceneResponse.fromEntity(scene);
     }
@@ -398,13 +424,40 @@ public class SceneService {
                 .orElse(null);
     }
 
+    private SceneResponse idempotentRestoreRetryResponse(Scene scene, UUID versionId, SceneVersionRestoreRequest request) {
+        if (request.expectedContentRevision() == null || request.expectedContentRevision().equals(scene.getContentRevision())) {
+            return null;
+        }
+
+        return wordCountEventRepository.findByBookIdAndIdempotencyKey(scene.getBook().getId(), request.operationId())
+                .filter(event -> isMatchingVersionRestoreRetry(event, scene, versionId, request))
+                .map(event -> SceneResponse.fromEntity(scene))
+                .orElse(null);
+    }
+
     private boolean isMatchingContentSaveRetry(BookWordCountEvent event, Scene scene, SceneContentRequest request) {
         return event.getEventType() == BookWordCountEventType.CONTENT_SAVE
                 && event.getScene() != null
                 && event.getScene().getId().equals(scene.getId())
-                && event.getOperationId().equals(request.operationId())
-                && event.getContentRevisionBefore().equals(request.expectedContentRevision())
+                && Objects.equals(event.getOperationId(), request.operationId())
+                && Objects.equals(event.getContentRevisionBefore(), request.expectedContentRevision())
                 && sameContent(scene, request.contentJson(), request.contentText());
+    }
+
+    private boolean isMatchingVersionRestoreRetry(
+            BookWordCountEvent event,
+            Scene scene,
+            UUID versionId,
+            SceneVersionRestoreRequest request
+    ) {
+        SceneVersion version = sceneVersionService.getCurrentSceneVersion(scene.getId(), versionId);
+        return event.getEventType() == BookWordCountEventType.VERSION_RESTORE
+                && event.getScene() != null
+                && event.getScene().getId().equals(scene.getId())
+                && Objects.equals(event.getOperationId(), request.operationId())
+                && Objects.equals(event.getContentRevisionBefore(), request.expectedContentRevision())
+                && Objects.equals(event.getContentRevisionAfter(), scene.getContentRevision())
+                && sameContent(scene, version.getContentJson(), version.getContentText());
     }
 
     private String normalized(String value) {
