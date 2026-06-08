@@ -51,6 +51,7 @@ export type UpdateSceneContentRequest = {
   contentText?: string;
   source?: SceneVersionSource;
   expectedContentRevision: number;
+  operationId: string;
 };
 
 export type SceneVersionSource = "AUTO_SAVE" | "MANUAL_SAVE" | "RESTORE_SAFETY" | "DELETE_SAFETY";

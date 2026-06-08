@@ -10,7 +10,10 @@ import com.iwrite.sceneversion.dto.SceneVersionRestoreRequest;
 import com.iwrite.sceneversion.entity.SceneVersionSource;
 import com.iwrite.sceneversion.repository.SceneVersionRepository;
 import com.iwrite.support.PostgresIntegrationTest;
+import com.iwrite.writingprogress.ledger.entity.BookWordCountEventType;
+import com.iwrite.writingprogress.ledger.repository.BookWordCountEventRepository;
 import com.iwrite.writingprogress.repository.DailyWritingProgressRepository;
+import com.iwrite.writingprogress.service.DailyWritingProgressService;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import org.junit.jupiter.api.Test;
@@ -29,6 +32,12 @@ class SceneContentServiceIntegrationTest extends PostgresIntegrationTest {
 
     @Autowired
     private DailyWritingProgressRepository progressRepository;
+
+    @Autowired
+    private DailyWritingProgressService dailyWritingProgressService;
+
+    @Autowired
+    private BookWordCountEventRepository wordCountEventRepository;
 
     @PersistenceContext
     private EntityManager entityManager;
@@ -101,8 +110,7 @@ class SceneContentServiceIntegrationTest extends PostgresIntegrationTest {
 
         assertThat(updated.contentRevision()).isEqualTo(world.scene().contentRevision() + 1);
         assertThat(sceneVersionRepository.findByOriginalSceneIdOrderByCreatedAtDesc(world.scene().id()))
-                .singleElement()
-                .satisfies(version -> {
+                .anySatisfy(version -> {
                     assertThat(version.getScene().getId()).isEqualTo(world.scene().id());
                     assertThat(version.getContentText()).isEqualTo("scene words");
                     assertThat(version.getSource()).isEqualTo(SceneVersionSource.MANUAL_SAVE);
@@ -112,6 +120,7 @@ class SceneContentServiceIntegrationTest extends PostgresIntegrationTest {
     @Test
     void unchangedContentDoesNotCreateSnapshotOrIncrementRevision() {
         StoryWorld world = createStoryWorld("version unchanged");
+        long eventsBefore = wordCountEventRepository.countByBookId(world.book().id());
 
         SceneResponse updated = sceneService.updateContent(
                 world.scene().id(),
@@ -120,6 +129,7 @@ class SceneContentServiceIntegrationTest extends PostgresIntegrationTest {
 
         assertThat(updated.contentRevision()).isEqualTo(world.scene().contentRevision());
         assertThat(sceneVersionRepository.countByOriginalSceneId(world.scene().id())).isZero();
+        assertThat(wordCountEventRepository.countByBookId(world.book().id())).isEqualTo(eventsBefore);
     }
 
     @Test
@@ -137,8 +147,9 @@ class SceneContentServiceIntegrationTest extends PostgresIntegrationTest {
 
         assertThat(updated.contentRevision()).isEqualTo(emptied.contentRevision() + 1);
         assertThat(sceneVersionRepository.findByOriginalSceneIdOrderByCreatedAtDesc(world.scene().id()))
-                .singleElement()
-                .satisfies(version -> assertThat(version.getContentText()).isEqualTo("scene words"));
+                .hasSize(2)
+                .anySatisfy(version -> assertThat(version.getContentText()).isEqualTo("scene words"))
+                .anySatisfy(version -> assertThat(version.getContentText()).isEqualTo("new words"));
     }
 
     @Test
@@ -156,16 +167,108 @@ class SceneContentServiceIntegrationTest extends PostgresIntegrationTest {
 
         assertThat(throttledAutosave.contentRevision()).isEqualTo(autosaved.contentRevision() + 1);
         assertThat(sceneVersionRepository.countByOriginalSceneId(world.scene().id())).isEqualTo(1);
+    }
+
+    @Test
+    void changedAutosaveRecordsContentSaveEventAndRollupUpdate() {
+        StoryWorld world = createStoryWorld("ledger autosave");
+        UUID operationId = UUID.randomUUID();
+
+        SceneResponse updated = sceneService.updateContent(
+                world.scene().id(),
+                new SceneContentRequest("{}", "one two three", SceneVersionSource.AUTO_SAVE, world.scene().contentRevision(), operationId)
+        );
+
+        assertThat(updated.wordCount()).isEqualTo(3);
+        assertThat(wordCountEventRepository.findByBookIdAndIdempotencyKey(world.book().id(), operationId))
+                .hasValueSatisfying(event -> {
+                    assertThat(event.getEventType()).isEqualTo(BookWordCountEventType.CONTENT_SAVE);
+                    assertThat(event.getScene().getId()).isEqualTo(world.scene().id());
+                    assertThat(event.getProductiveWordDelta()).isEqualTo(1);
+                    assertThat(event.getManuscriptWordDelta()).isEqualTo(1);
+                    assertThat(event.getOperationId()).isEqualTo(operationId);
+                    assertThat(event.getContentRevisionBefore()).isEqualTo(world.scene().contentRevision());
+                    assertThat(event.getContentRevisionAfter()).isEqualTo(updated.contentRevision());
+                });
+        entityManager.flush();
+        entityManager.clear();
+        assertThat(progressRepository.findByBookIdAndProgressDate(world.book().id(), dailyWritingProgressService.today()))
+                .hasValueSatisfying(progress -> {
+                    assertThat(progress.getEndWordCount()).isEqualTo(3);
+                    assertThat(progress.getNetWordCountChange()).isEqualTo(3);
+                    assertThat(progress.getManuscriptAdjustmentWordCount()).isZero();
+                });
+    }
+
+    @Test
+    void sameWordCountTextRewriteRecordsZeroDeltaEventAndIncrementsRevision() {
+        StoryWorld world = createStoryWorld("ledger zero delta");
+        UUID operationId = UUID.randomUUID();
+
+        SceneResponse updated = sceneService.updateContent(
+                world.scene().id(),
+                new SceneContentRequest("{}", "other words", SceneVersionSource.AUTO_SAVE, world.scene().contentRevision(), operationId)
+        );
+
+        assertThat(updated.wordCount()).isEqualTo(world.scene().wordCount());
+        assertThat(updated.contentRevision()).isEqualTo(world.scene().contentRevision() + 1);
+        assertThat(wordCountEventRepository.findByBookIdAndIdempotencyKey(world.book().id(), operationId))
+                .hasValueSatisfying(event -> {
+                    assertThat(event.getProductiveWordDelta()).isZero();
+                    assertThat(event.getManuscriptWordDelta()).isZero();
+                    assertThat(event.getContentRevisionBefore()).isEqualTo(world.scene().contentRevision());
+                    assertThat(event.getContentRevisionAfter()).isEqualTo(updated.contentRevision());
+                });
+    }
+
+    @Test
+    void manualSaveContentRemainsRecoverableWhenFollowedByThrottledAutosaveOverwrite() {
+        StoryWorld world = createStoryWorld("version manual confirmed");
+        SceneResponse autosaved = sceneService.updateContent(
+                world.scene().id(),
+                new SceneContentRequest("{\"type\":\"doc\"}", "autosaved words", SceneVersionSource.AUTO_SAVE, world.scene().contentRevision())
+        );
+        SceneResponse manualSaved = sceneService.updateContent(
+                world.scene().id(),
+                new SceneContentRequest("{\"type\":\"doc\"}", "confirmed manual words", SceneVersionSource.MANUAL_SAVE, autosaved.contentRevision())
+        );
 
         sceneService.updateContent(
                 world.scene().id(),
-                new SceneContentRequest("{\"type\":\"doc\"}", "manual words", SceneVersionSource.MANUAL_SAVE, throttledAutosave.contentRevision())
+                new SceneContentRequest("{\"type\":\"doc\"}", "quick autosave overwrite", SceneVersionSource.AUTO_SAVE, manualSaved.contentRevision())
         );
 
         assertThat(sceneVersionRepository.findByOriginalSceneIdOrderByCreatedAtDesc(world.scene().id()))
-                .hasSize(2)
-                .extracting(version -> version.getSource())
-                .containsExactly(SceneVersionSource.MANUAL_SAVE, SceneVersionSource.AUTO_SAVE);
+                .anySatisfy(version -> {
+                    assertThat(version.getSource()).isEqualTo(SceneVersionSource.MANUAL_SAVE);
+                    assertThat(version.getContentText()).isEqualTo("confirmed manual words");
+                });
+    }
+
+    @Test
+    void repeatedOperationIdDoesNotDuplicateLedgerOrRollup() {
+        StoryWorld world = createStoryWorld("ledger retry");
+        UUID operationId = UUID.randomUUID();
+        SceneContentRequest request = new SceneContentRequest(
+                "{}",
+                "one two three",
+                SceneVersionSource.AUTO_SAVE,
+                world.scene().contentRevision(),
+                operationId
+        );
+
+        SceneResponse first = sceneService.updateContent(world.scene().id(), request);
+        SceneResponse retry = sceneService.updateContent(world.scene().id(), request);
+
+        assertThat(retry.contentRevision()).isEqualTo(first.contentRevision());
+        assertThat(wordCountEventRepository.countByBookId(world.book().id())).isEqualTo(1);
+        entityManager.flush();
+        entityManager.clear();
+        assertThat(progressRepository.findByBookIdAndProgressDate(world.book().id(), dailyWritingProgressService.today()))
+                .hasValueSatisfying(progress -> {
+                    assertThat(progress.getEndWordCount()).isEqualTo(3);
+                    assertThat(progress.getNetWordCountChange()).isEqualTo(3);
+                });
     }
 
     @Test
@@ -203,7 +306,10 @@ class SceneContentServiceIntegrationTest extends PostgresIntegrationTest {
                 new SceneContentRequest("{}", "new words here", SceneVersionSource.MANUAL_SAVE, world.scene().contentRevision())
         );
         var versionToRestore = sceneVersionRepository.findByOriginalSceneIdOrderByCreatedAtDesc(world.scene().id())
-                .getFirst();
+                .stream()
+                .filter(version -> "scene words".equals(version.getContentText()))
+                .findFirst()
+                .orElseThrow();
         long progressRowsBefore = progressRepository.count();
 
         SceneResponse restored = sceneService.restoreVersion(

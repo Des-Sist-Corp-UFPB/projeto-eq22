@@ -300,7 +300,8 @@ class ControllerContractIntegrationTest extends PostgresIntegrationTest {
                                 "contentJson", "{\"type\":\"doc\"}",
                                 "contentText", "one two three four",
                                 "source", "MANUAL_SAVE",
-                                "expectedContentRevision", world.scene().contentRevision()
+                                "expectedContentRevision", world.scene().contentRevision(),
+                                "operationId", UUID.randomUUID()
                         ))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.contentJson").value("{\"type\":\"doc\"}"))
@@ -317,7 +318,8 @@ class ControllerContractIntegrationTest extends PostgresIntegrationTest {
                                 "contentJson", "{}",
                                 "contentText", "words",
                                 "source", "MANUAL_SAVE",
-                                "expectedContentRevision", 0
+                                "expectedContentRevision", 0,
+                                "operationId", UUID.randomUUID()
                         ))))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.messages", hasItem(containsString("Scene not found"))));

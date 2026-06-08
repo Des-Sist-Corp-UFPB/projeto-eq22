@@ -83,6 +83,10 @@ public class SceneVersionService {
         createSnapshotIfRecoverable(scene, source);
     }
 
+    public void checkpointAfterManualContentSave(Scene scene) {
+        createSnapshotIfRecoverable(scene, SceneVersionSource.MANUAL_SAVE);
+    }
+
     public void checkpointBeforeRestore(Scene scene) {
         createSnapshotIfRecoverable(scene, SceneVersionSource.RESTORE_SAFETY);
     }
@@ -141,6 +145,10 @@ public class SceneVersionService {
             return versionRepository.findContentHashesByOriginalSceneId(scene.getId(), latestOnly)
                     .stream()
                     .findFirst();
+        }
+        if (source == SceneVersionSource.RESTORE_SAFETY) {
+            return versionRepository.findTopBySceneIdAndSourceOrderByCreatedAtDesc(scene.getId(), source)
+                    .map(SceneVersion::getContentHash);
         }
 
         return versionRepository.findContentHashesBySceneId(scene.getId(), latestOnly)

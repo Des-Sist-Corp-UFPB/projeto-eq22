@@ -40,6 +40,7 @@ type SaveContentVariables = {
   contentText: string;
   source: SceneVersionSource;
   expectedContentRevision: number;
+  operationId: string;
 };
 
 export type PlanningPanelOpenIntent = {
@@ -102,12 +103,13 @@ export function SceneEditor({
   });
 
   const contentMutation = useMutation({
-    mutationFn: ({ targetSceneId, contentJson, contentText, source, expectedContentRevision }: SaveContentVariables) =>
+    mutationFn: ({ targetSceneId, contentJson, contentText, source, expectedContentRevision, operationId }: SaveContentVariables) =>
       updateSceneContent(targetSceneId, {
         contentText,
         contentJson,
         source,
         expectedContentRevision,
+        operationId,
       }),
   });
 
@@ -233,6 +235,7 @@ export function SceneEditor({
         contentText: nextContentText,
         source,
         expectedContentRevision: contentRevisionRef.current,
+        operationId: crypto.randomUUID(),
       });
 
       void queryClient.setQueryData(queryKeys.scene(savedScene.id), savedScene);
