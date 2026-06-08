@@ -361,6 +361,12 @@ export function SceneEditor({
     }
 
     setRestoreError(null);
+
+    if (mode === "DISCARD_AND_RESTORE" && contentSavePromiseRef.current) {
+      setRestoreError("Ha um salvamento em andamento. Aguarde a conclusao antes de descartar alteracoes locais.");
+      return;
+    }
+
     setRestoreWorkflowPending(true);
     cancelQueuedAutosaves();
 
@@ -619,6 +625,7 @@ export function SceneEditor({
         <SceneVersionHistoryPanel
           sceneId={scene.id}
           hasUnsavedContent={hasUnsavedContent}
+          contentSaveInFlight={contentMutation.isPending && activeContentMutationSceneId === scene.id}
           restoreDisabled={restoreWorkflowPending}
           restorePending={restoreWorkflowPending}
           restoreError={restoreError}

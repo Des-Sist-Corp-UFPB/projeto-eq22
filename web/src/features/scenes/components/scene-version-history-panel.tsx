@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { ErrorState, LoadingState } from "@/components/ui/feedback";
 import { FeedbackMessage } from "@/components/ui/feedback-message";
@@ -12,6 +12,7 @@ export type SceneVersionRestoreMode = "RESTORE" | "SAVE_AND_RESTORE" | "DISCARD_
 type SceneVersionHistoryPanelProps = {
   sceneId: string;
   hasUnsavedContent: boolean;
+  contentSaveInFlight: boolean;
   restoreDisabled: boolean;
   restorePending: boolean;
   restoreError: string | null;
@@ -29,6 +30,7 @@ const sourceLabels: Record<SceneVersionSource, string> = {
 export function SceneVersionHistoryPanel({
   sceneId,
   hasUnsavedContent,
+  contentSaveInFlight,
   restoreDisabled,
   restorePending,
   restoreError,
@@ -37,10 +39,13 @@ export function SceneVersionHistoryPanel({
 }: SceneVersionHistoryPanelProps) {
   const [selectedVersionId, setSelectedVersionId] = useState<string | null>(null);
   const [dirtyRestorePromptOpen, setDirtyRestorePromptOpen] = useState(false);
-  const versionsQuery = useQuery({
+  const versionsQuery = useInfiniteQuery({
     queryKey: queryKeys.sceneVersions(sceneId),
-    queryFn: () => listSceneVersions(sceneId),
+    queryFn: ({ pageParam }) => listSceneVersions(sceneId, pageParam),
+    initialPageParam: 0,
+    getNextPageParam: (lastPage) => (lastPage.hasNext ? lastPage.page + 1 : undefined),
   });
+  const versions = versionsQuery.data?.pages.flatMap((page) => page.items) ?? [];
   const detailQuery = useQuery({
     queryKey: selectedVersionId ? queryKeys.sceneVersion(sceneId, selectedVersionId) : ["scenes", sceneId, "versions", "empty"],
     queryFn: () => getSceneVersion(sceneId, selectedVersionId as string),
@@ -48,10 +53,10 @@ export function SceneVersionHistoryPanel({
   });
 
   useEffect(() => {
-    if (!selectedVersionId && versionsQuery.data?.items[0]) {
-      setSelectedVersionId(versionsQuery.data.items[0].id);
+    if (!selectedVersionId && versions[0]) {
+      setSelectedVersionId(versions[0].id);
     }
-  }, [selectedVersionId, versionsQuery.data]);
+  }, [selectedVersionId, versions]);
 
   function handleRestore() {
     if (!selectedVersionId || restoreDisabled) {
@@ -71,6 +76,10 @@ export function SceneVersionHistoryPanel({
 
   function handleDirtyRestore(mode: SceneVersionRestoreMode) {
     if (!selectedVersionId || restoreDisabled || restorePending) {
+      return;
+    }
+
+    if (mode === "DISCARD_AND_RESTORE" && contentSaveInFlight) {
       return;
     }
 
@@ -94,10 +103,10 @@ export function SceneVersionHistoryPanel({
           <aside className="min-h-0 overflow-y-auto rounded-md border border-zinc-200">
             {versionsQuery.isLoading ? <LoadingState label="Carregando historico..." /> : null}
             {versionsQuery.isError ? <ErrorState message="Nao foi possivel carregar o historico." /> : null}
-            {versionsQuery.data?.items.length === 0 ? (
+            {versions.length === 0 && versionsQuery.isSuccess ? (
               <p className="p-4 text-sm text-zinc-500">Nenhuma versao salva ainda.</p>
             ) : null}
-            {versionsQuery.data?.items.map((version) => (
+            {versions.map((version) => (
               <button
                 key={version.id}
                 type="button"
@@ -117,6 +126,20 @@ export function SceneVersionHistoryPanel({
                 </p>
               </button>
             ))}
+            {versionsQuery.hasNextPage ? (
+              <div className="border-t border-zinc-100 p-3">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  className="w-full"
+                  onClick={() => void versionsQuery.fetchNextPage()}
+                  disabled={versionsQuery.isFetchingNextPage}
+                >
+                  {versionsQuery.isFetchingNextPage ? "Carregando..." : "Carregar versoes anteriores"}
+                </Button>
+              </div>
+            ) : null}
           </aside>
 
           <section className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)_auto] gap-3">
@@ -157,10 +180,20 @@ export function SceneVersionHistoryPanel({
                     variant="secondary"
                     className="border-red-300 text-red-700 hover:bg-red-50"
                     onClick={() => handleDirtyRestore("DISCARD_AND_RESTORE")}
-                    disabled={restorePending}
+                    disabled={restorePending || contentSaveInFlight}
+                    title={
+                      contentSaveInFlight
+                        ? "Ha um salvamento em andamento. Aguarde a conclusao antes de descartar alteracoes locais."
+                        : undefined
+                    }
                   >
                     Descartar alterações locais e restaurar
                   </Button>
+                  {contentSaveInFlight ? (
+                    <p className="basis-full text-xs leading-5 text-amber-900">
+                      Ha um salvamento em andamento. Aguarde a conclusao antes de descartar alteracoes locais.
+                    </p>
+                  ) : null}
                   <Button
                     type="button"
                     size="sm"
