@@ -131,7 +131,7 @@ public class DailyWritingProgressService {
             }
 
             DailyWritingProgress progress = progressByDate.get(progressDate);
-            if (progressDate.equals(today) && (progress == null || isManuscriptAdjustmentOnly(progress))) {
+            if (progressDate.equals(today) && !isProductiveWritingDay(progress)) {
                 progressDate = progressDate.minusDays(1);
                 continue;
             }
@@ -223,12 +223,6 @@ public class DailyWritingProgressService {
 
     private boolean isProductiveWritingDay(DailyWritingProgress progress) {
         return progress != null && progress.getProductiveWordCountChange() > WRITING_DAY_THRESHOLD;
-    }
-
-    private boolean isManuscriptAdjustmentOnly(DailyWritingProgress progress) {
-        return progress != null
-                && progress.getProductiveWordCountChange() == 0
-                && progress.getManuscriptAdjustmentWordCount() != 0;
     }
 
     private DailyWritingProgress createProgress(Book book, LocalDate progressDate, int totalBefore) {

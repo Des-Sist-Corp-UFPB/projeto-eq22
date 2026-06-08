@@ -81,6 +81,28 @@ class WordCountEventServiceIntegrationTest extends PostgresIntegrationTest {
     }
 
     @Test
+    void zeroDeltaEventRecordsLedgerRowWithoutCreatingDailyRollup() {
+        var book = createBook("ledger zero delta");
+        var scene = createEmptyScene(book.id(), "Zero delta scene");
+        entityManager.flush();
+        UUID idempotencyKey = UUID.randomUUID();
+
+        WordCountEventRecordResult result = eventService.record(command(
+                book.id(),
+                scene,
+                BookWordCountEventType.CONTENT_SAVE,
+                0,
+                0,
+                idempotencyKey,
+                10
+        ));
+
+        assertThat(result).isEqualTo(WordCountEventRecordResult.RECORDED);
+        assertThat(eventRepository.findByBookIdAndIdempotencyKey(book.id(), idempotencyKey)).isPresent();
+        assertThat(progressRepository.findByBookIdAndProgressDate(book.id(), TODAY)).isEmpty();
+    }
+
+    @Test
     void laterContentSaveEventIncrementsProductiveAndEndingValues() {
         var book = createBook("ledger later event");
         var scene = createEmptyScene(book.id(), "Later scene");

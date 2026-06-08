@@ -45,6 +45,47 @@ class SceneContentServiceIntegrationTest extends PostgresIntegrationTest {
     private EntityManager entityManager;
 
     @Test
+    void sceneCreationWithInitialContentRecordsContentSaveEventAndRollup() {
+        var book = createBook("ledger create nonempty");
+        var section = createSection(book, "Part");
+        var chapter = createChapter(section, "Chapter");
+
+        SceneResponse scene = createScene(chapter, "Created Scene", com.iwrite.scene.entity.SceneStatus.DRAFT, 0, "one two three");
+
+        assertThat(wordCountEventRepository.countByBookId(book.id())).isEqualTo(1);
+        assertThat(wordCountEventRepository.findAll())
+                .filteredOn(event -> event.getBook().getId().equals(book.id()))
+                .singleElement()
+                .satisfies(event -> {
+                    assertThat(event.getEventType()).isEqualTo(BookWordCountEventType.CONTENT_SAVE);
+                    assertThat(event.getScene().getId()).isEqualTo(scene.id());
+                    assertThat(event.getOriginalSceneId()).isEqualTo(scene.id());
+                    assertThat(event.getProductiveWordDelta()).isEqualTo(3);
+                    assertThat(event.getManuscriptWordDelta()).isEqualTo(3);
+                    assertThat(event.getOperationId()).isNotNull();
+                    assertThat(event.getIdempotencyKey()).isEqualTo(event.getOperationId());
+                });
+        assertThat(progressRepository.findByBookIdAndProgressDate(book.id(), dailyWritingProgressService.today()))
+                .hasValueSatisfying(progress -> {
+                    assertThat(progress.getEndingManuscriptWordCount()).isEqualTo(3);
+                    assertThat(progress.getProductiveWordCountChange()).isEqualTo(3);
+                    assertThat(progress.getManuscriptAdjustmentWordCount()).isZero();
+                });
+    }
+
+    @Test
+    void sceneCreationWithZeroWordsDoesNotRecordLedgerEventOrRollup() {
+        var book = createBook("ledger create empty");
+        var section = createSection(book, "Part");
+        var chapter = createChapter(section, "Chapter");
+
+        createScene(chapter, "Empty Scene", com.iwrite.scene.entity.SceneStatus.DRAFT, 0, "");
+
+        assertThat(wordCountEventRepository.countByBookId(book.id())).isZero();
+        assertThat(progressRepository.findByBookIdAndProgressDate(book.id(), dailyWritingProgressService.today())).isEmpty();
+    }
+
+    @Test
     void patchContentRecalculatesWordCountAndPersistsContentJson() {
         StoryWorld world = createStoryWorld("content");
 
@@ -206,6 +247,9 @@ class SceneContentServiceIntegrationTest extends PostgresIntegrationTest {
     void sameWordCountTextRewriteRecordsZeroDeltaEventAndIncrementsRevision() {
         StoryWorld world = createStoryWorld("ledger zero delta");
         UUID operationId = UUID.randomUUID();
+        long eventsBefore = wordCountEventRepository.countByBookId(world.book().id());
+        var progressBefore = progressRepository.findByBookIdAndProgressDate(world.book().id(), dailyWritingProgressService.today())
+                .orElseThrow();
 
         SceneResponse updated = sceneService.updateContent(
                 world.scene().id(),
@@ -214,12 +258,21 @@ class SceneContentServiceIntegrationTest extends PostgresIntegrationTest {
 
         assertThat(updated.wordCount()).isEqualTo(world.scene().wordCount());
         assertThat(updated.contentRevision()).isEqualTo(world.scene().contentRevision() + 1);
+        assertThat(wordCountEventRepository.countByBookId(world.book().id())).isEqualTo(eventsBefore + 1);
         assertThat(wordCountEventRepository.findByBookIdAndIdempotencyKey(world.book().id(), operationId))
                 .hasValueSatisfying(event -> {
                     assertThat(event.getProductiveWordDelta()).isZero();
                     assertThat(event.getManuscriptWordDelta()).isZero();
                     assertThat(event.getContentRevisionBefore()).isEqualTo(world.scene().contentRevision());
                     assertThat(event.getContentRevisionAfter()).isEqualTo(updated.contentRevision());
+                });
+        entityManager.flush();
+        entityManager.clear();
+        assertThat(progressRepository.findByBookIdAndProgressDate(world.book().id(), dailyWritingProgressService.today()))
+                .hasValueSatisfying(progress -> {
+                    assertThat(progress.getEndingManuscriptWordCount()).isEqualTo(progressBefore.getEndingManuscriptWordCount());
+                    assertThat(progress.getProductiveWordCountChange()).isEqualTo(progressBefore.getProductiveWordCountChange());
+                    assertThat(progress.getManuscriptAdjustmentWordCount()).isEqualTo(progressBefore.getManuscriptAdjustmentWordCount());
                 });
     }
 
@@ -263,7 +316,7 @@ class SceneContentServiceIntegrationTest extends PostgresIntegrationTest {
         SceneResponse retry = sceneService.updateContent(world.scene().id(), request);
 
         assertThat(retry.contentRevision()).isEqualTo(first.contentRevision());
-        assertThat(wordCountEventRepository.countByBookId(world.book().id())).isEqualTo(1);
+        assertThat(wordCountEventRepository.countByBookId(world.book().id())).isEqualTo(2);
         entityManager.flush();
         entityManager.clear();
         assertThat(progressRepository.findByBookIdAndProgressDate(world.book().id(), dailyWritingProgressService.today()))
@@ -390,7 +443,7 @@ class SceneContentServiceIntegrationTest extends PostgresIntegrationTest {
 
         assertThat(retry.contentRevision()).isEqualTo(first.contentRevision());
         assertThat(wordCountEventRepository.findByBookIdAndIdempotencyKey(world.book().id(), operationId)).isPresent();
-        assertThat(wordCountEventRepository.countByBookId(world.book().id())).isEqualTo(2);
+        assertThat(wordCountEventRepository.countByBookId(world.book().id())).isEqualTo(3);
         entityManager.flush();
         entityManager.clear();
         assertThat(progressRepository.findByBookIdAndProgressDate(world.book().id(), dailyWritingProgressService.today()))

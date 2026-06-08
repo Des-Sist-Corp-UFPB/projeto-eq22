@@ -31,7 +31,6 @@ import com.iwrite.writingprogress.ledger.entity.BookWordCountEventType;
 import com.iwrite.writingprogress.ledger.repository.BookWordCountEventRepository;
 import com.iwrite.writingprogress.ledger.service.WordCountEventCommand;
 import com.iwrite.writingprogress.ledger.service.WordCountEventService;
-import com.iwrite.writingprogress.service.DailyWritingProgressService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -54,7 +53,6 @@ public class SceneService {
     private final CharacterService characterService;
     private final LocationService locationService;
     private final ItemService itemService;
-    private final DailyWritingProgressService dailyWritingProgressService;
     private final ScenePlanningCompletenessService planningCompletenessService;
     private final SceneVersionService sceneVersionService;
     private final SceneDeletionLedgerService sceneDeletionLedgerService;
@@ -68,7 +66,6 @@ public class SceneService {
             CharacterService characterService,
             LocationService locationService,
             ItemService itemService,
-            DailyWritingProgressService dailyWritingProgressService,
             ScenePlanningCompletenessService planningCompletenessService,
             SceneVersionService sceneVersionService,
             SceneDeletionLedgerService sceneDeletionLedgerService,
@@ -81,7 +78,6 @@ public class SceneService {
         this.characterService = characterService;
         this.locationService = locationService;
         this.itemService = itemService;
-        this.dailyWritingProgressService = dailyWritingProgressService;
         this.planningCompletenessService = planningCompletenessService;
         this.sceneVersionService = sceneVersionService;
         this.sceneDeletionLedgerService = sceneDeletionLedgerService;
@@ -116,7 +112,23 @@ public class SceneService {
         }
 
         Scene savedScene = sceneRepository.save(scene);
-        dailyWritingProgressService.recordWordCountChange(bookId, totalBefore, totalBefore + newWordCount);
+        if (newWordCount > 0) {
+            UUID operationId = UUID.randomUUID();
+            wordCountEventService.record(new WordCountEventCommand(
+                    bookId,
+                    savedScene.getId(),
+                    savedScene.getId(),
+                    savedScene.getTitle(),
+                    BookWordCountEventType.CONTENT_SAVE,
+                    newWordCount,
+                    newWordCount,
+                    operationId,
+                    operationId,
+                    null,
+                    savedScene.getContentRevision(),
+                    totalBefore + newWordCount
+            ));
+        }
 
         return SceneResponse.fromEntity(savedScene);
     }

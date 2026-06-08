@@ -68,16 +68,18 @@ public class WordCountEventService {
             throw new WordCountEventConflictException("Idempotency key was already used for a different word-count event.");
         }
 
-        progressRepository.upsertWordCountEventRollup(
-                UUID.randomUUID(),
-                command.bookId(),
-                LocalDate.now(clock),
-                book.getDailyTargetWordCount(),
-                command.knownManuscriptTotalAfterOperation(),
-                command.productiveWordDelta(),
-                command.manuscriptWordDelta(),
-                eventTime
-        );
+        if (shouldUpdateDailyRollup(command)) {
+            progressRepository.upsertWordCountEventRollup(
+                    UUID.randomUUID(),
+                    command.bookId(),
+                    LocalDate.now(clock),
+                    book.getDailyTargetWordCount(),
+                    command.knownManuscriptTotalAfterOperation(),
+                    command.productiveWordDelta(),
+                    command.manuscriptWordDelta(),
+                    eventTime
+            );
+        }
         return WordCountEventRecordResult.RECORDED;
     }
 
@@ -107,6 +109,10 @@ public class WordCountEventService {
                 && Objects.equals(existing.getOperationId(), command.operationId())
                 && Objects.equals(existing.getContentRevisionBefore(), command.contentRevisionBefore())
                 && Objects.equals(existing.getContentRevisionAfter(), command.contentRevisionAfter());
+    }
+
+    private boolean shouldUpdateDailyRollup(WordCountEventCommand command) {
+        return command.productiveWordDelta() != 0 || command.manuscriptWordDelta() != 0;
     }
 
     private UUID sceneId(BookWordCountEvent event) {
