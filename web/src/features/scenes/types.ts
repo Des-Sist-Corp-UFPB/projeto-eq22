@@ -26,6 +26,7 @@ export type Scene = {
   status: SceneStatus;
   sortOrder: number;
   wordCount: number;
+  contentRevision: number;
   goal: string | null;
   conflict: string | null;
   outcome: string | null;
@@ -48,4 +49,31 @@ export type UpdateSceneRequest = {
 export type UpdateSceneContentRequest = {
   contentJson?: string;
   contentText?: string;
+  source?: SceneVersionSource;
+  expectedContentRevision: number;
+};
+
+export type SceneVersionSource = "AUTO_SAVE" | "MANUAL_SAVE" | "RESTORE_SAFETY" | "DELETE_SAFETY";
+
+export type SceneVersionSummary = {
+  id: string;
+  sceneId: string | null;
+  originalSceneId: string;
+  sceneTitleSnapshot: string;
+  wordCount: number;
+  source: SceneVersionSource;
+  createdAt: string;
+  contentTextPreview: string;
+};
+
+export type SceneVersionDetail = SceneVersionSummary & {
+  contentJson: string | null;
+  contentText: string | null;
+};
+
+export type SceneVersionPage = {
+  items: SceneVersionSummary[];
+  page: number;
+  size: number;
+  hasNext: boolean;
 };

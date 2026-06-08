@@ -64,6 +64,9 @@ public class Scene {
     @Column(nullable = false)
     private Integer wordCount;
 
+    @Column(nullable = false)
+    private Long contentRevision;
+
     @Column(columnDefinition = "text")
     private String goal;
 
@@ -116,6 +119,9 @@ public class Scene {
         }
         if (wordCount == null) {
             wordCount = 0;
+        }
+        if (contentRevision == null) {
+            contentRevision = 0L;
         }
     }
 
@@ -198,6 +204,18 @@ public class Scene {
 
     public void setWordCount(Integer wordCount) {
         this.wordCount = wordCount;
+    }
+
+    public Long getContentRevision() {
+        return contentRevision;
+    }
+
+    public void setContentRevision(Long contentRevision) {
+        this.contentRevision = contentRevision;
+    }
+
+    public void incrementContentRevision() {
+        contentRevision = contentRevision == null ? 1L : contentRevision + 1;
     }
 
     public String getGoal() {

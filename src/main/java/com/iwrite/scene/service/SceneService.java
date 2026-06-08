@@ -6,6 +6,7 @@ import com.iwrite.character.entity.Character;
 import com.iwrite.character.service.CharacterService;
 import com.iwrite.common.dto.ReorderRequest;
 import com.iwrite.common.exception.BadRequestException;
+import com.iwrite.common.exception.ConflictException;
 import com.iwrite.common.exception.ResourceNotFoundException;
 import com.iwrite.common.validation.RequestValidation;
 import com.iwrite.common.wordcount.WordCountService;
@@ -21,6 +22,10 @@ import com.iwrite.scene.dto.SceneUpdateRequest;
 import com.iwrite.scene.entity.Scene;
 import com.iwrite.scene.entity.SceneStatus;
 import com.iwrite.scene.repository.SceneRepository;
+import com.iwrite.sceneversion.dto.SceneVersionRestoreRequest;
+import com.iwrite.sceneversion.entity.SceneVersion;
+import com.iwrite.sceneversion.entity.SceneVersionSource;
+import com.iwrite.sceneversion.service.SceneVersionService;
 import com.iwrite.writingprogress.service.DailyWritingProgressService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -45,6 +50,7 @@ public class SceneService {
     private final ItemService itemService;
     private final DailyWritingProgressService dailyWritingProgressService;
     private final ScenePlanningCompletenessService planningCompletenessService;
+    private final SceneVersionService sceneVersionService;
 
     public SceneService(
             SceneRepository sceneRepository,
@@ -54,7 +60,8 @@ public class SceneService {
             LocationService locationService,
             ItemService itemService,
             DailyWritingProgressService dailyWritingProgressService,
-            ScenePlanningCompletenessService planningCompletenessService
+            ScenePlanningCompletenessService planningCompletenessService,
+            SceneVersionService sceneVersionService
     ) {
         this.sceneRepository = sceneRepository;
         this.chapterService = chapterService;
@@ -64,6 +71,7 @@ public class SceneService {
         this.itemService = itemService;
         this.dailyWritingProgressService = dailyWritingProgressService;
         this.planningCompletenessService = planningCompletenessService;
+        this.sceneVersionService = sceneVersionService;
     }
 
     @Transactional(readOnly = true)
@@ -125,16 +133,43 @@ public class SceneService {
 
     @Transactional
     public SceneResponse updateContent(UUID sceneId, SceneContentRequest request) {
-        Scene scene = getScene(sceneId);
+        Scene scene = getSceneForUpdate(sceneId);
+        rejectStaleContentRevision(scene, request.expectedContentRevision());
+        if (sameContent(scene, request.contentJson(), request.contentText())) {
+            return SceneResponse.fromEntity(scene);
+        }
+
         UUID bookId = scene.getBook().getId();
         int totalBefore = Math.toIntExact(sceneRepository.sumWordCountByBookId(bookId));
         int oldWordCount = wordCount(scene);
         int newWordCount = wordCountService.countWords(request.contentText());
 
+        sceneVersionService.checkpointBeforeContentOverwrite(scene, contentSource(request.source()));
         scene.setContentJson(request.contentJson());
         scene.setContentText(request.contentText());
         scene.setWordCount(newWordCount);
+        scene.incrementContentRevision();
         dailyWritingProgressService.recordWordCountChange(bookId, totalBefore, totalBefore - oldWordCount + newWordCount);
+
+        return SceneResponse.fromEntity(scene);
+    }
+
+    @Transactional
+    public SceneResponse restoreVersion(UUID sceneId, UUID versionId, SceneVersionRestoreRequest request) {
+        Scene scene = getSceneForUpdate(sceneId);
+        rejectStaleContentRevision(scene, request.expectedContentRevision());
+        SceneVersion version = sceneVersionService.getCurrentSceneVersion(sceneId, versionId);
+
+        if (sameContent(scene, version.getContentJson(), version.getContentText())) {
+            return SceneResponse.fromEntity(scene);
+        }
+
+        int newWordCount = wordCountService.countWords(version.getContentText());
+        sceneVersionService.checkpointBeforeRestore(scene);
+        scene.setContentJson(version.getContentJson());
+        scene.setContentText(version.getContentText());
+        scene.setWordCount(newWordCount);
+        scene.incrementContentRevision();
 
         return SceneResponse.fromEntity(scene);
     }
@@ -164,10 +199,11 @@ public class SceneService {
 
     @Transactional
     public void delete(UUID sceneId) {
-        Scene scene = getScene(sceneId);
+        Scene scene = getSceneForUpdate(sceneId);
         UUID bookId = scene.getBook().getId();
         int totalBefore = Math.toIntExact(sceneRepository.sumWordCountByBookId(bookId));
         int totalAfter = totalBefore - wordCount(scene);
+        sceneVersionService.checkpointBeforeDelete(scene);
         sceneRepository.delete(scene);
         dailyWritingProgressService.recordWordCountChange(bookId, totalBefore, totalAfter);
     }
@@ -182,6 +218,11 @@ public class SceneService {
     @Transactional(readOnly = true)
     public Scene getScene(UUID sceneId) {
         return sceneRepository.findById(sceneId)
+                .orElseThrow(() -> new ResourceNotFoundException("Scene not found: " + sceneId));
+    }
+
+    private Scene getSceneForUpdate(UUID sceneId) {
+        return sceneRepository.findByIdForUpdate(sceneId)
                 .orElseThrow(() -> new ResourceNotFoundException("Scene not found: " + sceneId));
     }
 
@@ -279,6 +320,34 @@ public class SceneService {
 
     private int wordCount(Scene scene) {
         return scene.getWordCount() == null ? 0 : scene.getWordCount();
+    }
+
+    private void rejectStaleContentRevision(Scene scene, Long expectedContentRevision) {
+        if (expectedContentRevision == null) {
+            throw new BadRequestException("expectedContentRevision is required");
+        }
+        if (!expectedContentRevision.equals(scene.getContentRevision())) {
+            throw new ConflictException("Scene content has changed. Reload the scene before saving.");
+        }
+    }
+
+    private SceneVersionSource contentSource(SceneVersionSource source) {
+        if (source == null) {
+            return SceneVersionSource.AUTO_SAVE;
+        }
+        if (source != SceneVersionSource.AUTO_SAVE && source != SceneVersionSource.MANUAL_SAVE) {
+            throw new BadRequestException("source must be AUTO_SAVE or MANUAL_SAVE");
+        }
+        return source;
+    }
+
+    private boolean sameContent(Scene scene, String contentJson, String contentText) {
+        return normalized(scene.getContentJson()).equals(normalized(contentJson))
+                && normalized(scene.getContentText()).equals(normalized(contentText));
+    }
+
+    private String normalized(String value) {
+        return value == null ? "" : value;
     }
 
     private void rejectIncompletePlanning(Scene scene) {

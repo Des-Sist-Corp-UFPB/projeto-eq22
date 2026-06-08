@@ -11,7 +11,8 @@ import { SceneEditorHeader, type ContentSaveStatus } from "@/features/scenes/com
 import { SceneEmptyState } from "@/features/scenes/components/scene-empty-state";
 import { SceneMetadataForm } from "@/features/scenes/components/scene-metadata-form";
 import { ScenePlanningPanel } from "@/features/scenes/components/scene-planning-panel";
-import type { Scene, SceneStatus } from "@/features/scenes/types";
+import { SceneVersionHistoryPanel } from "@/features/scenes/components/scene-version-history-panel";
+import type { Scene, SceneStatus, SceneVersionSource } from "@/features/scenes/types";
 import { queryKeys } from "@/lib/query/keys";
 
 const SCENE_STATUSES: SceneStatus[] = ["IDEA", "PLANNED", "DRAFT", "WRITTEN", "REVISED", "FINAL"];
@@ -37,6 +38,8 @@ type SaveContentVariables = {
   targetSceneId: string;
   contentJson: string;
   contentText: string;
+  source: SceneVersionSource;
+  expectedContentRevision: number;
 };
 
 export type PlanningPanelOpenIntent = {
@@ -65,6 +68,7 @@ export function SceneEditor({
   const currentContentTextRef = useRef("");
   const lastSavedContentJsonRef = useRef("");
   const lastSavedContentTextRef = useRef("");
+  const contentRevisionRef = useRef(0);
   const consumedPlanningOpenRequestIdRef = useRef<number | null>(null);
   const [title, setTitle] = useState("");
   const [summary, setSummary] = useState("");
@@ -75,6 +79,8 @@ export function SceneEditor({
   const [lastSavedContentText, setLastSavedContentText] = useState("");
   const [loadedSceneId, setLoadedSceneId] = useState<string | null>(null);
   const [isPlanningPanelOpen, setIsPlanningPanelOpen] = useState(false);
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+  const [editorContentVersion, setEditorContentVersion] = useState(0);
 
   const sceneQuery = useQuery({
     queryKey: sceneId ? queryKeys.scene(sceneId) : ["scenes", "empty"],
@@ -96,10 +102,12 @@ export function SceneEditor({
   });
 
   const contentMutation = useMutation({
-    mutationFn: ({ targetSceneId, contentJson, contentText }: SaveContentVariables) =>
+    mutationFn: ({ targetSceneId, contentJson, contentText, source, expectedContentRevision }: SaveContentVariables) =>
       updateSceneContent(targetSceneId, {
         contentText,
         contentJson,
+        source,
+        expectedContentRevision,
       }),
   });
 
@@ -162,6 +170,7 @@ export function SceneEditor({
     currentContentTextRef.current = "";
     lastSavedContentJsonRef.current = "";
     lastSavedContentTextRef.current = "";
+    contentRevisionRef.current = 0;
     metadataMutation.reset();
     contentMutation.reset();
     setTitle("");
@@ -172,6 +181,8 @@ export function SceneEditor({
     setLastSavedContentJson("");
     setLastSavedContentText("");
     setLoadedSceneId(null);
+    setIsHistoryOpen(false);
+    setEditorContentVersion((version) => version + 1);
   }, [clearPendingAutosave, sceneId]);
 
   useEffect(() => {
@@ -191,6 +202,7 @@ export function SceneEditor({
     currentContentTextRef.current = queriedScene.contentText ?? "";
     lastSavedContentJsonRef.current = queriedScene.contentJson ?? "";
     lastSavedContentTextRef.current = queriedScene.contentText ?? "";
+    contentRevisionRef.current = queriedScene.contentRevision;
     loadedSceneIdRef.current = queriedScene.id;
     setLoadedSceneId(queriedScene.id);
   }, [sceneId, sceneQuery.data]);
@@ -204,7 +216,12 @@ export function SceneEditor({
     metadataMutation.mutate();
   }
 
-  async function saveSceneContent(targetSceneId: string, nextContentJson: string, nextContentText: string) {
+  async function saveSceneContent(
+    targetSceneId: string,
+    nextContentJson: string,
+    nextContentText: string,
+    source: SceneVersionSource
+  ) {
     if (!targetSceneId || targetSceneId !== activeSceneIdRef.current) {
       return;
     }
@@ -214,6 +231,8 @@ export function SceneEditor({
         targetSceneId,
         contentJson: nextContentJson,
         contentText: nextContentText,
+        source,
+        expectedContentRevision: contentRevisionRef.current,
       });
 
       void queryClient.setQueryData(queryKeys.scene(savedScene.id), savedScene);
@@ -225,6 +244,7 @@ export function SceneEditor({
 
       const savedContentJson = savedScene.contentJson ?? "";
       const savedContentText = savedScene.contentText ?? "";
+      contentRevisionRef.current = savedScene.contentRevision;
       const currentContentMatchesSavedRequest =
         currentContentJsonRef.current === nextContentJson && currentContentTextRef.current === nextContentText;
 
@@ -246,7 +266,7 @@ export function SceneEditor({
 
   function handleSaveContent(targetSceneId: string) {
     clearPendingAutosave();
-    void saveSceneContent(targetSceneId, currentContentJsonRef.current, currentContentTextRef.current);
+    void saveSceneContent(targetSceneId, currentContentJsonRef.current, currentContentTextRef.current, "MANUAL_SAVE");
   }
 
   function scheduleAutosave(targetSceneId: string, nextContentJson: string, nextContentText: string) {
@@ -276,8 +296,30 @@ export function SceneEditor({
         return;
       }
 
-      void saveSceneContent(targetSceneId, nextContentJson, nextContentText);
+      void saveSceneContent(targetSceneId, nextContentJson, nextContentText, "AUTO_SAVE");
     }, CONTENT_AUTOSAVE_DELAY_MS);
+  }
+
+  function handleVersionRestored(restoredScene: Scene) {
+    if (restoredScene.id !== activeSceneIdRef.current) {
+      return;
+    }
+
+    const restoredContentJson = restoredScene.contentJson ?? "";
+    const restoredContentText = restoredScene.contentText ?? "";
+    contentRevisionRef.current = restoredScene.contentRevision;
+    currentContentJsonRef.current = restoredContentJson;
+    currentContentTextRef.current = restoredContentText;
+    lastSavedContentJsonRef.current = restoredContentJson;
+    lastSavedContentTextRef.current = restoredContentText;
+    setContentJson(restoredContentJson);
+    setContentText(restoredContentText);
+    setLastSavedContentJson(restoredContentJson);
+    setLastSavedContentText(restoredContentText);
+    setEditorContentVersion((version) => version + 1);
+    setIsHistoryOpen(false);
+    void queryClient.invalidateQueries({ queryKey: queryKeys.outline(bookId) });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.bookDashboard(bookId) });
   }
 
   function handleDeleteScene(sceneTitle: string) {
@@ -373,6 +415,7 @@ export function SceneEditor({
           onExitFocusMode={onExitFocusMode}
           onToggleFullscreen={onToggleFullscreen}
           onSaveContent={() => handleSaveContent(scene.id)}
+          onOpenHistory={() => setIsHistoryOpen(true)}
           onDeleteScene={handleDeleteScene}
         />
 
@@ -440,7 +483,8 @@ export function SceneEditor({
 
         <div className="min-h-0 bg-white lg:h-full">
           <SceneContentEditor
-            editorKey={scene.id}
+            contentKey={`${scene.id}:${editorContentVersion}`}
+            sourceSceneId={scene.id}
             contentJson={contentJson}
             contentText={contentText}
             wordCount={scene.wordCount}
@@ -465,6 +509,15 @@ export function SceneEditor({
           />
         </div>
       </Card>
+      {isHistoryOpen ? (
+        <SceneVersionHistoryPanel
+          sceneId={scene.id}
+          expectedContentRevision={contentRevisionRef.current}
+          restoreDisabled={contentMutation.isPending}
+          onClose={() => setIsHistoryOpen(false)}
+          onRestored={handleVersionRestored}
+        />
+      ) : null}
     </section>
   );
 }

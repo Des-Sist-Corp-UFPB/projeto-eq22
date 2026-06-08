@@ -48,7 +48,7 @@ public class SceneController {
     }
 
     @PatchMapping("/scenes/{sceneId}/content")
-    public SceneResponse updateContent(@PathVariable UUID sceneId, @RequestBody SceneContentRequest request) {
+    public SceneResponse updateContent(@PathVariable UUID sceneId, @Valid @RequestBody SceneContentRequest request) {
         return sceneService.updateContent(sceneId, request);
     }
 

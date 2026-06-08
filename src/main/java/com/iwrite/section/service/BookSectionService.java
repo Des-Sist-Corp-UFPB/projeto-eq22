@@ -6,6 +6,8 @@ import com.iwrite.common.dto.ReorderRequest;
 import com.iwrite.common.exception.BadRequestException;
 import com.iwrite.common.exception.ResourceNotFoundException;
 import com.iwrite.common.validation.RequestValidation;
+import com.iwrite.scene.repository.SceneRepository;
+import com.iwrite.sceneversion.service.SceneVersionService;
 import com.iwrite.section.dto.BookSectionRequest;
 import com.iwrite.section.dto.BookSectionResponse;
 import com.iwrite.section.dto.BookSectionUpdateRequest;
@@ -27,10 +29,19 @@ public class BookSectionService {
 
     private final BookSectionRepository sectionRepository;
     private final BookService bookService;
+    private final SceneRepository sceneRepository;
+    private final SceneVersionService sceneVersionService;
 
-    public BookSectionService(BookSectionRepository sectionRepository, BookService bookService) {
+    public BookSectionService(
+            BookSectionRepository sectionRepository,
+            BookService bookService,
+            SceneRepository sceneRepository,
+            SceneVersionService sceneVersionService
+    ) {
         this.sectionRepository = sectionRepository;
         this.bookService = bookService;
+        this.sceneRepository = sceneRepository;
+        this.sceneVersionService = sceneVersionService;
     }
 
     @Transactional
@@ -67,6 +78,7 @@ public class BookSectionService {
     @Transactional
     public void delete(UUID sectionId) {
         BookSection section = getSection(sectionId);
+        sceneVersionService.checkpointBeforeDelete(sceneRepository.findBySectionIdForUpdate(sectionId));
         sectionRepository.delete(section);
     }
 

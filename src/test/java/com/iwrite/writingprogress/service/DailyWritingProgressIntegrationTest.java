@@ -5,6 +5,7 @@ import com.iwrite.book.dto.BookUpdateRequest;
 import com.iwrite.book.entity.Book;
 import com.iwrite.dashboard.service.BookDashboardService;
 import com.iwrite.scene.dto.SceneContentRequest;
+import com.iwrite.scene.dto.SceneResponse;
 import com.iwrite.scene.entity.SceneStatus;
 import com.iwrite.support.PostgresIntegrationTest;
 import com.iwrite.writingprogress.entity.DailyWritingProgress;
@@ -57,8 +58,8 @@ class DailyWritingProgressIntegrationTest extends PostgresIntegrationTest {
         var chapter = createChapter(section, "Chapter");
         var scene = createScene(chapter, "Scene", SceneStatus.DRAFT, 0, "");
 
-        sceneService.updateContent(scene.id(), new SceneContentRequest("{}", wordText(2)));
-        sceneService.updateContent(scene.id(), new SceneContentRequest("{}", wordText(5)));
+        SceneResponse firstSave = sceneService.updateContent(scene.id(), new SceneContentRequest("{}", wordText(2)));
+        sceneService.updateContent(scene.id(), new SceneContentRequest("{}", wordText(5), null, firstSave.contentRevision()));
 
         assertThat(progressRepository.countByBookIdAndProgressDate(book.id(), TODAY)).isEqualTo(1);
         DailyWritingProgress progress = progressRepository.findByBookIdAndProgressDate(book.id(), TODAY)

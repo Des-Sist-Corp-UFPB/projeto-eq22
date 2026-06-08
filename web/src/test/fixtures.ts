@@ -271,6 +271,7 @@ export const sceneForPlanning: Scene = {
   status: "DRAFT",
   sortOrder: 0,
   wordCount: 3,
+  contentRevision: 0,
   goal: null,
   conflict: null,
   outcome: null,

@@ -298,12 +298,15 @@ class ControllerContractIntegrationTest extends PostgresIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(json(Map.of(
                                 "contentJson", "{\"type\":\"doc\"}",
-                                "contentText", "one two three four"
+                                "contentText", "one two three four",
+                                "source", "MANUAL_SAVE",
+                                "expectedContentRevision", world.scene().contentRevision()
                         ))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.contentJson").value("{\"type\":\"doc\"}"))
                 .andExpect(jsonPath("$.contentText").value("one two three four"))
-                .andExpect(jsonPath("$.wordCount").value(4));
+                .andExpect(jsonPath("$.wordCount").value(4))
+                .andExpect(jsonPath("$.contentRevision").value(1));
     }
 
     @Test
@@ -312,7 +315,9 @@ class ControllerContractIntegrationTest extends PostgresIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(json(Map.of(
                                 "contentJson", "{}",
-                                "contentText", "words"
+                                "contentText", "words",
+                                "source", "MANUAL_SAVE",
+                                "expectedContentRevision", 0
                         ))))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.messages", hasItem(containsString("Scene not found"))));
