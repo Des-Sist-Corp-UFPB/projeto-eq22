@@ -104,7 +104,8 @@ describe("BookDashboard", () => {
     expect(within(chart).getByText("14/05")).toBeInTheDocument();
     expect(within(chart).getByText("300")).toBeInTheDocument();
     expect(within(chart).getByText("13/05")).toBeInTheDocument();
-    expect(within(chart).getByText("-100")).toBeInTheDocument();
+    expect(within(chart).queryByText("-100")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("manuscript-adjustment-summary")).not.toBeInTheDocument();
     expect(screen.getAllByTestId("daily-progress-bucket")).toHaveLength(7);
     expect(screen.getAllByTestId("daily-progress-vertical-bar")).toHaveLength(7);
     expect(screen.getAllByTestId("daily-progress-timeline-dot")).toHaveLength(7);
@@ -112,6 +113,62 @@ describe("BookDashboard", () => {
     expect(screen.queryByTestId("daily-progress-trend-line")).not.toBeInTheDocument();
     expect(screen.getByText("Planejamento narrativo")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Ver cenas com status Rascunho" })).toBeInTheDocument();
+  });
+
+  test("grafico de produtividade usa apenas palavras produtivas", () => {
+    const dashboardWithLargeAdjustment = {
+      ...dashboardWithScenes,
+      writingProgress: {
+        ...dashboardWithScenes.writingProgress,
+        today: {
+          ...dashboardWithScenes.writingProgress.today,
+          productiveWordCountChange: 20,
+          manuscriptAdjustmentWordCount: 700,
+          progressPercent: 4,
+        },
+        recentDays: [
+          {
+            ...dashboardWithScenes.writingProgress.today,
+            productiveWordCountChange: 20,
+            manuscriptAdjustmentWordCount: 700,
+            progressPercent: 4,
+          },
+        ],
+      },
+    };
+    mocks.useBookDashboard.mockReturnValue({ isLoading: false, isError: false, data: dashboardWithLargeAdjustment });
+
+    renderWithClient(<BookDashboard bookId="book-1" />);
+
+    const chart = screen.getByRole("img", { name: /vertical.*escrita/ });
+    expect(within(chart).getByText("20")).toBeInTheDocument();
+    expect(within(chart).queryByText("720")).not.toBeInTheDocument();
+    expect(screen.getByText("Hoje: 20 / 500 palavras")).toBeInTheDocument();
+    expect(screen.getByText(/4% da meta di.ria/)).toBeInTheDocument();
+  });
+
+  test("mostra resumo de ajustes do manuscrito quando houver ajuste no periodo", () => {
+    const dashboardWithAdjustment = {
+      ...dashboardWithScenes,
+      writingProgress: {
+        ...dashboardWithScenes.writingProgress,
+        recentDays: [
+          {
+            ...dashboardWithScenes.writingProgress.today,
+            productiveWordCountChange: 20,
+            manuscriptAdjustmentWordCount: 700,
+          },
+        ],
+      },
+    };
+    mocks.useBookDashboard.mockReturnValue({ isLoading: false, isError: false, data: dashboardWithAdjustment });
+
+    renderWithClient(<BookDashboard bookId="book-1" />);
+
+    expect(screen.getByTestId("manuscript-adjustment-summary")).toBeInTheDocument();
+    expect(screen.getByText("Ajustes do manuscrito")).toBeInTheDocument();
+    expect(screen.getByText("Alterações causadas por restaurações, exclusões ou importações. Não contam como produtividade.")).toBeInTheDocument();
+    expect(screen.getByText("700 palavras")).toBeInTheDocument();
   });
 
   test("trocar período mantém analytics visível durante refetch", async () => {
@@ -143,10 +200,11 @@ describe("BookDashboard", () => {
         today: {
           ...dashboardWithScenes.writingProgress.today,
           date: "2026-05-14",
-          netWordCountChange: 0,
+          productiveWordCountChange: 0,
+          manuscriptAdjustmentWordCount: 0,
         },
         recentDays: [
-          { ...dashboardWithScenes.writingProgress.today, date: "2026-05-10", netWordCountChange: 120 },
+          { ...dashboardWithScenes.writingProgress.today, date: "2026-05-10", productiveWordCountChange: 120, manuscriptAdjustmentWordCount: 0 },
         ],
       },
     };
@@ -155,9 +213,9 @@ describe("BookDashboard", () => {
       writingProgress: {
         ...dashboardWithScenes.writingProgress,
         recentDays: [
-          { ...dashboardWithScenes.writingProgress.today, date: "2026-05-12", netWordCountChange: 120 },
-          { ...dashboardWithScenes.writingProgress.today, date: "2026-05-13", netWordCountChange: 220 },
-          { ...dashboardWithScenes.writingProgress.today, date: "2026-05-14", netWordCountChange: 320 },
+          { ...dashboardWithScenes.writingProgress.today, date: "2026-05-12", productiveWordCountChange: 120, manuscriptAdjustmentWordCount: 0 },
+          { ...dashboardWithScenes.writingProgress.today, date: "2026-05-13", productiveWordCountChange: 220, manuscriptAdjustmentWordCount: 0 },
+          { ...dashboardWithScenes.writingProgress.today, date: "2026-05-14", productiveWordCountChange: 320, manuscriptAdjustmentWordCount: 0 },
         ],
       },
     };
@@ -202,10 +260,10 @@ describe("BookDashboard", () => {
       writingProgress: {
         ...dashboardWithScenes.writingProgress,
         recentDays: [
-          { ...dashboardWithScenes.writingProgress.today, date: "2026-05-14", netWordCountChange: 300 },
-          { ...dashboardWithScenes.writingProgress.today, date: "2026-05-01", netWordCountChange: 200 },
-          { ...dashboardWithScenes.writingProgress.today, date: "2026-04-20", netWordCountChange: 100 },
-          { ...dashboardWithScenes.writingProgress.today, date: "2026-03-10", netWordCountChange: 50 },
+          { ...dashboardWithScenes.writingProgress.today, date: "2026-05-14", productiveWordCountChange: 300, manuscriptAdjustmentWordCount: 0 },
+          { ...dashboardWithScenes.writingProgress.today, date: "2026-05-01", productiveWordCountChange: 200, manuscriptAdjustmentWordCount: 0 },
+          { ...dashboardWithScenes.writingProgress.today, date: "2026-04-20", productiveWordCountChange: 100, manuscriptAdjustmentWordCount: 0 },
+          { ...dashboardWithScenes.writingProgress.today, date: "2026-03-10", productiveWordCountChange: 50, manuscriptAdjustmentWordCount: 0 },
         ],
       },
     };
@@ -215,8 +273,8 @@ describe("BookDashboard", () => {
         ...dashboardWithScenes.writingProgress,
         recentDays: [
           ...threeMonthDashboard.writingProgress.recentDays,
-          { ...dashboardWithScenes.writingProgress.today, date: "2026-02-07", netWordCountChange: 40 },
-          { ...dashboardWithScenes.writingProgress.today, date: "2026-01-03", netWordCountChange: 30 },
+          { ...dashboardWithScenes.writingProgress.today, date: "2026-02-07", productiveWordCountChange: 40, manuscriptAdjustmentWordCount: 0 },
+          { ...dashboardWithScenes.writingProgress.today, date: "2026-01-03", productiveWordCountChange: 30, manuscriptAdjustmentWordCount: 0 },
         ],
       },
     };
@@ -225,8 +283,8 @@ describe("BookDashboard", () => {
       writingProgress: {
         ...dashboardWithScenes.writingProgress,
         recentDays: [
-          { ...dashboardWithScenes.writingProgress.today, date: "2026-04-20", netWordCountChange: 100 },
-          { ...dashboardWithScenes.writingProgress.today, date: "2025-06-15", netWordCountChange: 10 },
+          { ...dashboardWithScenes.writingProgress.today, date: "2026-04-20", productiveWordCountChange: 100, manuscriptAdjustmentWordCount: 0 },
+          { ...dashboardWithScenes.writingProgress.today, date: "2025-06-15", productiveWordCountChange: 10, manuscriptAdjustmentWordCount: 0 },
         ],
       },
     };
@@ -329,7 +387,8 @@ describe("BookDashboard", () => {
         ...dashboardWithScenes.writingProgress,
         today: {
           ...dashboardWithScenes.writingProgress.today,
-          netWordCountChange: 120,
+          productiveWordCountChange: 120,
+          manuscriptAdjustmentWordCount: 0,
         },
       },
     };
