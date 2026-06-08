@@ -9,6 +9,8 @@ import com.iwrite.sceneversion.dto.SceneVersionSummaryResponse;
 import com.iwrite.sceneversion.entity.SceneVersion;
 import com.iwrite.sceneversion.entity.SceneVersionSource;
 import com.iwrite.sceneversion.repository.SceneVersionRepository;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
@@ -21,6 +23,7 @@ import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 @Service
@@ -33,6 +36,9 @@ public class SceneVersionService {
 
     private final SceneVersionRepository versionRepository;
     private final SceneRepository sceneRepository;
+
+    @PersistenceContext
+    private EntityManager entityManager;
 
     public SceneVersionService(SceneVersionRepository versionRepository, SceneRepository sceneRepository) {
         this.versionRepository = versionRepository;
@@ -87,6 +93,8 @@ public class SceneVersionService {
 
     public void checkpointBeforeDelete(List<Scene> scenes) {
         scenes.forEach(this::checkpointBeforeDelete);
+        versionRepository.flush();
+        entityManager.clear();
     }
 
     public String hash(String contentJson, String contentText) {
@@ -107,8 +115,7 @@ public class SceneVersionService {
         }
 
         String contentHash = hash(scene.getContentJson(), scene.getContentText());
-        boolean latestHasSameHash = versionRepository.findTopBySceneIdOrderByCreatedAtDesc(scene.getId())
-                .map(SceneVersion::getContentHash)
+        boolean latestHasSameHash = latestContentHash(scene, source)
                 .filter(contentHash::equals)
                 .isPresent();
         if (latestHasSameHash) {
@@ -117,7 +124,7 @@ public class SceneVersionService {
 
         SceneVersion version = new SceneVersion();
         version.setBook(scene.getBook());
-        version.setScene(scene);
+        version.setScene(source == SceneVersionSource.DELETE_SAFETY ? null : scene);
         version.setOriginalSceneId(scene.getId());
         version.setSceneTitleSnapshot(snapshotTitle(scene.getTitle()));
         version.setContentJson(scene.getContentJson());
@@ -126,6 +133,19 @@ public class SceneVersionService {
         version.setSource(source);
         version.setContentHash(contentHash);
         versionRepository.save(version);
+    }
+
+    private Optional<String> latestContentHash(Scene scene, SceneVersionSource source) {
+        PageRequest latestOnly = PageRequest.of(0, 1);
+        if (source == SceneVersionSource.DELETE_SAFETY) {
+            return versionRepository.findContentHashesByOriginalSceneId(scene.getId(), latestOnly)
+                    .stream()
+                    .findFirst();
+        }
+
+        return versionRepository.findContentHashesBySceneId(scene.getId(), latestOnly)
+                .stream()
+                .findFirst();
     }
 
     private boolean isAutosaveThrottled(Scene scene) {

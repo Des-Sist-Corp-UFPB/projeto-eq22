@@ -77,9 +77,9 @@ public class ChapterService {
 
     @Transactional
     public void delete(UUID chapterId) {
-        Chapter chapter = getChapter(chapterId);
+        getChapter(chapterId);
         sceneVersionService.checkpointBeforeDelete(sceneRepository.findByChapterIdForUpdate(chapterId));
-        chapterRepository.delete(chapter);
+        chapterRepository.deleteById(chapterId);
     }
 
     @Transactional

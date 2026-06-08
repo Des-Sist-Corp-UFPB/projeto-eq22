@@ -77,9 +77,9 @@ public class BookSectionService {
 
     @Transactional
     public void delete(UUID sectionId) {
-        BookSection section = getSection(sectionId);
+        getSection(sectionId);
         sceneVersionService.checkpointBeforeDelete(sceneRepository.findBySectionIdForUpdate(sectionId));
-        sectionRepository.delete(section);
+        sectionRepository.deleteById(sectionId);
     }
 
     @Transactional

@@ -5,11 +5,14 @@ import com.iwrite.common.exception.ResourceNotFoundException;
 import com.iwrite.scene.dto.SceneContentRequest;
 import com.iwrite.scene.dto.ScenePlanningRequest;
 import com.iwrite.scene.dto.SceneResponse;
+import com.iwrite.scene.dto.SceneUpdateRequest;
 import com.iwrite.sceneversion.dto.SceneVersionRestoreRequest;
 import com.iwrite.sceneversion.entity.SceneVersionSource;
 import com.iwrite.sceneversion.repository.SceneVersionRepository;
 import com.iwrite.support.PostgresIntegrationTest;
 import com.iwrite.writingprogress.repository.DailyWritingProgressRepository;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 
@@ -26,6 +29,9 @@ class SceneContentServiceIntegrationTest extends PostgresIntegrationTest {
 
     @Autowired
     private DailyWritingProgressRepository progressRepository;
+
+    @PersistenceContext
+    private EntityManager entityManager;
 
     @Test
     void patchContentRecalculatesWordCountAndPersistsContentJson() {
@@ -117,6 +123,64 @@ class SceneContentServiceIntegrationTest extends PostgresIntegrationTest {
     }
 
     @Test
+    void emptyOutgoingContentDoesNotCreateUselessSnapshot() {
+        StoryWorld world = createStoryWorld("version empty outgoing");
+        SceneResponse emptied = sceneService.updateContent(
+                world.scene().id(),
+                new SceneContentRequest(null, null, SceneVersionSource.MANUAL_SAVE, world.scene().contentRevision())
+        );
+
+        SceneResponse updated = sceneService.updateContent(
+                world.scene().id(),
+                new SceneContentRequest("{\"type\":\"doc\"}", "new words", SceneVersionSource.MANUAL_SAVE, emptied.contentRevision())
+        );
+
+        assertThat(updated.contentRevision()).isEqualTo(emptied.contentRevision() + 1);
+        assertThat(sceneVersionRepository.findByOriginalSceneIdOrderByCreatedAtDesc(world.scene().id()))
+                .singleElement()
+                .satisfies(version -> assertThat(version.getContentText()).isEqualTo("scene words"));
+    }
+
+    @Test
+    void autosaveThrottlesCheckpointsButManualSaveBypassesThrottle() {
+        StoryWorld world = createStoryWorld("version autosave throttle");
+        SceneResponse autosaved = sceneService.updateContent(
+                world.scene().id(),
+                new SceneContentRequest("{\"type\":\"doc\"}", "autosaved words", SceneVersionSource.AUTO_SAVE, world.scene().contentRevision())
+        );
+
+        SceneResponse throttledAutosave = sceneService.updateContent(
+                world.scene().id(),
+                new SceneContentRequest("{\"type\":\"doc\"}", "autosaved words again", SceneVersionSource.AUTO_SAVE, autosaved.contentRevision())
+        );
+
+        assertThat(throttledAutosave.contentRevision()).isEqualTo(autosaved.contentRevision() + 1);
+        assertThat(sceneVersionRepository.countByOriginalSceneId(world.scene().id())).isEqualTo(1);
+
+        sceneService.updateContent(
+                world.scene().id(),
+                new SceneContentRequest("{\"type\":\"doc\"}", "manual words", SceneVersionSource.MANUAL_SAVE, throttledAutosave.contentRevision())
+        );
+
+        assertThat(sceneVersionRepository.findByOriginalSceneIdOrderByCreatedAtDesc(world.scene().id()))
+                .hasSize(2)
+                .extracting(version -> version.getSource())
+                .containsExactly(SceneVersionSource.MANUAL_SAVE, SceneVersionSource.AUTO_SAVE);
+    }
+
+    @Test
+    void metadataOnlyUpdateDoesNotChangeContentRevision() {
+        StoryWorld world = createStoryWorld("version metadata");
+
+        SceneResponse updated = sceneService.update(
+                world.scene().id(),
+                new SceneUpdateRequest("Renamed scene", "New summary", null, null)
+        );
+
+        assertThat(updated.contentRevision()).isEqualTo(world.scene().contentRevision());
+    }
+
+    @Test
     void staleContentRevisionIsRejected() {
         StoryWorld world = createStoryWorld("version stale");
         SceneResponse updated = sceneService.updateContent(
@@ -158,6 +222,38 @@ class SceneContentServiceIntegrationTest extends PostgresIntegrationTest {
     }
 
     @Test
+    void restoreRejectsCrossSceneAndOrphanVersions() {
+        StoryWorld sourceWorld = createStoryWorld("version restore source");
+        StoryWorld targetWorld = createStoryWorld("version restore target");
+        SceneResponse updated = sceneService.updateContent(
+                sourceWorld.scene().id(),
+                new SceneContentRequest("{}", "new source words", SceneVersionSource.MANUAL_SAVE, sourceWorld.scene().contentRevision())
+        );
+        var sourceVersion = sceneVersionRepository.findByOriginalSceneIdOrderByCreatedAtDesc(sourceWorld.scene().id())
+                .getFirst();
+        UUID sourceVersionId = sourceVersion.getId();
+
+        assertThatThrownBy(() -> sceneService.restoreVersion(
+                targetWorld.scene().id(),
+                sourceVersionId,
+                new SceneVersionRestoreRequest(targetWorld.scene().contentRevision())
+        )).isInstanceOf(ResourceNotFoundException.class);
+
+        entityManager.flush();
+        entityManager.clear();
+
+        sceneService.delete(sourceWorld.scene().id());
+        entityManager.flush();
+        entityManager.clear();
+
+        assertThatThrownBy(() -> sceneService.restoreVersion(
+                sourceWorld.scene().id(),
+                sourceVersionId,
+                new SceneVersionRestoreRequest(updated.contentRevision())
+        )).isInstanceOf(ResourceNotFoundException.class);
+    }
+
+    @Test
     void sceneDeleteCreatesDeleteSafetySnapshotAndRetainsOrphanVersion() {
         StoryWorld world = createStoryWorld("version delete scene");
 
@@ -173,19 +269,43 @@ class SceneContentServiceIntegrationTest extends PostgresIntegrationTest {
     }
 
     @Test
-    void chapterAndSectionDeleteCreateDeleteSafetySnapshotsForChildScenes() {
+    void chapterDeleteCreatesDeleteSafetySnapshotForChildScene() {
         StoryWorld chapterWorld = createStoryWorld("version delete chapter");
-        StoryWorld sectionWorld = createStoryWorld("version delete section");
 
         chapterService.delete(chapterWorld.chapter().id());
-        sectionService.delete(sectionWorld.section().id());
 
         assertThat(sceneVersionRepository.findByOriginalSceneIdOrderByCreatedAtDesc(chapterWorld.scene().id()))
                 .singleElement()
                 .satisfies(version -> assertThat(version.getSource()).isEqualTo(SceneVersionSource.DELETE_SAFETY));
+    }
+
+    @Test
+    void sectionDeleteCreatesDeleteSafetySnapshotForChildScene() {
+        StoryWorld sectionWorld = createStoryWorld("version delete section");
+
+        sectionService.delete(sectionWorld.section().id());
+
         assertThat(sceneVersionRepository.findByOriginalSceneIdOrderByCreatedAtDesc(sectionWorld.scene().id()))
                 .singleElement()
                 .satisfies(version -> assertThat(version.getSource()).isEqualTo(SceneVersionSource.DELETE_SAFETY));
+    }
+
+    @Test
+    void bookDeleteCascadesSceneVersions() {
+        StoryWorld world = createStoryWorld("version delete book");
+        sceneService.updateContent(
+                world.scene().id(),
+                new SceneContentRequest("{}", "new words", SceneVersionSource.MANUAL_SAVE, world.scene().contentRevision())
+        );
+
+        entityManager.flush();
+        entityManager.clear();
+
+        bookService.delete(world.book().id());
+        entityManager.flush();
+        entityManager.clear();
+
+        assertThat(sceneVersionRepository.countByOriginalSceneId(world.scene().id())).isZero();
     }
 
     @Test
