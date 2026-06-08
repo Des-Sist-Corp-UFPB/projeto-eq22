@@ -214,7 +214,7 @@ public class DailyWritingProgressService {
     }
 
     private int countPositiveProgressBetween(UUID bookId, LocalDate startDate, LocalDate endDate) {
-        return Math.toIntExact(progressRepository.countByBookIdAndProgressDateBetweenAndNetWordCountChangeGreaterThan(
+        return Math.toIntExact(progressRepository.countByBookIdAndProgressDateBetweenAndProductiveWordCountChangeGreaterThan(
                 bookId,
                 startDate,
                 endDate,

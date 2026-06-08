@@ -26,16 +26,16 @@ public interface DailyWritingProgressRepository extends JpaRepository<DailyWriti
             LocalDate endDate
     );
 
-    List<DailyWritingProgress> findByBookIdAndNetWordCountChangeGreaterThanOrderByProgressDateAsc(
+    List<DailyWritingProgress> findByBookIdAndProductiveWordCountChangeGreaterThanOrderByProgressDateAsc(
             UUID bookId,
-            int netWordCountChange
+            int productiveWordCountChange
     );
 
-    long countByBookIdAndProgressDateBetweenAndNetWordCountChangeGreaterThan(
+    long countByBookIdAndProgressDateBetweenAndProductiveWordCountChangeGreaterThan(
             UUID bookId,
             LocalDate startDate,
             LocalDate endDate,
-            int netWordCountChange
+            int productiveWordCountChange
     );
 
     long countByBookIdAndProgressDate(UUID bookId, LocalDate progressDate);

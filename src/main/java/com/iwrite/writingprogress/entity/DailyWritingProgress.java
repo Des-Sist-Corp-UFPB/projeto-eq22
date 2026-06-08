@@ -38,14 +38,17 @@ public class DailyWritingProgress {
 
     private Integer dailyTargetWordCount;
 
-    @Column(nullable = false)
-    private Integer startWordCount;
+    @Column(nullable = false, name = "starting_manuscript_word_count")
+    private Integer startingManuscriptWordCount;
 
-    @Column(nullable = false)
-    private Integer endWordCount;
+    @Column(nullable = false, name = "ending_manuscript_word_count")
+    private Integer endingManuscriptWordCount;
 
-    @Column(nullable = false)
-    private Integer netWordCountChange;
+    @Column(nullable = false, name = "productive_word_count_change")
+    private Integer productiveWordCountChange;
+
+    @Column(nullable = false, name = "manuscript_adjustment_word_count")
+    private Integer manuscriptAdjustmentWordCount;
 
     @Column(nullable = false, updatable = false)
     private OffsetDateTime createdAt;
@@ -58,6 +61,9 @@ public class DailyWritingProgress {
         OffsetDateTime now = OffsetDateTime.now();
         createdAt = now;
         updatedAt = now;
+        if (manuscriptAdjustmentWordCount == null) {
+            manuscriptAdjustmentWordCount = 0;
+        }
     }
 
     @PreUpdate
@@ -94,27 +100,59 @@ public class DailyWritingProgress {
     }
 
     public Integer getStartWordCount() {
-        return startWordCount;
+        return startingManuscriptWordCount;
     }
 
     public void setStartWordCount(Integer startWordCount) {
-        this.startWordCount = startWordCount;
+        this.startingManuscriptWordCount = startWordCount;
     }
 
     public Integer getEndWordCount() {
-        return endWordCount;
+        return endingManuscriptWordCount;
     }
 
     public void setEndWordCount(Integer endWordCount) {
-        this.endWordCount = endWordCount;
+        this.endingManuscriptWordCount = endWordCount;
     }
 
     public Integer getNetWordCountChange() {
-        return netWordCountChange;
+        return productiveWordCountChange;
     }
 
     public void setNetWordCountChange(Integer netWordCountChange) {
-        this.netWordCountChange = netWordCountChange;
+        this.productiveWordCountChange = netWordCountChange;
+    }
+
+    public Integer getStartingManuscriptWordCount() {
+        return startingManuscriptWordCount;
+    }
+
+    public void setStartingManuscriptWordCount(Integer startingManuscriptWordCount) {
+        this.startingManuscriptWordCount = startingManuscriptWordCount;
+    }
+
+    public Integer getEndingManuscriptWordCount() {
+        return endingManuscriptWordCount;
+    }
+
+    public void setEndingManuscriptWordCount(Integer endingManuscriptWordCount) {
+        this.endingManuscriptWordCount = endingManuscriptWordCount;
+    }
+
+    public Integer getProductiveWordCountChange() {
+        return productiveWordCountChange;
+    }
+
+    public void setProductiveWordCountChange(Integer productiveWordCountChange) {
+        this.productiveWordCountChange = productiveWordCountChange;
+    }
+
+    public Integer getManuscriptAdjustmentWordCount() {
+        return manuscriptAdjustmentWordCount;
+    }
+
+    public void setManuscriptAdjustmentWordCount(Integer manuscriptAdjustmentWordCount) {
+        this.manuscriptAdjustmentWordCount = manuscriptAdjustmentWordCount;
     }
 
     public OffsetDateTime getCreatedAt() {
