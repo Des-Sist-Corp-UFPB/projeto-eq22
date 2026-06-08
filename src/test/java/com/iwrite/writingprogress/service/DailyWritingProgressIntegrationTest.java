@@ -70,7 +70,7 @@ class DailyWritingProgressIntegrationTest extends PostgresIntegrationTest {
     }
 
     @Test
-    void sceneDeleteUpdatesNetProgress() {
+    void sceneDeleteUpdatesManuscriptAdjustmentWithoutReducingProductiveProgress() {
         var book = createBook("delete progress");
         var section = createSection(book, "Part");
         var chapter = createChapter(section, "Chapter");
@@ -82,7 +82,9 @@ class DailyWritingProgressIntegrationTest extends PostgresIntegrationTest {
                 .orElseThrow();
         assertThat(progress.getStartWordCount()).isZero();
         assertThat(progress.getEndWordCount()).isZero();
-        assertThat(progress.getNetWordCountChange()).isZero();
+        assertThat(progress.getNetWordCountChange()).isEqualTo(4);
+        assertThat(progress.getManuscriptAdjustmentWordCount()).isEqualTo(-4);
+        assertThat(dashboardService.getDashboard(book.id()).writingProgress().consistency().writingDaysThisMonth()).isEqualTo(1);
     }
 
     @Test

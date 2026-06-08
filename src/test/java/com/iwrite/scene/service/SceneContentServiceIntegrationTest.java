@@ -10,6 +10,7 @@ import com.iwrite.sceneversion.dto.SceneVersionRestoreRequest;
 import com.iwrite.sceneversion.entity.SceneVersionSource;
 import com.iwrite.sceneversion.repository.SceneVersionRepository;
 import com.iwrite.support.PostgresIntegrationTest;
+import com.iwrite.writingprogress.ledger.entity.BookWordCountEvent;
 import com.iwrite.writingprogress.ledger.entity.BookWordCountEventType;
 import com.iwrite.writingprogress.ledger.repository.BookWordCountEventRepository;
 import com.iwrite.writingprogress.repository.DailyWritingProgressRepository;
@@ -21,6 +22,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 
 import java.util.List;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -453,10 +455,12 @@ class SceneContentServiceIntegrationTest extends PostgresIntegrationTest {
     }
 
     @Test
-    void sceneDeleteCreatesDeleteSafetySnapshotAndRetainsOrphanVersion() {
+    void sceneDeleteCreatesDeleteSafetyAndRecordsNonProductiveAdjustment() {
         StoryWorld world = createStoryWorld("version delete scene");
 
         sceneService.delete(world.scene().id());
+        entityManager.flush();
+        entityManager.clear();
 
         assertThat(sceneVersionRepository.findByOriginalSceneIdOrderByCreatedAtDesc(world.scene().id()))
                 .singleElement()
@@ -465,46 +469,117 @@ class SceneContentServiceIntegrationTest extends PostgresIntegrationTest {
                     assertThat(version.getContentText()).isEqualTo("scene words");
                     assertThat(version.getSource()).isEqualTo(SceneVersionSource.DELETE_SAFETY);
                 });
+        assertThat(deleteEventsForBook(world.book().id()))
+                .singleElement()
+                .satisfies(event -> {
+                    assertThat(event.getScene()).isNull();
+                    assertThat(event.getOriginalSceneId()).isEqualTo(world.scene().id());
+                    assertThat(event.getProductiveWordDelta()).isZero();
+                    assertThat(event.getManuscriptWordDelta()).isEqualTo(-2);
+                    assertThat(event.getContentRevisionBefore()).isEqualTo(world.scene().contentRevision());
+                    assertThat(event.getContentRevisionAfter()).isNull();
+                });
+        assertThat(progressRepository.findByBookIdAndProgressDate(world.book().id(), dailyWritingProgressService.today()))
+                .hasValueSatisfying(progress -> {
+                    assertThat(progress.getEndWordCount()).isZero();
+                    assertThat(progress.getNetWordCountChange()).isEqualTo(2);
+                    assertThat(progress.getManuscriptAdjustmentWordCount()).isEqualTo(-2);
+                });
     }
 
     @Test
-    void chapterDeleteCreatesDeleteSafetySnapshotForChildScene() {
+    void sceneDeleteWithZeroWordsDoesNotRecordUselessLedgerEvent() {
+        var book = createBook("version delete zero");
+        var section = createSection(book, "Part");
+        var chapter = createChapter(section, "Chapter");
+        var scene = createScene(chapter, "Empty Scene", com.iwrite.scene.entity.SceneStatus.DRAFT, 0, "");
+
+        sceneService.delete(scene.id());
+
+        assertThat(deleteEventsForBook(book.id())).isEmpty();
+    }
+
+    @Test
+    void chapterDeleteCreatesDeleteSafetyAndOneEventPerNonEmptyScene() {
         StoryWorld chapterWorld = createStoryWorld("version delete chapter");
+        var secondScene = createScene(chapterWorld.chapter(), "Second chapter scene", com.iwrite.scene.entity.SceneStatus.DRAFT, 1, "second scene words");
+        var emptyScene = createScene(chapterWorld.chapter(), "Empty chapter scene", com.iwrite.scene.entity.SceneStatus.DRAFT, 2, "");
 
         chapterService.delete(chapterWorld.chapter().id());
+        entityManager.flush();
+        entityManager.clear();
 
         assertThat(sceneVersionRepository.findByOriginalSceneIdOrderByCreatedAtDesc(chapterWorld.scene().id()))
                 .singleElement()
                 .satisfies(version -> assertThat(version.getSource()).isEqualTo(SceneVersionSource.DELETE_SAFETY));
+        assertThat(sceneVersionRepository.findByOriginalSceneIdOrderByCreatedAtDesc(secondScene.id()))
+                .singleElement()
+                .satisfies(version -> assertThat(version.getSource()).isEqualTo(SceneVersionSource.DELETE_SAFETY));
+        assertThat(sceneVersionRepository.findByOriginalSceneIdOrderByCreatedAtDesc(emptyScene.id()))
+                .singleElement()
+                .satisfies(version -> assertThat(version.getSource()).isEqualTo(SceneVersionSource.DELETE_SAFETY));
+
+        List<BookWordCountEvent> events = deleteEventsForBook(chapterWorld.book().id());
+        assertThat(events).hasSize(2);
+        assertThat(events)
+                .extracting(BookWordCountEvent::getOriginalSceneId)
+                .containsExactlyInAnyOrder(chapterWorld.scene().id(), secondScene.id());
+        assertThat(events.stream().map(BookWordCountEvent::getOperationId).collect(Collectors.toSet())).hasSize(1);
+        assertThat(events.stream().map(BookWordCountEvent::getIdempotencyKey).collect(Collectors.toSet())).hasSize(2);
+        assertThat(events.stream().mapToInt(BookWordCountEvent::getProductiveWordDelta).sum()).isZero();
+        assertThat(events.stream().mapToInt(BookWordCountEvent::getManuscriptWordDelta).sum()).isEqualTo(-5);
+        assertThat(progressRepository.findByBookIdAndProgressDate(chapterWorld.book().id(), dailyWritingProgressService.today()))
+                .hasValueSatisfying(progress -> {
+                    assertThat(progress.getEndWordCount()).isZero();
+                    assertThat(progress.getNetWordCountChange()).isEqualTo(5);
+                    assertThat(progress.getManuscriptAdjustmentWordCount()).isEqualTo(-5);
+                });
     }
 
     @Test
-    void sectionDeleteCreatesDeleteSafetySnapshotForChildScene() {
+    void sectionDeleteCreatesDeleteSafetyAndGroupedEventsAcrossNestedChapters() {
         StoryWorld sectionWorld = createStoryWorld("version delete section");
+        var secondChapter = createChapter(sectionWorld.section(), "Second chapter");
+        var secondScene = createScene(secondChapter, "Second section scene", com.iwrite.scene.entity.SceneStatus.DRAFT, 0, "nested scene words");
 
         sectionService.delete(sectionWorld.section().id());
+        entityManager.flush();
+        entityManager.clear();
 
         assertThat(sceneVersionRepository.findByOriginalSceneIdOrderByCreatedAtDesc(sectionWorld.scene().id()))
                 .singleElement()
                 .satisfies(version -> assertThat(version.getSource()).isEqualTo(SceneVersionSource.DELETE_SAFETY));
+        assertThat(sceneVersionRepository.findByOriginalSceneIdOrderByCreatedAtDesc(secondScene.id()))
+                .singleElement()
+                .satisfies(version -> assertThat(version.getSource()).isEqualTo(SceneVersionSource.DELETE_SAFETY));
+
+        List<BookWordCountEvent> events = deleteEventsForBook(sectionWorld.book().id());
+        assertThat(events).hasSize(2);
+        assertThat(events)
+                .extracting(BookWordCountEvent::getOriginalSceneId)
+                .containsExactlyInAnyOrder(sectionWorld.scene().id(), secondScene.id());
+        assertThat(events.stream().map(BookWordCountEvent::getOperationId).collect(Collectors.toSet())).hasSize(1);
+        assertThat(events.stream().map(BookWordCountEvent::getIdempotencyKey).collect(Collectors.toSet())).hasSize(2);
+        assertThat(events.stream().mapToInt(BookWordCountEvent::getProductiveWordDelta).sum()).isZero();
+        assertThat(events.stream().mapToInt(BookWordCountEvent::getManuscriptWordDelta).sum()).isEqualTo(-5);
     }
 
     @Test
-    void bookDeleteCascadesSceneVersions() {
+    void bookDeleteCascadesSceneVersionsAndLedgerRows() {
         StoryWorld world = createStoryWorld("version delete book");
-        sceneService.updateContent(
-                world.scene().id(),
-                new SceneContentRequest("{}", "new words", SceneVersionSource.MANUAL_SAVE, world.scene().contentRevision())
-        );
+        sceneService.delete(world.scene().id());
 
         entityManager.flush();
         entityManager.clear();
+        assertThat(sceneVersionRepository.countByOriginalSceneId(world.scene().id())).isEqualTo(1);
+        assertThat(deleteEventsForBook(world.book().id())).hasSize(1);
 
         bookService.delete(world.book().id());
         entityManager.flush();
         entityManager.clear();
 
         assertThat(sceneVersionRepository.countByOriginalSceneId(world.scene().id())).isZero();
+        assertThat(deleteEventsForBook(world.book().id())).isEmpty();
     }
 
     @Test
@@ -514,5 +589,13 @@ class SceneContentServiceIntegrationTest extends PostgresIntegrationTest {
                 new SceneContentRequest("{}", "words")
         )).isInstanceOf(ResourceNotFoundException.class)
                 .hasMessageContaining("Scene not found");
+    }
+
+    private List<BookWordCountEvent> deleteEventsForBook(UUID bookId) {
+        return wordCountEventRepository.findAll()
+                .stream()
+                .filter(event -> event.getBook().getId().equals(bookId))
+                .filter(event -> event.getEventType() == BookWordCountEventType.SCENE_DELETE)
+                .toList();
     }
 }

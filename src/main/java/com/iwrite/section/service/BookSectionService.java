@@ -7,7 +7,7 @@ import com.iwrite.common.exception.BadRequestException;
 import com.iwrite.common.exception.ResourceNotFoundException;
 import com.iwrite.common.validation.RequestValidation;
 import com.iwrite.scene.repository.SceneRepository;
-import com.iwrite.sceneversion.service.SceneVersionService;
+import com.iwrite.scene.service.SceneDeletionLedgerService;
 import com.iwrite.section.dto.BookSectionRequest;
 import com.iwrite.section.dto.BookSectionResponse;
 import com.iwrite.section.dto.BookSectionUpdateRequest;
@@ -30,18 +30,18 @@ public class BookSectionService {
     private final BookSectionRepository sectionRepository;
     private final BookService bookService;
     private final SceneRepository sceneRepository;
-    private final SceneVersionService sceneVersionService;
+    private final SceneDeletionLedgerService sceneDeletionLedgerService;
 
     public BookSectionService(
             BookSectionRepository sectionRepository,
             BookService bookService,
             SceneRepository sceneRepository,
-            SceneVersionService sceneVersionService
+            SceneDeletionLedgerService sceneDeletionLedgerService
     ) {
         this.sectionRepository = sectionRepository;
         this.bookService = bookService;
         this.sceneRepository = sceneRepository;
-        this.sceneVersionService = sceneVersionService;
+        this.sceneDeletionLedgerService = sceneDeletionLedgerService;
     }
 
     @Transactional
@@ -78,7 +78,7 @@ public class BookSectionService {
     @Transactional
     public void delete(UUID sectionId) {
         getSection(sectionId);
-        sceneVersionService.checkpointBeforeDelete(sceneRepository.findBySectionIdForUpdate(sectionId));
+        sceneDeletionLedgerService.prepareSceneDeletes(sceneRepository.findBySectionIdForUpdate(sectionId), UUID.randomUUID());
         sectionRepository.deleteById(sectionId);
     }
 

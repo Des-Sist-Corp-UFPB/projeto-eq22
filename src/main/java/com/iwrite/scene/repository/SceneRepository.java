@@ -29,11 +29,21 @@ public interface SceneRepository extends JpaRepository<Scene, UUID> {
     List<Scene> findByChapterIdOrderBySortOrderAsc(UUID chapterId);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
-    @Query("select scene from Scene scene where scene.chapter.id = :chapterId")
+    @Query("""
+            select scene
+            from Scene scene
+            where scene.chapter.id = :chapterId
+            order by scene.sortOrder, scene.id
+            """)
     List<Scene> findByChapterIdForUpdate(@Param("chapterId") UUID chapterId);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
-    @Query("select scene from Scene scene where scene.chapter.section.id = :sectionId")
+    @Query("""
+            select scene
+            from Scene scene
+            where scene.chapter.section.id = :sectionId
+            order by scene.chapter.sortOrder, scene.sortOrder, scene.id
+            """)
     List<Scene> findBySectionIdForUpdate(@Param("sectionId") UUID sectionId);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)

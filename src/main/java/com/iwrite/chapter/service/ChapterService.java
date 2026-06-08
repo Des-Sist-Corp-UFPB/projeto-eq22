@@ -10,7 +10,7 @@ import com.iwrite.common.exception.BadRequestException;
 import com.iwrite.common.exception.ResourceNotFoundException;
 import com.iwrite.common.validation.RequestValidation;
 import com.iwrite.scene.repository.SceneRepository;
-import com.iwrite.sceneversion.service.SceneVersionService;
+import com.iwrite.scene.service.SceneDeletionLedgerService;
 import com.iwrite.section.entity.BookSection;
 import com.iwrite.section.service.BookSectionService;
 import org.springframework.stereotype.Service;
@@ -29,18 +29,18 @@ public class ChapterService {
     private final ChapterRepository chapterRepository;
     private final BookSectionService sectionService;
     private final SceneRepository sceneRepository;
-    private final SceneVersionService sceneVersionService;
+    private final SceneDeletionLedgerService sceneDeletionLedgerService;
 
     public ChapterService(
             ChapterRepository chapterRepository,
             BookSectionService sectionService,
             SceneRepository sceneRepository,
-            SceneVersionService sceneVersionService
+            SceneDeletionLedgerService sceneDeletionLedgerService
     ) {
         this.chapterRepository = chapterRepository;
         this.sectionService = sectionService;
         this.sceneRepository = sceneRepository;
-        this.sceneVersionService = sceneVersionService;
+        this.sceneDeletionLedgerService = sceneDeletionLedgerService;
     }
 
     @Transactional
@@ -78,7 +78,7 @@ public class ChapterService {
     @Transactional
     public void delete(UUID chapterId) {
         getChapter(chapterId);
-        sceneVersionService.checkpointBeforeDelete(sceneRepository.findByChapterIdForUpdate(chapterId));
+        sceneDeletionLedgerService.prepareSceneDeletes(sceneRepository.findByChapterIdForUpdate(chapterId), UUID.randomUUID());
         chapterRepository.deleteById(chapterId);
     }
 

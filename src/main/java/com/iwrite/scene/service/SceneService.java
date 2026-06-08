@@ -57,6 +57,7 @@ public class SceneService {
     private final DailyWritingProgressService dailyWritingProgressService;
     private final ScenePlanningCompletenessService planningCompletenessService;
     private final SceneVersionService sceneVersionService;
+    private final SceneDeletionLedgerService sceneDeletionLedgerService;
     private final WordCountEventService wordCountEventService;
     private final BookWordCountEventRepository wordCountEventRepository;
 
@@ -70,6 +71,7 @@ public class SceneService {
             DailyWritingProgressService dailyWritingProgressService,
             ScenePlanningCompletenessService planningCompletenessService,
             SceneVersionService sceneVersionService,
+            SceneDeletionLedgerService sceneDeletionLedgerService,
             WordCountEventService wordCountEventService,
             BookWordCountEventRepository wordCountEventRepository
     ) {
@@ -82,6 +84,7 @@ public class SceneService {
         this.dailyWritingProgressService = dailyWritingProgressService;
         this.planningCompletenessService = planningCompletenessService;
         this.sceneVersionService = sceneVersionService;
+        this.sceneDeletionLedgerService = sceneDeletionLedgerService;
         this.wordCountEventService = wordCountEventService;
         this.wordCountEventRepository = wordCountEventRepository;
     }
@@ -261,12 +264,8 @@ public class SceneService {
     @Transactional
     public void delete(UUID sceneId) {
         Scene scene = getSceneForUpdate(sceneId);
-        UUID bookId = scene.getBook().getId();
-        int totalBefore = Math.toIntExact(sceneRepository.sumWordCountByBookId(bookId));
-        int totalAfter = totalBefore - wordCount(scene);
-        sceneVersionService.checkpointBeforeDelete(scene);
+        sceneDeletionLedgerService.prepareSceneDelete(scene);
         sceneRepository.delete(scene);
-        dailyWritingProgressService.recordWordCountChange(bookId, totalBefore, totalAfter);
     }
 
     @Transactional
