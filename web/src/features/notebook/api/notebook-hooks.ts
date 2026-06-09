@@ -1,6 +1,6 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   createNotebookCategory,
   createNotebookNote,
@@ -84,6 +84,7 @@ export function useNotebookNotes(bookId: string, categoryId?: string | null) {
     queryKey: notebookQueryKeys.notes(bookId, categoryId),
     queryFn: () => listNotebookNotes(bookId, categoryId),
     enabled: Boolean(bookId),
+    placeholderData: keepPreviousData,
   });
 }
 

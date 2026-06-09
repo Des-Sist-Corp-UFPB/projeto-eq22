@@ -70,13 +70,15 @@ export function NotebookPanel({ bookId }: NotebookPanelProps) {
   const [selectedNote, setSelectedNote] = useState<NotebookNote | null>(null);
   const [detailMode, setDetailMode] = useState<DetailMode>("empty");
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [removedCategoryId, setRemovedCategoryId] = useState<string | null>(null);
   const orderedCategories = useMemo(() => orderNotebookCategories(categoriesQuery.data ?? []), [categoriesQuery.data]);
+  const isInitialLoading = (categoriesQuery.isLoading && !categoriesQuery.data) || (notesQuery.isLoading && !notesQuery.data);
 
   const notes = useMemo(() => {
     const values = notesQuery.data ?? [];
     const filteredValues = values.filter((note) => noteMatchesFilters(note, categoryFilter, statusFilter, searchTerm));
 
-    if (!selectedNote || !noteMatchesFilters(selectedNote, categoryFilter, statusFilter, searchTerm)) {
+    if (!selectedNote) {
       return filteredValues;
     }
 
@@ -111,6 +113,7 @@ export function NotebookPanel({ bookId }: NotebookPanelProps) {
     setSelectedNote(null);
     setDetailMode("create");
     setSuccessMessage(null);
+    setRemovedCategoryId(null);
     resetMutations();
   }
 
@@ -118,6 +121,7 @@ export function NotebookPanel({ bookId }: NotebookPanelProps) {
     setSelectedNote(note);
     setDetailMode("edit");
     setSuccessMessage(null);
+    setRemovedCategoryId(null);
     resetMutations();
   }
 
@@ -126,6 +130,22 @@ export function NotebookPanel({ bookId }: NotebookPanelProps) {
     setDetailMode("empty");
     setSuccessMessage(null);
     resetMutations();
+  }
+
+  function handleCategoryFilterChange(filter: CategoryFilter) {
+    if (filter === categoryFilter) {
+      return;
+    }
+
+    setCategoryFilter(filter);
+  }
+
+  function handleStatusFilterChange(filter: StatusFilter) {
+    if (filter === statusFilter) {
+      return;
+    }
+
+    setStatusFilter(filter);
   }
 
   function handleSubmit(payload: NotebookNoteRequest) {
@@ -191,7 +211,12 @@ export function NotebookPanel({ bookId }: NotebookPanelProps) {
     updateCategoryMutation.mutate(
       { categoryId: category.id, payload: { name } },
       {
-        onSuccess: () => {
+        onSuccess: (updatedCategory) => {
+          setSelectedNote((current) =>
+            current?.categoryId === updatedCategory.id
+              ? { ...current, category: updatedCategory }
+              : current
+          );
           setSuccessMessage("Categoria atualizada com sucesso.");
         },
       }
@@ -200,7 +225,7 @@ export function NotebookPanel({ bookId }: NotebookPanelProps) {
 
   function handleDeleteCategory(category: NotebookCategory) {
     const confirmed = window.confirm(
-      `Excluir a categoria "${category.name}"? As notas desta categoria continuarão no caderno sem categoria.`
+      `Excluir a categoria "${category.name}"? As notas desta categoria serão movidas para "Sem categoria".`
     );
     if (!confirmed) {
       return;
@@ -208,6 +233,7 @@ export function NotebookPanel({ bookId }: NotebookPanelProps) {
 
     deleteCategoryMutation.mutate(category.id, {
       onSuccess: () => {
+        setRemovedCategoryId(category.id);
         if (categoryFilter === category.id) {
           setCategoryFilter("uncategorized");
         }
@@ -233,7 +259,7 @@ export function NotebookPanel({ bookId }: NotebookPanelProps) {
           </Button>
         </header>
 
-        {categoriesQuery.isLoading || notesQuery.isLoading ? <LoadingState label="Carregando caderno..." /> : null}
+        {isInitialLoading ? <LoadingState label="Carregando caderno..." /> : null}
 
         {categoriesQuery.isError ? (
           <ErrorState message="Não foi possível carregar as categorias do caderno. Verifique o backend e tente novamente." />
@@ -256,19 +282,14 @@ export function NotebookPanel({ bookId }: NotebookPanelProps) {
                 statusFilter={statusFilter}
                 searchTerm={searchTerm}
                 onSearchTermChange={setSearchTerm}
-                onCategoryFilterChange={(filter) => {
-                  setCategoryFilter(filter);
-                  clearDetail();
-                }}
-                onStatusFilterChange={(filter) => {
-                  setStatusFilter(filter);
-                  clearDetail();
-                }}
+                onCategoryFilterChange={handleCategoryFilterChange}
+                onStatusFilterChange={handleStatusFilterChange}
                 onOpenCategoryManager={() => setIsCategoryManagerOpen(true)}
               />
 
               <NotesList
                 notes={notes}
+                isFetching={notesQuery.isFetching && !notesQuery.isLoading}
                 selectedNoteId={detailMode === "edit" ? selectedNote?.id ?? null : null}
                 deletePendingNoteId={deleteMutation.isPending ? deleteMutation.variables ?? null : null}
                 onEditNote={startEdit}
@@ -283,6 +304,7 @@ export function NotebookPanel({ bookId }: NotebookPanelProps) {
                 <NotebookNoteForm
                   note={detailMode === "edit" ? selectedNote : null}
                   categories={orderedCategories}
+                  removedCategoryId={removedCategoryId}
                   isPending={activeMutation.isPending}
                   deletePending={deleteMutation.isPending && deleteMutation.variables === selectedNote?.id}
                   errorMessage={errorMessage}
@@ -511,12 +533,10 @@ function CategoryManagerPanel({
                 ) : (
                   <div className="flex flex-wrap items-center gap-2">
                     <p className="truncate text-sm font-medium text-zinc-800">{category.name}</p>
-                    {category.isDefault ? <Badge variant="outline">Padrão</Badge> : null}
                   </div>
                 )}
 
-                {category.isDefault ? null : (
-                  <div className="flex flex-wrap gap-1">
+                <div className="flex flex-wrap gap-1">
                     {isEditing ? (
                       <>
                         <Button
@@ -553,8 +573,7 @@ function CategoryManagerPanel({
                     >
                       {deletePendingCategoryId === category.id ? "..." : "Excluir"}
                     </Button>
-                  </div>
-                )}
+                </div>
               </div>
             );
           })}
@@ -582,12 +601,14 @@ function FilterButton({
 
 function NotesList({
   notes,
+  isFetching,
   selectedNoteId,
   deletePendingNoteId,
   onEditNote,
   onDeleteNote,
 }: {
   notes: NotebookNote[];
+  isFetching: boolean;
   selectedNoteId: string | null;
   deletePendingNoteId: string | null;
   onEditNote: (note: NotebookNote) => void;
@@ -599,6 +620,11 @@ function NotesList({
 
   return (
     <section className="grid min-h-0 content-start gap-2 overflow-y-auto pr-1" aria-label="Notas do caderno">
+      {isFetching ? (
+        <FeedbackMessage variant="info" className="px-1 text-xs">
+          Atualizando notas...
+        </FeedbackMessage>
+      ) : null}
       {notes.map((note) => (
         <article
           key={note.id}
@@ -651,6 +677,7 @@ function NotesList({
 function NotebookNoteForm({
   note,
   categories,
+  removedCategoryId,
   isPending,
   deletePending,
   errorMessage,
@@ -660,6 +687,7 @@ function NotebookNoteForm({
 }: {
   note: NotebookNote | null;
   categories: NotebookCategory[];
+  removedCategoryId: string | null;
   isPending: boolean;
   deletePending: boolean;
   errorMessage: string | null;
@@ -674,7 +702,18 @@ function NotebookNoteForm({
   useEffect(() => {
     setForm(note ? toFormState(note) : emptyForm);
     setValidationMessage(null);
-  }, [note]);
+  }, [note?.id]);
+
+  useEffect(() => {
+    if (!form.categoryId) {
+      return;
+    }
+
+    const categoryStillExists = categories.some((category) => category.id === form.categoryId);
+    if (removedCategoryId === form.categoryId || !categoryStillExists) {
+      setForm((current) => ({ ...current, categoryId: "" }));
+    }
+  }, [categories, form.categoryId, removedCategoryId]);
 
   function updateField(field: keyof NoteFormState, value: string) {
     setValidationMessage(null);
@@ -832,10 +871,6 @@ function orderNotebookCategories(categories: NotebookCategory[]) {
     const secondOutro = isOutro(second);
     if (firstOutro !== secondOutro) {
       return firstOutro ? 1 : -1;
-    }
-
-    if (first.isDefault !== second.isDefault) {
-      return first.isDefault ? -1 : 1;
     }
 
     if (first.sortOrder !== second.sortOrder) {

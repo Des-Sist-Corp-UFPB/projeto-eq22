@@ -2,16 +2,20 @@ package com.iwrite.notebook;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.iwrite.notebook.repository.NotebookCategoryRepository;
 import com.iwrite.support.PostgresIntegrationTest;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.context.transaction.TestTransaction;
 
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.Callable;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.hasItem;
@@ -34,41 +38,106 @@ class NotebookControllerIntegrationTest extends PostgresIntegrationTest {
     private ObjectMapper objectMapper;
 
     @Autowired
-    private NotebookCategoryRepository categoryRepository;
+    private JdbcTemplate jdbcTemplate;
 
     @Test
-    void getCategoriesLazilyCreatesDefaultsForExistingBook() throws Exception {
-        var book = createBook("Notebook defaults");
+    void getCategoriesInitializesStarterCategoriesOnceForExistingBook() throws Exception {
+        var book = createBook("Notebook starters");
 
         mockMvc.perform(get("/api/books/{bookId}/notebook/categories", book.id()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$", hasSize(8)))
                 .andExpect(jsonPath("$[0].name").value("Ideia"))
                 .andExpect(jsonPath("$[0].sortOrder").value(0))
-                .andExpect(jsonPath("$[0].isDefault").value(true))
                 .andExpect(jsonPath("$[7].name").value("Outro"));
+
+        assertSettingsCount(book.id(), 1);
 
         mockMvc.perform(get("/api/books/{bookId}/notebook/categories", book.id()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$", hasSize(8)))
-                .andExpect(jsonPath("$[?(@.name == 'Ideia' && @.isDefault == true)]", hasSize(1)))
-                .andExpect(jsonPath("$[?(@.name == 'Pesquisa' && @.isDefault == true)]", hasSize(1)))
-                .andExpect(jsonPath("$[?(@.name == 'Mundo' && @.isDefault == true)]", hasSize(1)))
-                .andExpect(jsonPath("$[?(@.name == 'Pergunta' && @.isDefault == true)]", hasSize(1)))
-                .andExpect(jsonPath("$[?(@.name == 'Trecho' && @.isDefault == true)]", hasSize(1)))
-                .andExpect(jsonPath("$[?(@.name == 'Outro' && @.isDefault == true)]", hasSize(1)));
+                .andExpect(jsonPath("$[?(@.name == 'Ideia')]", hasSize(1)))
+                .andExpect(jsonPath("$[?(@.name == 'Pesquisa')]", hasSize(1)))
+                .andExpect(jsonPath("$[?(@.name == 'Mundo')]", hasSize(1)))
+                .andExpect(jsonPath("$[?(@.name == 'Pergunta')]", hasSize(1)))
+                .andExpect(jsonPath("$[?(@.name == 'Trecho')]", hasSize(1)))
+                .andExpect(jsonPath("$[?(@.name == 'Outro')]", hasSize(1)));
     }
 
     @Test
-    void defaultCategorySeedingIgnoresExistingDefaultNameAndReturnsCategories() throws Exception {
-        var book = createBook("Notebook default race");
+    void concurrentFirstCategoryAccessInitializesStartersOnce() throws Exception {
+        var book = createBook("Notebook starter race");
+        TestTransaction.flagForCommit();
+        TestTransaction.end();
 
-        categoryRepository.insertDefaultCategoryIfMissing(UUID.randomUUID(), book.id(), "Ideia", 0);
+        var executor = Executors.newFixedThreadPool(2);
+        try {
+            Callable<Integer> request = () -> mockMvc.perform(get("/api/books/{bookId}/notebook/categories", book.id()))
+                    .andReturn()
+                    .getResponse()
+                    .getStatus();
 
+            var results = executor.invokeAll(java.util.List.of(request, request));
+            for (var result : results) {
+                org.assertj.core.api.Assertions.assertThat(result.get(5, TimeUnit.SECONDS)).isEqualTo(200);
+            }
+        } finally {
+            executor.shutdownNow();
+        }
+
+        TestTransaction.start();
+        assertSettingsCount(book.id(), 1);
         mockMvc.perform(get("/api/books/{bookId}/notebook/categories", book.id()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$", hasSize(8)))
-                .andExpect(jsonPath("$[?(@.name == 'Ideia' && @.isDefault == true)]", hasSize(1)));
+                .andExpect(jsonPath("$[?(@.name == 'Ideia')]", hasSize(1)))
+                .andExpect(jsonPath("$[?(@.name == 'Outro')]", hasSize(1)));
+    }
+
+    @Test
+    void createCategoryBeforeListAccessInitializesStartersFirst() throws Exception {
+        var book = createBook("Notebook create initializes starters");
+
+        postJson(
+                "/api/books/" + book.id() + "/notebook/categories",
+                Map.of("name", "Linha do tempo"),
+                201
+        );
+
+        assertSettingsCount(book.id(), 1);
+        mockMvc.perform(get("/api/books/{bookId}/notebook/categories", book.id()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(9)))
+                .andExpect(jsonPath("$[?(@.name == 'Ideia')]", hasSize(1)))
+                .andExpect(jsonPath("$[?(@.name == 'Linha do tempo')]", hasSize(1)));
+    }
+
+    @Test
+    void existingCategorizedBooksMarkedInitializedByBackfillDoNotReceiveStarters() throws Exception {
+        var book = createBook("Notebook backfilled settings");
+        UUID categoryId = UUID.randomUUID();
+        jdbcTemplate.update(
+                """
+                        insert into notebook_categories (id, book_id, name, sort_order, created_at, updated_at)
+                        values (?, ?, ?, 7, current_timestamp, current_timestamp)
+                        """,
+                categoryId,
+                book.id(),
+                "Categoria existente"
+        );
+        jdbcTemplate.update(
+                """
+                        insert into book_notebook_settings (book_id, defaults_initialized_at)
+                        values (?, current_timestamp)
+                        """,
+                book.id()
+        );
+
+        mockMvc.perform(get("/api/books/{bookId}/notebook/categories", book.id()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(1)))
+                .andExpect(jsonPath("$[0].id").value(categoryId.toString()))
+                .andExpect(jsonPath("$[0].name").value("Categoria existente"));
     }
 
     @Test
@@ -87,8 +156,7 @@ class NotebookControllerIntegrationTest extends PostgresIntegrationTest {
                         .content(json(Map.of("name", "Cronologia", "sortOrder", 3))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.name").value("Cronologia"))
-                .andExpect(jsonPath("$.sortOrder").value(3))
-                .andExpect(jsonPath("$.isDefault").value(false));
+                .andExpect(jsonPath("$.sortOrder").value(3));
 
         mockMvc.perform(delete("/api/notebook/categories/{categoryId}", categoryId))
                 .andExpect(status().isNoContent());
@@ -129,8 +197,8 @@ class NotebookControllerIntegrationTest extends PostgresIntegrationTest {
     }
 
     @Test
-    void creatingCategoryWithDefaultNameBeforeListingIsRejectedAndDefaultStillExists() throws Exception {
-        var book = createBook("Notebook default name collision");
+    void creatingCategoryWithStarterNameBeforeListingIsRejectedAndStarterStillExists() throws Exception {
+        var book = createBook("Notebook starter name collision");
 
         mockMvc.perform(post("/api/books/{bookId}/notebook/categories", book.id())
                         .contentType(MediaType.APPLICATION_JSON)
@@ -140,8 +208,7 @@ class NotebookControllerIntegrationTest extends PostgresIntegrationTest {
 
         mockMvc.perform(get("/api/books/{bookId}/notebook/categories", book.id()))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$[?(@.name == 'Ideia' && @.isDefault == true)]", hasSize(1)))
-                .andExpect(jsonPath("$[?(@.name == 'Ideia' && @.isDefault == false)]", hasSize(0)));
+                .andExpect(jsonPath("$[?(@.name == 'Ideia')]", hasSize(1)));
     }
 
     @Test
@@ -161,35 +228,55 @@ class NotebookControllerIntegrationTest extends PostgresIntegrationTest {
     }
 
     @Test
-    void deletingDefaultCategoryIsRejectedAndNotesRemainLinked() throws Exception {
-        var book = createBook("Notebook default category delete");
-        UUID defaultCategoryId = findDefaultCategoryId(book.id(), "Pesquisa");
-        UUID noteId = createNote(book.id(), "Nota padrao", "Conteudo", defaultCategoryId);
+    void deletingFormerStarterCategoryMovesNotesToUncategorizedAndDoesNotRecreateIt() throws Exception {
+        var book = createBook("Notebook starter category delete");
+        UUID starterCategoryId = findCategoryId(book.id(), "Pesquisa");
+        UUID noteId = createNote(book.id(), "Nota starter", "Conteudo", starterCategoryId);
 
-        mockMvc.perform(delete("/api/notebook/categories/{categoryId}", defaultCategoryId))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.messages", hasItem(containsString("Default notebook categories cannot be deleted"))));
+        mockMvc.perform(delete("/api/notebook/categories/{categoryId}", starterCategoryId))
+                .andExpect(status().isNoContent());
 
         mockMvc.perform(get("/api/notebook/notes/{noteId}", noteId))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.categoryId").value(defaultCategoryId.toString()))
-                .andExpect(jsonPath("$.category.name").value("Pesquisa"));
-    }
-
-    @Test
-    void renamingDefaultCategoryIsRejected() throws Exception {
-        var book = createBook("Notebook default category rename");
-        UUID defaultCategoryId = findDefaultCategoryId(book.id(), "Pesquisa");
-
-        mockMvc.perform(patch("/api/notebook/categories/{categoryId}", defaultCategoryId)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(json(Map.of("name", "Pesquisa editada"))))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.messages", hasItem(containsString("Default notebook categories cannot be renamed"))));
+                .andExpect(jsonPath("$.categoryId").value(nullValue()))
+                .andExpect(jsonPath("$.category").value(nullValue()))
+                .andExpect(jsonPath("$.title").value("Nota starter"));
 
         mockMvc.perform(get("/api/books/{bookId}/notebook/categories", book.id()))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$[?(@.id == '" + defaultCategoryId + "')].name").value(hasItem("Pesquisa")));
+                .andExpect(jsonPath("$[?(@.name == 'Pesquisa')]", hasSize(0)));
+    }
+
+    @Test
+    void renamingFormerStarterCategoryIsAllowedAndDoesNotRecreateOldName() throws Exception {
+        var book = createBook("Notebook starter category rename");
+        UUID starterCategoryId = findCategoryId(book.id(), "Pesquisa");
+
+        mockMvc.perform(patch("/api/notebook/categories/{categoryId}", starterCategoryId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of("name", "Pesquisa editada"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.name").value("Pesquisa editada"));
+
+        mockMvc.perform(get("/api/books/{bookId}/notebook/categories", book.id()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[?(@.id == '" + starterCategoryId + "')].name").value(hasItem("Pesquisa editada")))
+                .andExpect(jsonPath("$[?(@.name == 'Pesquisa')]", hasSize(0)));
+    }
+
+    @Test
+    void outroSortsLastCaseInsensitivelyAfterTrimming() throws Exception {
+        var book = createBook("Notebook outro sorting");
+        UUID outroId = findCategoryId(book.id(), "Outro");
+
+        mockMvc.perform(patch("/api/notebook/categories/{categoryId}", outroId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of("name", "  outro  ", "sortOrder", -10))))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(get("/api/books/{bookId}/notebook/categories", book.id()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[7].name").value("  outro  "));
     }
 
     @Test
@@ -345,18 +432,27 @@ class NotebookControllerIntegrationTest extends PostgresIntegrationTest {
         return UUID.fromString(category.get("id").asText());
     }
 
-    private UUID findDefaultCategoryId(UUID bookId, String name) throws Exception {
+    private UUID findCategoryId(UUID bookId, String name) throws Exception {
         String response = mockMvc.perform(get("/api/books/{bookId}/notebook/categories", bookId))
                 .andExpect(status().isOk())
                 .andReturn()
                 .getResponse()
                 .getContentAsString();
         for (JsonNode category : objectMapper.readTree(response)) {
-            if (name.equals(category.get("name").asText()) && category.get("isDefault").asBoolean()) {
+            if (name.equals(category.get("name").asText())) {
                 return UUID.fromString(category.get("id").asText());
             }
         }
-        throw new IllegalStateException("Default category not found: " + name);
+        throw new IllegalStateException("Category not found: " + name);
+    }
+
+    private void assertSettingsCount(UUID bookId, int expectedCount) {
+        Integer count = jdbcTemplate.queryForObject(
+                "select count(*) from book_notebook_settings where book_id = ?",
+                Integer.class,
+                bookId
+        );
+        org.assertj.core.api.Assertions.assertThat(count).isEqualTo(expectedCount);
     }
 
     private UUID createNote(UUID bookId, String title, String content, UUID categoryId) throws Exception {

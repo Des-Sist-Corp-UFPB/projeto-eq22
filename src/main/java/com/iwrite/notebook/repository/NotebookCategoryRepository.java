@@ -17,11 +17,11 @@ public interface NotebookCategoryRepository extends JpaRepository<NotebookCatego
 
     @Modifying
     @Query(value = """
-            insert into notebook_categories (id, book_id, name, sort_order, is_default, created_at, updated_at)
-            values (:id, :bookId, :name, :sortOrder, true, current_timestamp, current_timestamp)
+            insert into notebook_categories (id, book_id, name, sort_order, created_at, updated_at)
+            values (:id, :bookId, :name, :sortOrder, current_timestamp, current_timestamp)
             on conflict (book_id, lower(name)) do nothing
             """, nativeQuery = true)
-    int insertDefaultCategoryIfMissing(
+    int insertStarterCategoryIfMissing(
             @Param("id") UUID id,
             @Param("bookId") UUID bookId,
             @Param("name") String name,

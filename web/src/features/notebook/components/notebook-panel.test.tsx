@@ -5,10 +5,10 @@ import { NotebookPanel } from "@/features/notebook/components/notebook-panel";
 import type { NotebookCategory, NotebookNote, NotebookNoteStatus } from "@/features/notebook/types";
 import { renderWithClient } from "@/test/test-utils";
 
-const pesquisaCategory = categoryFixture("category-pesquisa", "Pesquisa", true, 1);
-const ideiaCategory = categoryFixture("category-ideia", "Ideia", true, 0);
-const customCategory = categoryFixture("category-custom", "Cronologia", false, 2);
-const outroCategory = categoryFixture("category-outro", "Outro", true, 99);
+const pesquisaCategory = categoryFixture("category-pesquisa", "Pesquisa", 1);
+const ideiaCategory = categoryFixture("category-ideia", "Ideia", 0);
+const customCategory = categoryFixture("category-custom", "Cronologia", 2);
+const outroCategory = categoryFixture("category-outro", "Outro", 99);
 
 const pesquisaNote = noteFixture({
   id: "note-pesquisa",
@@ -58,7 +58,7 @@ describe("NotebookPanel writing layout and status", () => {
     vi.clearAllMocks();
     mocks.listNotebookCategories.mockResolvedValue([customCategory, outroCategory, pesquisaCategory, ideiaCategory]);
     mocks.listNotebookNotes.mockResolvedValue([pesquisaNote, resolvedNote]);
-    mocks.createNotebookCategory.mockResolvedValue(categoryFixture("category-mundo", "Mundo", false, 3));
+    mocks.createNotebookCategory.mockResolvedValue(categoryFixture("category-mundo", "Mundo", 3));
     mocks.updateNotebookCategory.mockResolvedValue({ ...pesquisaCategory, name: "Pesquisa revisada" });
     mocks.deleteNotebookCategory.mockResolvedValue(undefined);
     mocks.createNotebookNote.mockResolvedValue(customNote);
@@ -171,15 +171,15 @@ describe("NotebookPanel writing layout and status", () => {
     expect(screen.getByDisplayValue(pesquisaNote.title)).toBeInTheDocument();
   });
 
-  test("categorias padrao nao exibem acoes de renomear ou excluir", async () => {
+  test("categorias iniciais exibem acoes de renomear e excluir sem badge Padrao", async () => {
     renderWithClient(<NotebookPanel bookId="book-1" />);
 
     fireEvent.click(await screen.findByRole("button", { name: "Gerenciar categorias" }));
     const defaultCategoryRow = screen.getByRole("group", { name: "Categoria Pesquisa" });
 
-    expect(within(defaultCategoryRow).queryByRole("button", { name: "Renomear" })).not.toBeInTheDocument();
-    expect(within(defaultCategoryRow).queryByRole("button", { name: "Excluir" })).not.toBeInTheDocument();
-    expect(within(defaultCategoryRow).getByText("Padrão")).toBeInTheDocument();
+    expect(within(defaultCategoryRow).getByRole("button", { name: "Renomear" })).toBeInTheDocument();
+    expect(within(defaultCategoryRow).getByRole("button", { name: "Excluir" })).toBeInTheDocument();
+    expect(within(defaultCategoryRow).queryByText("Padrão")).not.toBeInTheDocument();
   });
 
   test("categorias customizadas continuam exibindo acoes de renomear e excluir", async () => {
@@ -193,7 +193,11 @@ describe("NotebookPanel writing layout and status", () => {
   });
 
   test("renomear categoria atualiza categorias e notas", async () => {
-    mocks.updateNotebookCategory.mockResolvedValue({ ...customCategory, name: "Cronologia revisada" });
+    const renamedCategory = { ...customCategory, name: "Cronologia revisada" };
+    mocks.updateNotebookCategory.mockResolvedValue(renamedCategory);
+    mocks.listNotebookNotes
+      .mockResolvedValueOnce([pesquisaNote, resolvedNote])
+      .mockResolvedValueOnce([pesquisaNote, { ...resolvedNote, category: renamedCategory }]);
     renderWithClient(<NotebookPanel bookId="book-1" />);
 
     await screen.findByLabelText("Notas do caderno");
@@ -215,15 +219,43 @@ describe("NotebookPanel writing layout and status", () => {
       expect(mocks.listNotebookCategories).toHaveBeenCalledTimes(2);
       expect(mocks.listNotebookNotes).toHaveBeenCalledTimes(2);
     });
+    expect(await screen.findByText("Cronologia revisada")).toBeInTheDocument();
   });
 
-  test("excluir categoria da nota selecionada atualiza o editor para Sem categoria", async () => {
-    vi.spyOn(window, "confirm").mockReturnValue(true);
+  test("excluir categoria confirma movimento para Sem categoria e preserva conteudo do editor", async () => {
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
     renderWithClient(<NotebookPanel bookId="book-1" />);
 
     const notesList = await screen.findByLabelText("Notas do caderno");
     fireEvent.click(within(notesList).getByText(resolvedNote.title));
     expect(screen.getByLabelText("Categoria")).toHaveValue(customCategory.id);
+    fireEvent.change(screen.getByLabelText("Conteúdo"), { target: { value: "Rascunho ainda nao salvo" } });
+
+    fireEvent.click(screen.getByRole("button", { name: "Gerenciar categorias" }));
+    const customCategoryRow = screen.getByRole("group", { name: "Categoria Cronologia" });
+    fireEvent.click(within(customCategoryRow).getByRole("button", { name: "Excluir" }));
+
+    expect(confirmSpy).toHaveBeenCalledWith(
+      'Excluir a categoria "Cronologia"? As notas desta categoria serão movidas para "Sem categoria".'
+    );
+    await waitFor(() => {
+      expect(mocks.deleteNotebookCategory).toHaveBeenCalledWith(customCategory.id);
+    });
+    expect(screen.getByLabelText("Categoria")).toHaveValue("");
+    expect(screen.getByDisplayValue(resolvedNote.title)).toBeInTheDocument();
+    expect(screen.getByDisplayValue("Rascunho ainda nao salvo")).toBeInTheDocument();
+    expect(screen.getByLabelText("Status")).toHaveValue(resolvedNote.status);
+  });
+
+  test("excluir categoria usada como filtro ativo muda para Sem categoria", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    mocks.listNotebookNotes.mockResolvedValue([resolvedNote, { ...pesquisaNote, category: null, categoryId: null }]);
+    renderWithClient(<NotebookPanel bookId="book-1" />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Cronologia" }));
+    await waitFor(() => {
+      expect(mocks.listNotebookNotes).toHaveBeenLastCalledWith("book-1", customCategory.id);
+    });
 
     fireEvent.click(screen.getByRole("button", { name: "Gerenciar categorias" }));
     const customCategoryRow = screen.getByRole("group", { name: "Categoria Cronologia" });
@@ -232,10 +264,56 @@ describe("NotebookPanel writing layout and status", () => {
     await waitFor(() => {
       expect(mocks.deleteNotebookCategory).toHaveBeenCalledWith(customCategory.id);
     });
-    expect(screen.getByLabelText("Categoria")).toHaveValue("");
-    expect(screen.getByDisplayValue(resolvedNote.title)).toBeInTheDocument();
-    expect(screen.getByDisplayValue(resolvedNote.content ?? "")).toBeInTheDocument();
-    expect(screen.getByLabelText("Status")).toHaveValue(resolvedNote.status);
+    expect(screen.getByText("Mapa de referencias")).toBeInTheDocument();
+  });
+
+  test("clicar no filtro ativo nao refaz busca nem limpa editor", async () => {
+    renderWithClient(<NotebookPanel bookId="book-1" />);
+
+    const notesList = await screen.findByLabelText("Notas do caderno");
+    fireEvent.click(within(notesList).getByText(pesquisaNote.title));
+    fireEvent.change(screen.getByLabelText("Conteúdo"), { target: { value: "Rascunho em andamento" } });
+
+    expect(mocks.listNotebookNotes).toHaveBeenCalledTimes(1);
+    fireEvent.click(within(screen.getByLabelText("Filtros de categoria")).getByRole("button", { name: "Todas" }));
+
+    expect(mocks.listNotebookNotes).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("heading", { name: "Editar nota" })).toBeInTheDocument();
+    expect(screen.getByDisplayValue("Rascunho em andamento")).toBeInTheDocument();
+  });
+
+  test("trocar filtro mantem layout e editor montados durante refetch atrasado", async () => {
+    let resolveFilteredNotes: (notes: NotebookNote[]) => void = () => undefined;
+    mocks.listNotebookNotes
+      .mockResolvedValueOnce([pesquisaNote, resolvedNote])
+      .mockImplementation((_bookId: string, categoryId?: string | null) => {
+        if (categoryId === pesquisaCategory.id) {
+          return new Promise<NotebookNote[]>((resolve) => {
+            resolveFilteredNotes = resolve;
+          });
+        }
+        return Promise.resolve([pesquisaNote, resolvedNote]);
+      });
+    renderWithClient(<NotebookPanel bookId="book-1" />);
+
+    const notesList = await screen.findByLabelText("Notas do caderno");
+    fireEvent.click(within(notesList).getByText(resolvedNote.title));
+    fireEvent.change(screen.getByLabelText("Conteúdo"), { target: { value: "Edicao que nao pode sumir" } });
+
+    fireEvent.click(screen.getByRole("button", { name: "Pesquisa" }));
+
+    expect(screen.getByLabelText("Navegação do caderno")).toBeInTheDocument();
+    expect(screen.getByLabelText("Editor do caderno")).toBeInTheDocument();
+    expect(screen.queryByText("Carregando caderno...")).not.toBeInTheDocument();
+    expect(screen.getByDisplayValue("Edicao que nao pode sumir")).toBeInTheDocument();
+    expect(screen.getByText("Pergunta respondida")).toBeInTheDocument();
+
+    resolveFilteredNotes([pesquisaNote]);
+
+    await waitFor(() => {
+      expect(mocks.listNotebookNotes).toHaveBeenLastCalledWith("book-1", pesquisaCategory.id);
+    });
+    expect(screen.getByDisplayValue("Edicao que nao pode sumir")).toBeInTheDocument();
   });
 
   test("salvar nota selecionada apos excluir categoria nao reenvia categoria excluida", async () => {
@@ -268,13 +346,12 @@ describe("NotebookPanel writing layout and status", () => {
   });
 });
 
-function categoryFixture(id: string, name: string, isDefault: boolean, sortOrder: number): NotebookCategory {
+function categoryFixture(id: string, name: string, sortOrder: number): NotebookCategory {
   return {
     id,
     bookId: "book-1",
     name,
     sortOrder,
-    isDefault,
     createdAt: "2026-05-20T10:00:00Z",
     updatedAt: "2026-05-20T10:00:00Z",
   };
