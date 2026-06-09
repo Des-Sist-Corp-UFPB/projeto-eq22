@@ -25,6 +25,8 @@ import com.iwrite.section.entity.SectionType;
 import com.iwrite.section.service.BookSectionService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.stream.Collectors;
@@ -33,6 +35,14 @@ import java.util.stream.IntStream;
 @SpringBootTest
 @Transactional
 public abstract class PostgresIntegrationTest {
+
+    @DynamicPropertySource
+    static void testDatasourceProperties(DynamicPropertyRegistry registry) {
+        TestDatabaseInitializer.prepareDatabase();
+        registry.add("spring.datasource.url", TestDatabaseInitializer::testDbUrl);
+        registry.add("spring.datasource.username", TestDatabaseInitializer::username);
+        registry.add("spring.datasource.password", TestDatabaseInitializer::password);
+    }
 
     @Autowired
     protected BookService bookService;
