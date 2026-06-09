@@ -6,6 +6,7 @@ import com.iwrite.character.entity.Character;
 import com.iwrite.character.service.CharacterService;
 import com.iwrite.common.dto.ReorderRequest;
 import com.iwrite.common.exception.BadRequestException;
+import com.iwrite.common.exception.ConflictException;
 import com.iwrite.common.exception.ResourceNotFoundException;
 import com.iwrite.common.validation.RequestValidation;
 import com.iwrite.common.wordcount.WordCountService;
@@ -21,7 +22,15 @@ import com.iwrite.scene.dto.SceneUpdateRequest;
 import com.iwrite.scene.entity.Scene;
 import com.iwrite.scene.entity.SceneStatus;
 import com.iwrite.scene.repository.SceneRepository;
-import com.iwrite.writingprogress.service.DailyWritingProgressService;
+import com.iwrite.sceneversion.dto.SceneVersionRestoreRequest;
+import com.iwrite.sceneversion.entity.SceneVersion;
+import com.iwrite.sceneversion.entity.SceneVersionSource;
+import com.iwrite.sceneversion.service.SceneVersionService;
+import com.iwrite.writingprogress.ledger.entity.BookWordCountEvent;
+import com.iwrite.writingprogress.ledger.entity.BookWordCountEventType;
+import com.iwrite.writingprogress.ledger.repository.BookWordCountEventRepository;
+import com.iwrite.writingprogress.ledger.service.WordCountEventCommand;
+import com.iwrite.writingprogress.ledger.service.WordCountEventService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -29,6 +38,7 @@ import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.Function;
@@ -43,8 +53,11 @@ public class SceneService {
     private final CharacterService characterService;
     private final LocationService locationService;
     private final ItemService itemService;
-    private final DailyWritingProgressService dailyWritingProgressService;
     private final ScenePlanningCompletenessService planningCompletenessService;
+    private final SceneVersionService sceneVersionService;
+    private final SceneDeletionLedgerService sceneDeletionLedgerService;
+    private final WordCountEventService wordCountEventService;
+    private final BookWordCountEventRepository wordCountEventRepository;
 
     public SceneService(
             SceneRepository sceneRepository,
@@ -53,8 +66,11 @@ public class SceneService {
             CharacterService characterService,
             LocationService locationService,
             ItemService itemService,
-            DailyWritingProgressService dailyWritingProgressService,
-            ScenePlanningCompletenessService planningCompletenessService
+            ScenePlanningCompletenessService planningCompletenessService,
+            SceneVersionService sceneVersionService,
+            SceneDeletionLedgerService sceneDeletionLedgerService,
+            WordCountEventService wordCountEventService,
+            BookWordCountEventRepository wordCountEventRepository
     ) {
         this.sceneRepository = sceneRepository;
         this.chapterService = chapterService;
@@ -62,8 +78,11 @@ public class SceneService {
         this.characterService = characterService;
         this.locationService = locationService;
         this.itemService = itemService;
-        this.dailyWritingProgressService = dailyWritingProgressService;
         this.planningCompletenessService = planningCompletenessService;
+        this.sceneVersionService = sceneVersionService;
+        this.sceneDeletionLedgerService = sceneDeletionLedgerService;
+        this.wordCountEventService = wordCountEventService;
+        this.wordCountEventRepository = wordCountEventRepository;
     }
 
     @Transactional(readOnly = true)
@@ -93,7 +112,23 @@ public class SceneService {
         }
 
         Scene savedScene = sceneRepository.save(scene);
-        dailyWritingProgressService.recordWordCountChange(bookId, totalBefore, totalBefore + newWordCount);
+        if (newWordCount > 0) {
+            UUID operationId = UUID.randomUUID();
+            wordCountEventService.record(new WordCountEventCommand(
+                    bookId,
+                    savedScene.getId(),
+                    savedScene.getId(),
+                    savedScene.getTitle(),
+                    BookWordCountEventType.CONTENT_SAVE,
+                    newWordCount,
+                    newWordCount,
+                    operationId,
+                    operationId,
+                    null,
+                    savedScene.getContentRevision(),
+                    totalBefore + newWordCount
+            ));
+        }
 
         return SceneResponse.fromEntity(savedScene);
     }
@@ -125,16 +160,92 @@ public class SceneService {
 
     @Transactional
     public SceneResponse updateContent(UUID sceneId, SceneContentRequest request) {
-        Scene scene = getScene(sceneId);
+        Scene scene = getSceneForUpdate(sceneId);
+        rejectMissingOperationId(request.operationId());
+        SceneResponse idempotentRetryResponse = idempotentRetryResponse(scene, request);
+        if (idempotentRetryResponse != null) {
+            return idempotentRetryResponse;
+        }
+        rejectStaleContentRevision(scene, request.expectedContentRevision());
+        if (sameContent(scene, request.contentJson(), request.contentText())) {
+            return SceneResponse.fromEntity(scene);
+        }
+
+        SceneVersionSource source = contentSource(request.source());
         UUID bookId = scene.getBook().getId();
         int totalBefore = Math.toIntExact(sceneRepository.sumWordCountByBookId(bookId));
         int oldWordCount = wordCount(scene);
         int newWordCount = wordCountService.countWords(request.contentText());
+        int wordCountDelta = newWordCount - oldWordCount;
+        long revisionBefore = scene.getContentRevision();
 
+        sceneVersionService.checkpointBeforeContentOverwrite(scene, source);
         scene.setContentJson(request.contentJson());
         scene.setContentText(request.contentText());
         scene.setWordCount(newWordCount);
-        dailyWritingProgressService.recordWordCountChange(bookId, totalBefore, totalBefore - oldWordCount + newWordCount);
+        scene.incrementContentRevision();
+        if (source == SceneVersionSource.MANUAL_SAVE) {
+            sceneVersionService.checkpointAfterManualContentSave(scene);
+        }
+        wordCountEventService.record(new WordCountEventCommand(
+                bookId,
+                scene.getId(),
+                scene.getId(),
+                scene.getTitle(),
+                BookWordCountEventType.CONTENT_SAVE,
+                wordCountDelta,
+                wordCountDelta,
+                request.operationId(),
+                request.operationId(),
+                revisionBefore,
+                scene.getContentRevision(),
+                totalBefore + wordCountDelta
+        ));
+
+        return SceneResponse.fromEntity(scene);
+    }
+
+    @Transactional
+    public SceneResponse restoreVersion(UUID sceneId, UUID versionId, SceneVersionRestoreRequest request) {
+        Scene scene = getSceneForUpdate(sceneId);
+        rejectMissingOperationId(request.operationId());
+        SceneResponse idempotentRetryResponse = idempotentRestoreRetryResponse(scene, versionId, request);
+        if (idempotentRetryResponse != null) {
+            return idempotentRetryResponse;
+        }
+        rejectStaleContentRevision(scene, request.expectedContentRevision());
+        SceneVersion version = sceneVersionService.getCurrentSceneVersion(sceneId, versionId);
+
+        if (sameContent(scene, version.getContentJson(), version.getContentText())) {
+            return SceneResponse.fromEntity(scene);
+        }
+
+        UUID bookId = scene.getBook().getId();
+        int totalBefore = Math.toIntExact(sceneRepository.sumWordCountByBookId(bookId));
+        int previousWordCount = wordCount(scene);
+        int newWordCount = wordCountService.countWords(version.getContentText());
+        int manuscriptWordDelta = newWordCount - previousWordCount;
+        long revisionBefore = scene.getContentRevision();
+
+        sceneVersionService.checkpointBeforeRestore(scene);
+        scene.setContentJson(version.getContentJson());
+        scene.setContentText(version.getContentText());
+        scene.setWordCount(newWordCount);
+        scene.incrementContentRevision();
+        wordCountEventService.record(new WordCountEventCommand(
+                bookId,
+                scene.getId(),
+                scene.getId(),
+                scene.getTitle(),
+                BookWordCountEventType.VERSION_RESTORE,
+                0,
+                manuscriptWordDelta,
+                request.operationId(),
+                request.operationId(),
+                revisionBefore,
+                scene.getContentRevision(),
+                totalBefore + manuscriptWordDelta
+        ));
 
         return SceneResponse.fromEntity(scene);
     }
@@ -164,12 +275,9 @@ public class SceneService {
 
     @Transactional
     public void delete(UUID sceneId) {
-        Scene scene = getScene(sceneId);
-        UUID bookId = scene.getBook().getId();
-        int totalBefore = Math.toIntExact(sceneRepository.sumWordCountByBookId(bookId));
-        int totalAfter = totalBefore - wordCount(scene);
+        Scene scene = getSceneForUpdate(sceneId);
+        sceneDeletionLedgerService.prepareSceneDelete(scene);
         sceneRepository.delete(scene);
-        dailyWritingProgressService.recordWordCountChange(bookId, totalBefore, totalAfter);
     }
 
     @Transactional
@@ -182,6 +290,11 @@ public class SceneService {
     @Transactional(readOnly = true)
     public Scene getScene(UUID sceneId) {
         return sceneRepository.findById(sceneId)
+                .orElseThrow(() -> new ResourceNotFoundException("Scene not found: " + sceneId));
+    }
+
+    private Scene getSceneForUpdate(UUID sceneId) {
+        return sceneRepository.findByIdForUpdate(sceneId)
                 .orElseThrow(() -> new ResourceNotFoundException("Scene not found: " + sceneId));
     }
 
@@ -279,6 +392,87 @@ public class SceneService {
 
     private int wordCount(Scene scene) {
         return scene.getWordCount() == null ? 0 : scene.getWordCount();
+    }
+
+    private void rejectStaleContentRevision(Scene scene, Long expectedContentRevision) {
+        if (expectedContentRevision == null) {
+            throw new BadRequestException("expectedContentRevision is required");
+        }
+        if (!expectedContentRevision.equals(scene.getContentRevision())) {
+            throw new ConflictException("Scene content has changed. Reload the scene before saving.");
+        }
+    }
+
+    private void rejectMissingOperationId(UUID operationId) {
+        if (operationId == null) {
+            throw new BadRequestException("operationId is required");
+        }
+    }
+
+    private SceneVersionSource contentSource(SceneVersionSource source) {
+        if (source == null) {
+            return SceneVersionSource.AUTO_SAVE;
+        }
+        if (source != SceneVersionSource.AUTO_SAVE && source != SceneVersionSource.MANUAL_SAVE) {
+            throw new BadRequestException("source must be AUTO_SAVE or MANUAL_SAVE");
+        }
+        return source;
+    }
+
+    private boolean sameContent(Scene scene, String contentJson, String contentText) {
+        return normalized(scene.getContentJson()).equals(normalized(contentJson))
+                && normalized(scene.getContentText()).equals(normalized(contentText));
+    }
+
+    private SceneResponse idempotentRetryResponse(Scene scene, SceneContentRequest request) {
+        if (request.expectedContentRevision() == null || request.expectedContentRevision().equals(scene.getContentRevision())) {
+            return null;
+        }
+
+        return wordCountEventRepository.findByBookIdAndIdempotencyKey(scene.getBook().getId(), request.operationId())
+                .filter(event -> isMatchingContentSaveRetry(event, scene, request))
+                .map(event -> SceneResponse.fromEntity(scene))
+                .orElse(null);
+    }
+
+    private SceneResponse idempotentRestoreRetryResponse(Scene scene, UUID versionId, SceneVersionRestoreRequest request) {
+        if (request.expectedContentRevision() == null || request.expectedContentRevision().equals(scene.getContentRevision())) {
+            return null;
+        }
+
+        return wordCountEventRepository.findByBookIdAndIdempotencyKey(scene.getBook().getId(), request.operationId())
+                .filter(event -> isMatchingVersionRestoreRetry(event, scene, versionId, request))
+                .map(event -> SceneResponse.fromEntity(scene))
+                .orElse(null);
+    }
+
+    private boolean isMatchingContentSaveRetry(BookWordCountEvent event, Scene scene, SceneContentRequest request) {
+        return event.getEventType() == BookWordCountEventType.CONTENT_SAVE
+                && event.getScene() != null
+                && event.getScene().getId().equals(scene.getId())
+                && Objects.equals(event.getOperationId(), request.operationId())
+                && Objects.equals(event.getContentRevisionBefore(), request.expectedContentRevision())
+                && sameContent(scene, request.contentJson(), request.contentText());
+    }
+
+    private boolean isMatchingVersionRestoreRetry(
+            BookWordCountEvent event,
+            Scene scene,
+            UUID versionId,
+            SceneVersionRestoreRequest request
+    ) {
+        SceneVersion version = sceneVersionService.getCurrentSceneVersion(scene.getId(), versionId);
+        return event.getEventType() == BookWordCountEventType.VERSION_RESTORE
+                && event.getScene() != null
+                && event.getScene().getId().equals(scene.getId())
+                && Objects.equals(event.getOperationId(), request.operationId())
+                && Objects.equals(event.getContentRevisionBefore(), request.expectedContentRevision())
+                && Objects.equals(event.getContentRevisionAfter(), scene.getContentRevision())
+                && sameContent(scene, version.getContentJson(), version.getContentText());
+    }
+
+    private String normalized(String value) {
+        return value == null ? "" : value;
     }
 
     private void rejectIncompletePlanning(Scene scene) {

@@ -142,10 +142,11 @@ public class BookDashboardService {
         return new DailyWritingProgressResponse(
                 progress.getProgressDate(),
                 progress.getDailyTargetWordCount(),
-                progress.getStartWordCount(),
-                progress.getEndWordCount(),
-                progress.getNetWordCountChange(),
-                dailyProgressPercent(progress.getNetWordCountChange(), progress.getDailyTargetWordCount())
+                progress.getStartingManuscriptWordCount(),
+                progress.getEndingManuscriptWordCount(),
+                progress.getProductiveWordCountChange(),
+                progress.getManuscriptAdjustmentWordCount(),
+                dailyProgressPercent(progress.getProductiveWordCountChange(), progress.getDailyTargetWordCount())
         );
     }
 
@@ -369,12 +370,12 @@ public class BookDashboardService {
         return Math.max(totalWordCount - targetWordCount, 0);
     }
 
-    private Double dailyProgressPercent(int netWordCountChange, Integer dailyTargetWordCount) {
+    private Double dailyProgressPercent(int productiveWordCountChange, Integer dailyTargetWordCount) {
         if (!hasValidTargetWordCount(dailyTargetWordCount)) {
             return null;
         }
 
-        return (netWordCountChange * 100.0) / dailyTargetWordCount;
+        return (productiveWordCountChange * 100.0) / dailyTargetWordCount;
     }
 
     private boolean hasValidTargetWordCount(Integer targetWordCount) {

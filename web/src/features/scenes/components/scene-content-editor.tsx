@@ -3,7 +3,8 @@ import type { ContentSaveStatus } from "@/features/scenes/components/scene-edito
 import { TiptapEditor } from "@/features/scenes/editor/tiptap-editor";
 
 type SceneContentEditorProps = {
-  editorKey: string;
+  contentKey: string;
+  sourceSceneId: string;
   contentJson: string;
   contentText: string;
   wordCount: number;
@@ -29,7 +30,8 @@ const saveStatusClasses: Record<ContentSaveStatus, string> = {
 };
 
 export function SceneContentEditor({
-  editorKey,
+  contentKey,
+  sourceSceneId,
   contentJson,
   contentText,
   wordCount,
@@ -56,12 +58,12 @@ export function SceneContentEditor({
         </div>
 
         <TiptapEditor
-          key={editorKey}
-          contentKey={editorKey}
+          key={contentKey}
+          contentKey={contentKey}
           initialContentJson={contentJson}
           initialContentText={contentText}
           onChange={(nextContentJson, nextContentText) =>
-            onContentChange(editorKey, JSON.stringify(nextContentJson), nextContentText)
+            onContentChange(sourceSceneId, JSON.stringify(nextContentJson), nextContentText)
           }
           className="min-h-[66vh] rounded-md border border-zinc-200 bg-white px-5 py-5 text-[17px] leading-8 shadow-sm shadow-zinc-100 focus:ring-2 focus:ring-zinc-200 md:px-8 md:py-7"
         />

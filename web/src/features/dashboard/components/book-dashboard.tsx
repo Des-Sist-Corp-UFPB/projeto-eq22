@@ -386,7 +386,7 @@ function DailyWritingGoalCard({
   const effectiveDailyTargetWordCount = savedTargetValue;
   const hasTarget = effectiveDailyTargetWordCount != null;
   const isTodayPlannedWritingDay = writingSchedule.todayPlannedWritingDay;
-  const progressPercent = hasTarget ? (today.netWordCountChange * 100.0) / effectiveDailyTargetWordCount : (today.progressPercent ?? 0);
+  const progressPercent = hasTarget ? (today.productiveWordCountChange * 100.0) / effectiveDailyTargetWordCount : (today.progressPercent ?? 0);
   const visualProgressPercent = clampPercent(progressPercent);
   const routineSummary = formatRoutineSummary(writingSchedule.plannedWritingDays, writingSchedule.restDays);
   const activeRoutinePreset = getRoutinePreset(selectedRoutineDays);
@@ -469,7 +469,7 @@ function DailyWritingGoalCard({
           {!isTodayPlannedWritingDay ? (
             <p className="mt-3 text-sm font-medium text-zinc-900">Hoje e um dia de descanso planejado.</p>
           ) : null}
-          <p className="mt-3 text-sm text-zinc-700">{isTodayPlannedWritingDay ? "Hoje" : "Extra hoje"}: {formatSignedWords(today.netWordCountChange)}</p>
+          <p className="mt-3 text-sm text-zinc-700">{isTodayPlannedWritingDay ? "Hoje" : "Extra hoje"}: {formatSignedWords(today.productiveWordCountChange)}</p>
         </div>
       ) : null}
 
@@ -478,14 +478,14 @@ function DailyWritingGoalCard({
           {!isTodayPlannedWritingDay ? (
             <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3">
               <p className="text-sm font-medium text-zinc-900">Hoje e um dia de descanso planejado.</p>
-              <p className="mt-1 text-sm text-zinc-600">Extra hoje: {formatSignedWords(today.netWordCountChange)}</p>
+              <p className="mt-1 text-sm text-zinc-600">Extra hoje: {formatSignedWords(today.productiveWordCountChange)}</p>
             </div>
           ) : null}
           {isTodayPlannedWritingDay ? (
             <div className="flex flex-wrap items-end justify-between gap-3">
               <div>
                 <p className="text-2xl font-semibold text-zinc-950">
-                  Hoje: {formatSignedNumber(today.netWordCountChange)} / {formatNumber(effectiveDailyTargetWordCount ?? 0)} palavras
+                  Hoje: {formatSignedNumber(today.productiveWordCountChange)} / {formatNumber(effectiveDailyTargetWordCount ?? 0)} palavras
                 </p>
                 <p className="mt-1 text-sm text-zinc-500">{formatPercent(progressPercent)} da meta diária</p>
               </div>
@@ -564,7 +564,7 @@ function DailyProgressChart({
 }) {
   const selectedPeriod = WRITING_PROGRESS_PERIODS.find((period) => period.value === progressPeriod) ?? WRITING_PROGRESS_PERIODS[0];
   const chartEntries = buildWritingProgressChartEntries(todayDate, recentDays, progressPeriod);
-  const positiveWordCounts = chartEntries.map((entry) => Math.max(entry.netWordCountChange, 0));
+  const positiveWordCounts = chartEntries.map((entry) => Math.max(entry.productiveWordCountChange, 0));
   const maxRecentWordCount = Math.max(0, ...positiveWordCounts);
   const chartReference = dailyTargetWordCount && dailyTargetWordCount > 0 ? Math.max(dailyTargetWordCount, maxRecentWordCount) : maxRecentWordCount;
   const chartBuckets = buildChartGeometryBuckets(chartEntries, chartReference);
@@ -572,13 +572,14 @@ function DailyProgressChart({
   const goalLineTop = !isMonthlyPeriod && dailyTargetWordCount && dailyTargetWordCount > 0 && chartReference > 0
     ? 100 - clampPercent((dailyTargetWordCount * 100) / chartReference)
     : null;
-  const totalWords = chartEntries.reduce((total, entry) => total + entry.netWordCountChange, 0);
-  const writingBuckets = chartEntries.filter((entry) => entry.netWordCountChange !== 0).length;
+  const totalWords = chartEntries.reduce((total, entry) => total + entry.productiveWordCountChange, 0);
+  const writingBuckets = chartEntries.filter((entry) => entry.productiveWordCountChange > 0).length;
   const averageWords = chartEntries.length === 0 ? 0 : Math.round(totalWords / chartEntries.length);
   const bestBucket = getBestWritingProgressBucket(chartEntries);
   const goalHitDays = dailyTargetWordCount && dailyTargetWordCount > 0
-    ? recentDays.filter((day) => day.netWordCountChange >= dailyTargetWordCount).length
+    ? recentDays.filter((day) => day.productiveWordCountChange >= dailyTargetWordCount).length
     : null;
+  const totalManuscriptAdjustments = recentDays.reduce((total, day) => total + day.manuscriptAdjustmentWordCount, 0);
   const periodLabel = getWritingProgressPeriodLabel(chartEntries, selectedPeriod.description, progressPeriod);
   const bucketColumnTemplate = `repeat(${Math.max(chartBuckets.length, 1)}, minmax(0, 1fr))`;
   const chartViewBoxWidth = Math.max(chartBuckets.length, 1);
@@ -655,13 +656,13 @@ function DailyProgressChart({
                       <div
                         role="presentation"
                         data-testid="daily-progress-vertical-bar"
-                        aria-label={`${bucket.accessibleLabel}: ${formatSignedWords(bucket.netWordCountChange)}`}
-                        className={`${barWidthClass} max-w-full rounded-t-sm transition-all duration-300 ease-out motion-reduce:transition-none ${bucket.netWordCountChange < 0 ? "bg-zinc-300" : "bg-emerald-500"}`}
+                        aria-label={`${bucket.accessibleLabel}: ${formatSignedWords(bucket.productiveWordCountChange)}`}
+                        className={`${barWidthClass} max-w-full rounded-t-sm bg-emerald-500 transition-all duration-300 ease-out motion-reduce:transition-none`}
                         style={{ height: `${bucket.barHeightPercent}%` }}
                       />
                     </div>
                     <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-zinc-500" data-testid="daily-progress-timeline-dot" />
-                    <p className="h-3.5 max-w-full text-center text-[10px] tabular-nums leading-tight text-zinc-600">{formatSignedNumber(bucket.netWordCountChange)}</p>
+                    <p className="h-3.5 max-w-full text-center text-[10px] tabular-nums leading-tight text-zinc-600">{formatSignedNumber(bucket.productiveWordCountChange)}</p>
                     <p className="h-3.5 max-w-full text-center text-[10px] font-medium leading-tight text-zinc-700">{bucket.axisLabel}</p>
                   </div>
                 );
@@ -676,11 +677,24 @@ function DailyProgressChart({
           <SummaryMetric label="Buckets com escrita" value={formatNumber(writingBuckets)} />
           <SummaryMetric
             label="Melhor bucket"
-            value={bestBucket ? formatSignedWords(bestBucket.netWordCountChange) : "0 palavras"}
+            value={bestBucket ? formatSignedWords(bestBucket.productiveWordCountChange) : "0 palavras"}
             detail={bestBucket ? bestBucket.accessibleLabel : undefined}
           />
           <SummaryMetric label="Dias em que bateu a meta" value={goalHitDays == null ? "Sem meta" : formatNumber(goalHitDays)} />
         </dl>
+        {totalManuscriptAdjustments !== 0 ? (
+          <div className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2" data-testid="manuscript-adjustment-summary">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold text-zinc-950">Ajustes do manuscrito</p>
+                <p className="mt-1 text-xs text-zinc-500">
+                  Alterações causadas por restaurações, exclusões ou importações. Não contam como produtividade.
+                </p>
+              </div>
+              <p className="text-sm font-semibold tabular-nums text-zinc-950">{formatSignedWords(totalManuscriptAdjustments)}</p>
+            </div>
+          </div>
+        ) : null}
       </div>
     </section>
   );
@@ -702,7 +716,7 @@ type WritingProgressChartEntry = {
   accessibleLabel: string;
   periodStart: string;
   periodEnd: string;
-  netWordCountChange: number;
+  productiveWordCountChange: number;
 };
 
 type WritingProgressChartBucket = WritingProgressChartEntry & {
@@ -726,7 +740,7 @@ function buildWritingProgressChartEntries(
 
 function buildChartGeometryBuckets(entries: WritingProgressChartEntry[], chartReference: number): WritingProgressChartBucket[] {
   return entries.map((entry, index) => {
-    const positiveWordCount = Math.max(entry.netWordCountChange, 0);
+    const positiveWordCount = Math.max(entry.productiveWordCountChange, 0);
     const progressPercent = chartReference > 0 ? clampPercent((positiveWordCount * 100) / chartReference) : 0;
     return {
       ...entry,
@@ -767,7 +781,7 @@ function buildDailyProgressBuckets(
   endDate: Date
 ) {
   const bucketCount = getWritingProgressBucketCount(progressPeriod);
-  const progressByDate = new Map(recentDays.map((day) => [day.date, day.netWordCountChange]));
+  const progressByDate = new Map(recentDays.map((day) => [day.date, day.productiveWordCountChange]));
 
   return Array.from({ length: bucketCount }, (_, index) => {
     const bucketDate = addDays(endDate, index - (bucketCount - 1));
@@ -778,7 +792,7 @@ function buildDailyProgressBuckets(
       accessibleLabel: formatDashboardDate(bucketDateKey),
       periodStart: bucketDateKey,
       periodEnd: bucketDateKey,
-      netWordCountChange: progressByDate.get(bucketDateKey) ?? 0,
+      productiveWordCountChange: progressByDate.get(bucketDateKey) ?? 0,
     };
   });
 }
@@ -792,7 +806,7 @@ function buildMonthlyProgressBuckets(
   const progressByMonth = new Map<string, number>();
   for (const day of recentDays) {
     const monthKey = day.date.slice(0, 7);
-    progressByMonth.set(monthKey, (progressByMonth.get(monthKey) ?? 0) + day.netWordCountChange);
+    progressByMonth.set(monthKey, (progressByMonth.get(monthKey) ?? 0) + day.productiveWordCountChange);
   }
 
   return Array.from({ length: bucketCount }, (_, index) => {
@@ -804,7 +818,7 @@ function buildMonthlyProgressBuckets(
       accessibleLabel: formatDashboardMonth(`${bucketMonthKey}-01`, true),
       periodStart: `${bucketMonthKey}-01`,
       periodEnd: formatIsoDate(new Date(bucketDate.getFullYear(), bucketDate.getMonth() + 1, 0)),
-      netWordCountChange: progressByMonth.get(bucketMonthKey) ?? 0,
+      productiveWordCountChange: progressByMonth.get(bucketMonthKey) ?? 0,
     };
   });
 }
@@ -814,7 +828,7 @@ function getBestWritingProgressBucket(entries: WritingProgressChartEntry[]) {
     return null;
   }
 
-  return entries.reduce((bestEntry, entry) => (entry.netWordCountChange > bestEntry.netWordCountChange ? entry : bestEntry));
+  return entries.reduce((bestEntry, entry) => (entry.productiveWordCountChange > bestEntry.productiveWordCountChange ? entry : bestEntry));
 }
 
 function getChartEndDate(todayDate: string) {

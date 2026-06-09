@@ -50,8 +50,8 @@ public class DailyWritingProgressService {
         DailyWritingProgress progress = progressRepository.findByBookIdAndProgressDate(bookId, progressDate)
                 .orElseGet(() -> createProgress(book, progressDate, totalBefore));
 
-        progress.setEndWordCount(totalAfter);
-        progress.setNetWordCountChange(totalAfter - progress.getStartWordCount());
+        progress.setEndingManuscriptWordCount(totalAfter);
+        progress.setProductiveWordCountChange(totalAfter - progress.getStartingManuscriptWordCount());
         progressRepository.save(progress);
     }
 
@@ -131,11 +131,11 @@ public class DailyWritingProgressService {
             }
 
             DailyWritingProgress progress = progressByDate.get(progressDate);
-            if (progressDate.equals(today) && progress == null) {
+            if (progressDate.equals(today) && !isProductiveWritingDay(progress)) {
                 progressDate = progressDate.minusDays(1);
                 continue;
             }
-            if (progress != null && progress.getNetWordCountChange() > WRITING_DAY_THRESHOLD) {
+            if (isProductiveWritingDay(progress)) {
                 streakDays++;
                 progressDate = progressDate.minusDays(1);
                 continue;
@@ -164,7 +164,7 @@ public class DailyWritingProgressService {
             }
 
             DailyWritingProgress progress = progressByDate.get(progressDate);
-            if (progress != null && progress.getNetWordCountChange() > WRITING_DAY_THRESHOLD) {
+            if (isProductiveWritingDay(progress)) {
                 currentStreakDays++;
                 bestStreakDays = Math.max(bestStreakDays, currentStreakDays);
             } else {
@@ -204,8 +204,7 @@ public class DailyWritingProgressService {
         while (!progressDate.isAfter(endDate)) {
             DailyWritingProgress progress = progressByDate.get(progressDate);
             if (writingScheduleService.isPlannedWritingDay(progressDate, schedules)
-                    && progress != null
-                    && progress.getNetWordCountChange() > WRITING_DAY_THRESHOLD) {
+                    && isProductiveWritingDay(progress)) {
                 successfulPlannedDays++;
             }
             progressDate = progressDate.plusDays(1);
@@ -214,7 +213,7 @@ public class DailyWritingProgressService {
     }
 
     private int countPositiveProgressBetween(UUID bookId, LocalDate startDate, LocalDate endDate) {
-        return Math.toIntExact(progressRepository.countByBookIdAndProgressDateBetweenAndNetWordCountChangeGreaterThan(
+        return Math.toIntExact(progressRepository.countByBookIdAndProgressDateBetweenAndProductiveWordCountChangeGreaterThan(
                 bookId,
                 startDate,
                 endDate,
@@ -222,14 +221,19 @@ public class DailyWritingProgressService {
         ));
     }
 
+    private boolean isProductiveWritingDay(DailyWritingProgress progress) {
+        return progress != null && progress.getProductiveWordCountChange() > WRITING_DAY_THRESHOLD;
+    }
+
     private DailyWritingProgress createProgress(Book book, LocalDate progressDate, int totalBefore) {
         DailyWritingProgress progress = new DailyWritingProgress();
         progress.setBook(book);
         progress.setProgressDate(progressDate);
         progress.setDailyTargetWordCount(book.getDailyTargetWordCount());
-        progress.setStartWordCount(totalBefore);
-        progress.setEndWordCount(totalBefore);
-        progress.setNetWordCountChange(0);
+        progress.setStartingManuscriptWordCount(totalBefore);
+        progress.setEndingManuscriptWordCount(totalBefore);
+        progress.setProductiveWordCountChange(0);
+        progress.setManuscriptAdjustmentWordCount(0);
         return progress;
     }
 
@@ -240,9 +244,10 @@ public class DailyWritingProgressService {
         progress.setBook(book);
         progress.setProgressDate(progressDate);
         progress.setDailyTargetWordCount(book.getDailyTargetWordCount());
-        progress.setStartWordCount(currentTotalWordCount);
-        progress.setEndWordCount(currentTotalWordCount);
-        progress.setNetWordCountChange(0);
+        progress.setStartingManuscriptWordCount(currentTotalWordCount);
+        progress.setEndingManuscriptWordCount(currentTotalWordCount);
+        progress.setProductiveWordCountChange(0);
+        progress.setManuscriptAdjustmentWordCount(0);
         return progress;
     }
 

@@ -59,9 +59,10 @@ export type EntityUsageResponse = {
 export type DailyWritingProgressResponse = {
   date: string;
   dailyTargetWordCount: number | null;
-  startWordCount: number;
-  endWordCount: number;
-  netWordCountChange: number;
+  startingManuscriptWordCount: number;
+  endingManuscriptWordCount: number;
+  productiveWordCountChange: number;
+  manuscriptAdjustmentWordCount: number;
   progressPercent: number | null;
 };
 

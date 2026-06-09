@@ -21,6 +21,7 @@ type SceneEditorHeaderProps = {
   onExitFocusMode?: () => void;
   onToggleFullscreen?: () => void;
   onSaveContent: () => void;
+  onOpenHistory: () => void;
   onDeleteScene: (sceneTitle: string) => void;
 };
 
@@ -54,6 +55,7 @@ export function SceneEditorHeader({
   onExitFocusMode,
   onToggleFullscreen,
   onSaveContent,
+  onOpenHistory,
   onDeleteScene,
 }: SceneEditorHeaderProps) {
   return (
@@ -99,6 +101,9 @@ export function SceneEditorHeader({
           </Button>
           <Button type="button" variant="secondary" size="sm" onClick={onSaveContent} disabled={contentPending}>
             {contentPending ? "Salvando..." : "Salvar conteúdo"}
+          </Button>
+          <Button type="button" variant="ghost" size="sm" onClick={onOpenHistory}>
+            Histórico
           </Button>
           <Button
             type="button"

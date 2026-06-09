@@ -5,10 +5,13 @@ import com.iwrite.book.dto.BookUpdateRequest;
 import com.iwrite.book.entity.Book;
 import com.iwrite.dashboard.service.BookDashboardService;
 import com.iwrite.scene.dto.SceneContentRequest;
+import com.iwrite.scene.dto.SceneResponse;
 import com.iwrite.scene.entity.SceneStatus;
 import com.iwrite.support.PostgresIntegrationTest;
 import com.iwrite.writingprogress.entity.DailyWritingProgress;
 import com.iwrite.writingprogress.repository.DailyWritingProgressRepository;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.TestConfiguration;
@@ -34,6 +37,9 @@ class DailyWritingProgressIntegrationTest extends PostgresIntegrationTest {
     @Autowired
     private BookDashboardService dashboardService;
 
+    @PersistenceContext
+    private EntityManager entityManager;
+
     @Test
     void sceneContentUpdateCreatesTodayProgressFromBeforeAndAfterTotals() {
         var book = createBook("content progress");
@@ -45,9 +51,9 @@ class DailyWritingProgressIntegrationTest extends PostgresIntegrationTest {
 
         DailyWritingProgress progress = progressRepository.findByBookIdAndProgressDate(book.id(), TODAY)
                 .orElseThrow();
-        assertThat(progress.getStartWordCount()).isZero();
-        assertThat(progress.getEndWordCount()).isEqualTo(5);
-        assertThat(progress.getNetWordCountChange()).isEqualTo(5);
+        assertThat(progress.getStartingManuscriptWordCount()).isZero();
+        assertThat(progress.getEndingManuscriptWordCount()).isEqualTo(5);
+        assertThat(progress.getProductiveWordCountChange()).isEqualTo(5);
     }
 
     @Test
@@ -57,19 +63,19 @@ class DailyWritingProgressIntegrationTest extends PostgresIntegrationTest {
         var chapter = createChapter(section, "Chapter");
         var scene = createScene(chapter, "Scene", SceneStatus.DRAFT, 0, "");
 
-        sceneService.updateContent(scene.id(), new SceneContentRequest("{}", wordText(2)));
-        sceneService.updateContent(scene.id(), new SceneContentRequest("{}", wordText(5)));
+        SceneResponse firstSave = sceneService.updateContent(scene.id(), new SceneContentRequest("{}", wordText(2)));
+        sceneService.updateContent(scene.id(), new SceneContentRequest("{}", wordText(5), null, firstSave.contentRevision()));
 
         assertThat(progressRepository.countByBookIdAndProgressDate(book.id(), TODAY)).isEqualTo(1);
         DailyWritingProgress progress = progressRepository.findByBookIdAndProgressDate(book.id(), TODAY)
                 .orElseThrow();
-        assertThat(progress.getStartWordCount()).isZero();
-        assertThat(progress.getEndWordCount()).isEqualTo(5);
-        assertThat(progress.getNetWordCountChange()).isEqualTo(5);
+        assertThat(progress.getStartingManuscriptWordCount()).isZero();
+        assertThat(progress.getEndingManuscriptWordCount()).isEqualTo(5);
+        assertThat(progress.getProductiveWordCountChange()).isEqualTo(5);
     }
 
     @Test
-    void sceneDeleteUpdatesNetProgress() {
+    void sceneDeleteUpdatesManuscriptAdjustmentWithoutReducingProductiveProgress() {
         var book = createBook("delete progress");
         var section = createSection(book, "Part");
         var chapter = createChapter(section, "Chapter");
@@ -79,9 +85,36 @@ class DailyWritingProgressIntegrationTest extends PostgresIntegrationTest {
 
         DailyWritingProgress progress = progressRepository.findByBookIdAndProgressDate(book.id(), TODAY)
                 .orElseThrow();
-        assertThat(progress.getStartWordCount()).isZero();
-        assertThat(progress.getEndWordCount()).isZero();
-        assertThat(progress.getNetWordCountChange()).isZero();
+        assertThat(progress.getStartingManuscriptWordCount()).isZero();
+        assertThat(progress.getEndingManuscriptWordCount()).isZero();
+        assertThat(progress.getProductiveWordCountChange()).isEqualTo(4);
+        assertThat(progress.getManuscriptAdjustmentWordCount()).isEqualTo(-4);
+        assertThat(dashboardService.getDashboard(book.id()).writingProgress().consistency().writingDaysThisMonth()).isEqualTo(1);
+    }
+
+    @Test
+    void sceneCreationAfterPriorManuscriptAdjustmentAddsOnlyCreatedWordsToProductiveProgress() {
+        var book = createBook("create after adjustment");
+        var section = createSection(book, "Part");
+        var chapter = createChapter(section, "Chapter");
+        createScene(chapter, "Existing Scene", SceneStatus.DRAFT, 0, wordText(100));
+        DailyWritingProgress adjustedProgress = progressRepository.findByBookIdAndProgressDate(book.id(), TODAY)
+                .orElseThrow();
+        adjustedProgress.setProductiveWordCountChange(0);
+        adjustedProgress.setManuscriptAdjustmentWordCount(100);
+        adjustedProgress.setEndingManuscriptWordCount(100);
+        progressRepository.save(adjustedProgress);
+
+        createScene(chapter, "New Scene", SceneStatus.DRAFT, 1, wordText(5));
+        entityManager.flush();
+        entityManager.clear();
+
+        DailyWritingProgress progress = progressRepository.findByBookIdAndProgressDate(book.id(), TODAY)
+                .orElseThrow();
+        assertThat(progress.getStartingManuscriptWordCount()).isZero();
+        assertThat(progress.getEndingManuscriptWordCount()).isEqualTo(105);
+        assertThat(progress.getProductiveWordCountChange()).isEqualTo(5);
+        assertThat(progress.getManuscriptAdjustmentWordCount()).isEqualTo(100);
     }
 
     @Test
@@ -92,9 +125,10 @@ class DailyWritingProgressIntegrationTest extends PostgresIntegrationTest {
 
         assertThat(dashboard.writingProgress().today().date()).isEqualTo(TODAY);
         assertThat(dashboard.writingProgress().today().dailyTargetWordCount()).isNull();
-        assertThat(dashboard.writingProgress().today().startWordCount()).isZero();
-        assertThat(dashboard.writingProgress().today().endWordCount()).isZero();
-        assertThat(dashboard.writingProgress().today().netWordCountChange()).isZero();
+        assertThat(dashboard.writingProgress().today().startingManuscriptWordCount()).isZero();
+        assertThat(dashboard.writingProgress().today().endingManuscriptWordCount()).isZero();
+        assertThat(dashboard.writingProgress().today().productiveWordCountChange()).isZero();
+        assertThat(dashboard.writingProgress().today().manuscriptAdjustmentWordCount()).isZero();
         assertThat(dashboard.writingProgress().today().progressPercent()).isNull();
         assertThat(dashboard.writingProgress().recentDays()).isEmpty();
     }
@@ -118,11 +152,67 @@ class DailyWritingProgressIntegrationTest extends PostgresIntegrationTest {
 
         assertThat(dashboard.writingProgress().today().date()).isEqualTo(today);
         assertThat(dashboard.writingProgress().today().dailyTargetWordCount()).isEqualTo(6);
-        assertThat(dashboard.writingProgress().today().netWordCountChange()).isEqualTo(3);
+        assertThat(dashboard.writingProgress().today().productiveWordCountChange()).isEqualTo(3);
+        assertThat(dashboard.writingProgress().today().manuscriptAdjustmentWordCount()).isZero();
         assertThat(dashboard.writingProgress().today().progressPercent()).isEqualTo(50.0);
         assertThat(dashboard.writingProgress().recentDays())
                 .extracting(day -> day.date())
                 .containsExactly(today, today.minusDays(1), today.minusDays(2));
+    }
+
+    @Test
+    void dashboardExposesProductiveAndAdjustmentValuesSeparately() {
+        var book = createBook("adjustment dashboard");
+        BookUpdateRequest targetRequest = new BookUpdateRequest();
+        targetRequest.setDailyTargetWordCount(5);
+        bookService.update(book.id(), targetRequest);
+        Book persistedBook = bookService.getBook(book.id());
+
+        saveProgress(persistedBook, TODAY, 100, 112, 2, 10);
+
+        var today = dashboardService.getDashboard(book.id()).writingProgress().today();
+
+        assertThat(today.startingManuscriptWordCount()).isEqualTo(100);
+        assertThat(today.endingManuscriptWordCount()).isEqualTo(112);
+        assertThat(today.productiveWordCountChange()).isEqualTo(2);
+        assertThat(today.manuscriptAdjustmentWordCount()).isEqualTo(10);
+        assertThat(today.progressPercent()).isEqualTo(40.0);
+    }
+
+    @Test
+    void todayAdjustmentWithoutProductiveWritingDoesNotBreakCurrentStreak() {
+        var book = createBook("adjustment keeps streak");
+        LocalDate today = TODAY;
+        Book persistedBook = bookService.getBook(book.id());
+
+        saveProgress(persistedBook, today.minusDays(1), 100, 104, 4, 0);
+        saveProgress(persistedBook, today, 104, 99, 0, -5);
+
+        var consistency = dashboardService.getDashboard(book.id()).writingProgress().consistency();
+
+        assertThat(consistency.currentStreakDays()).isEqualTo(1);
+        assertThat(consistency.writingDaysThisMonth()).isEqualTo(1);
+        assertThat(consistency.recentWritingDays()).isEqualTo(1);
+        assertThat(consistency.recentSuccessfulPlannedWritingDays()).isEqualTo(1);
+    }
+
+    @Test
+    void dashboardTotalWordCountComesFromLiveScenesNotDailyRollupEndingTotal() {
+        var book = createBook("live total dashboard");
+        var section = createSection(book, "Part");
+        var chapter = createChapter(section, "Chapter");
+        createScene(chapter, "Scene", SceneStatus.DRAFT, 0, wordText(3));
+        DailyWritingProgress progress = progressRepository.findByBookIdAndProgressDate(book.id(), TODAY)
+                .orElseThrow();
+        progress.setEndingManuscriptWordCount(999);
+        progress.setProductiveWordCountChange(1);
+        progress.setManuscriptAdjustmentWordCount(998);
+        progressRepository.save(progress);
+
+        var dashboard = dashboardService.getDashboard(book.id());
+
+        assertThat(dashboard.totalWordCount()).isEqualTo(3);
+        assertThat(dashboard.writingProgress().today().endingManuscriptWordCount()).isEqualTo(999);
     }
 
     @Test
@@ -155,7 +245,7 @@ class DailyWritingProgressIntegrationTest extends PostgresIntegrationTest {
     }
 
     @Test
-    void dashboardCurrentStreakBreaksWhenTodayIsZero() {
+    void dashboardCurrentStreakFallsBackToYesterdayWhenTodayHasNoProductiveWriting() {
         LocalDate today = TODAY;
         var zeroTodayBook = createBook("current streak zero today");
         Book persistedZeroTodayBook = bookService.getBook(zeroTodayBook.id());
@@ -164,7 +254,7 @@ class DailyWritingProgressIntegrationTest extends PostgresIntegrationTest {
         saveProgress(persistedZeroTodayBook, today, 3, 3);
 
         assertThat(dashboardService.getDashboard(zeroTodayBook.id()).writingProgress().consistency().currentStreakDays())
-                .isZero();
+                .isEqualTo(2);
     }
 
     @Test
@@ -308,7 +398,7 @@ class DailyWritingProgressIntegrationTest extends PostgresIntegrationTest {
         var consistency = dashboard.writingProgress().consistency();
 
         assertThat(dashboard.writingSchedule().todayPlannedWritingDay()).isFalse();
-        assertThat(dashboard.writingProgress().today().netWordCountChange()).isEqualTo(3);
+        assertThat(dashboard.writingProgress().today().productiveWordCountChange()).isEqualTo(3);
         assertThat(consistency.currentStreakDays()).isEqualTo(1);
         assertThat(consistency.writingDaysThisMonth()).isEqualTo(2);
     }
@@ -338,14 +428,33 @@ class DailyWritingProgressIntegrationTest extends PostgresIntegrationTest {
         assertThat(consistency.recentPlannedWritingDaysPercent()).isEqualTo(20.0);
     }
 
-    private void saveProgress(Book book, LocalDate progressDate, int startWordCount, int endWordCount) {
+    private void saveProgress(Book book, LocalDate progressDate, int startingManuscriptWordCount, int endingManuscriptWordCount) {
+        saveProgress(
+                book,
+                progressDate,
+                startingManuscriptWordCount,
+                endingManuscriptWordCount,
+                endingManuscriptWordCount - startingManuscriptWordCount,
+                0
+        );
+    }
+
+    private void saveProgress(
+            Book book,
+            LocalDate progressDate,
+            int startingManuscriptWordCount,
+            int endingManuscriptWordCount,
+            int productiveWordCountChange,
+            int manuscriptAdjustmentWordCount
+    ) {
         DailyWritingProgress progress = new DailyWritingProgress();
         progress.setBook(book);
         progress.setProgressDate(progressDate);
         progress.setDailyTargetWordCount(book.getDailyTargetWordCount());
-        progress.setStartWordCount(startWordCount);
-        progress.setEndWordCount(endWordCount);
-        progress.setNetWordCountChange(endWordCount - startWordCount);
+        progress.setStartingManuscriptWordCount(startingManuscriptWordCount);
+        progress.setEndingManuscriptWordCount(endingManuscriptWordCount);
+        progress.setProductiveWordCountChange(productiveWordCountChange);
+        progress.setManuscriptAdjustmentWordCount(manuscriptAdjustmentWordCount);
         progressRepository.save(progress);
     }
 
