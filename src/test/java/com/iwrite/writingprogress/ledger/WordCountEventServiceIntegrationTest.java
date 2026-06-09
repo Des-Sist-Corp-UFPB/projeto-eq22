@@ -188,39 +188,43 @@ class WordCountEventServiceIntegrationTest extends PostgresIntegrationTest {
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
     void concurrentEventsForDifferentScenesDoNotLoseRollupIncrements() {
         var book = createBook("ledger concurrent");
-        var sceneA = createEmptyScene(book.id(), "Concurrent A");
-        var sceneB = createEmptyScene(book.id(), "Concurrent B");
-
         ExecutorService executor = Executors.newFixedThreadPool(6);
-        CountDownLatch start = new CountDownLatch(1);
-        List<CompletableFuture<Void>> futures = new ArrayList<>();
-        int eventCount = 12;
+        try {
+            var sceneA = createEmptyScene(book.id(), "Concurrent A");
+            var sceneB = createEmptyScene(book.id(), "Concurrent B");
 
-        for (int index = 0; index < eventCount; index++) {
-            SceneResponse scene = index % 2 == 0 ? sceneA : sceneB;
-            futures.add(CompletableFuture.runAsync(() -> {
-                await(start);
-                eventService.record(command(
-                        book.id(),
-                        scene,
-                        BookWordCountEventType.CONTENT_SAVE,
-                        1,
-                        1,
-                        UUID.randomUUID(),
-                        1
-                ));
-            }, executor));
+            CountDownLatch start = new CountDownLatch(1);
+            List<CompletableFuture<Void>> futures = new ArrayList<>();
+            int eventCount = 12;
+
+            for (int index = 0; index < eventCount; index++) {
+                SceneResponse scene = index % 2 == 0 ? sceneA : sceneB;
+                futures.add(CompletableFuture.runAsync(() -> {
+                    await(start);
+                    eventService.record(command(
+                            book.id(),
+                            scene,
+                            BookWordCountEventType.CONTENT_SAVE,
+                            1,
+                            1,
+                            UUID.randomUUID(),
+                            1
+                    ));
+                }, executor));
+            }
+
+            start.countDown();
+            futures.forEach(CompletableFuture::join);
+
+            DailyWritingProgress progress = progressRepository.findByBookIdAndProgressDate(book.id(), TODAY).orElseThrow();
+            assertThat(eventRepository.countByBookId(book.id())).isEqualTo(eventCount);
+            assertThat(progress.getEndingManuscriptWordCount()).isEqualTo(eventCount);
+            assertThat(progress.getProductiveWordCountChange()).isEqualTo(eventCount);
+            assertThat(progress.getManuscriptAdjustmentWordCount()).isZero();
+        } finally {
+            executor.shutdownNow();
+            bookService.delete(book.id());
         }
-
-        start.countDown();
-        futures.forEach(CompletableFuture::join);
-        executor.shutdown();
-
-        DailyWritingProgress progress = progressRepository.findByBookIdAndProgressDate(book.id(), TODAY).orElseThrow();
-        assertThat(eventRepository.countByBookId(book.id())).isEqualTo(eventCount);
-        assertThat(progress.getEndingManuscriptWordCount()).isEqualTo(eventCount);
-        assertThat(progress.getProductiveWordCountChange()).isEqualTo(eventCount);
-        assertThat(progress.getManuscriptAdjustmentWordCount()).isZero();
     }
 
     private SceneResponse createEmptyScene(UUID bookId, String title) {
