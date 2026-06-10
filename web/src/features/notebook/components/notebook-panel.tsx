@@ -7,6 +7,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { ErrorState, LoadingState } from "@/components/ui/feedback";
 import { FeedbackMessage } from "@/components/ui/feedback-message";
 import { TextAreaField, TextField } from "@/components/ui/text-field";
+import { ExportNotebookButton } from "@/features/export/components/export-notebook-button";
 import {
   useCreateNotebookCategory,
   useCreateNotebookNote,
@@ -254,9 +255,12 @@ export function NotebookPanel({ bookId }: NotebookPanelProps) {
             <p className="mt-1 text-sm text-zinc-500">Guarde notas gerais deste livro.</p>
           </div>
 
-          <Button type="button" variant="secondary" onClick={startCreate}>
-            Nova nota
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <ExportNotebookButton bookId={bookId} />
+            <Button type="button" variant="secondary" onClick={startCreate}>
+              Nova nota
+            </Button>
+          </div>
         </header>
 
         {isInitialLoading ? <LoadingState label="Carregando caderno..." /> : null}

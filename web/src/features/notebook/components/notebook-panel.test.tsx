@@ -42,6 +42,10 @@ const mocks = vi.hoisted(() => ({
   deleteNotebookNote: vi.fn(),
 }));
 
+const exportMocks = vi.hoisted(() => ({
+  downloadNotebookExport: vi.fn(),
+}));
+
 vi.mock("@/features/notebook/api/notebook-api", () => ({
   listNotebookCategories: mocks.listNotebookCategories,
   listNotebookNotes: mocks.listNotebookNotes,
@@ -53,9 +57,14 @@ vi.mock("@/features/notebook/api/notebook-api", () => ({
   deleteNotebookNote: mocks.deleteNotebookNote,
 }));
 
+vi.mock("@/features/export/api/export-api", () => ({
+  downloadNotebookExport: exportMocks.downloadNotebookExport,
+}));
+
 describe("NotebookPanel writing layout and status", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    exportMocks.downloadNotebookExport.mockResolvedValue(undefined);
     mocks.listNotebookCategories.mockResolvedValue([customCategory, outroCategory, pesquisaCategory, ideiaCategory]);
     mocks.listNotebookNotes.mockResolvedValue([pesquisaNote, resolvedNote]);
     mocks.createNotebookCategory.mockResolvedValue(categoryFixture("category-mundo", "Mundo", 3));
@@ -245,6 +254,119 @@ describe("NotebookPanel writing layout and status", () => {
     expect(screen.getByDisplayValue(resolvedNote.title)).toBeInTheDocument();
     expect(screen.getByDisplayValue("Rascunho ainda nao salvo")).toBeInTheDocument();
     expect(screen.getByLabelText("Status")).toHaveValue(resolvedNote.status);
+  });
+
+  test("acao de exportar caderno abre opcoes com notas abertas e resolvidas por padrao", async () => {
+    renderWithClient(<NotebookPanel bookId="book-1" />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Exportar caderno" }));
+
+    expect(screen.getByText("A exportação inclui todas as categorias do Caderno.")).toBeInTheDocument();
+    expect(screen.getByLabelText("TXT (.txt)")).toBeChecked();
+    expect(screen.getByLabelText("Markdown (.md)")).not.toBeChecked();
+    expect(screen.getByLabelText("Word (.docx)")).not.toBeChecked();
+    expect(screen.getByLabelText(/Incluir notas abertas/)).toBeChecked();
+    expect(screen.getByLabelText(/Incluir notas resolvidas/)).toBeChecked();
+  });
+
+  test("exportacao do caderno envia formato e opcoes selecionadas", async () => {
+    renderWithClient(<NotebookPanel bookId="book-1" />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Exportar caderno" }));
+    fireEvent.click(screen.getByLabelText("Word (.docx)"));
+    fireEvent.click(screen.getByLabelText(/Incluir notas resolvidas/));
+    fireEvent.click(screen.getByRole("button", { name: "Baixar caderno" }));
+
+    await waitFor(() => {
+      expect(exportMocks.downloadNotebookExport).toHaveBeenCalledWith("book-1", {
+        format: "docx",
+        includeOpen: true,
+        includeResolved: false,
+      });
+    });
+  });
+
+  test("exportacao do caderno ignora filtros atuais de categoria status e busca", async () => {
+    renderWithClient(<NotebookPanel bookId="book-1" />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Pesquisa" }));
+    fireEvent.click(screen.getByRole("button", { name: "Abertas" }));
+    fireEvent.change(screen.getByLabelText("Buscar notas"), { target: { value: "mapa" } });
+    fireEvent.click(screen.getByRole("button", { name: "Exportar caderno" }));
+    fireEvent.click(screen.getByLabelText("Markdown (.md)"));
+    fireEvent.click(screen.getByRole("button", { name: "Baixar caderno" }));
+
+    await waitFor(() => {
+      expect(exportMocks.downloadNotebookExport).toHaveBeenCalledWith("book-1", {
+        format: "md",
+        includeOpen: true,
+        includeResolved: true,
+      });
+    });
+    expect(exportMocks.downloadNotebookExport).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        selectedCategoryId: expect.anything(),
+        selectedStatus: expect.anything(),
+        searchTerm: expect.anything(),
+      })
+    );
+  });
+
+  test("exportacao do caderno valida selecao vazia de status e nao faz request", async () => {
+    renderWithClient(<NotebookPanel bookId="book-1" />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Exportar caderno" }));
+    fireEvent.click(screen.getByLabelText(/Incluir notas abertas/));
+    fireEvent.click(screen.getByLabelText(/Incluir notas resolvidas/));
+    fireEvent.click(screen.getByRole("button", { name: "Baixar caderno" }));
+
+    expect(screen.getByText("Selecione pelo menos um tipo de nota para exportar.")).toBeInTheDocument();
+    expect(exportMocks.downloadNotebookExport).not.toHaveBeenCalled();
+  });
+
+  test("exportacao pendente desabilita submit duplicado e falha mostra feedback", async () => {
+    let rejectExport: (error: Error) => void = () => undefined;
+    exportMocks.downloadNotebookExport.mockImplementation(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectExport = reject;
+        })
+    );
+    renderWithClient(<NotebookPanel bookId="book-1" />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Exportar caderno" }));
+    fireEvent.click(screen.getByRole("button", { name: "Baixar caderno" }));
+
+    expect(await screen.findByRole("button", { name: "Exportando..." })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Exportando..." }));
+    expect(exportMocks.downloadNotebookExport).toHaveBeenCalledTimes(1);
+
+    rejectExport(new Error("falhou"));
+
+    expect(await screen.findByText("Nao foi possivel exportar o caderno agora. Tente novamente.")).toBeInTheDocument();
+  });
+
+  test("exportacao nao altera filtros nem nota aberta", async () => {
+    renderWithClient(<NotebookPanel bookId="book-1" />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Pesquisa" }));
+    fireEvent.click(screen.getByRole("button", { name: "Abertas" }));
+    fireEvent.change(screen.getByLabelText("Buscar notas"), { target: { value: "mapa" } });
+    const notesList = await screen.findByLabelText("Notas do caderno");
+    fireEvent.click(within(notesList).getByText(pesquisaNote.title));
+    fireEvent.change(await screen.findByLabelText("Conteúdo"), { target: { value: "Rascunho preservado" } });
+
+    fireEvent.click(screen.getByRole("button", { name: "Exportar caderno" }));
+    fireEvent.click(screen.getByRole("button", { name: "Baixar caderno" }));
+
+    await waitFor(() => {
+      expect(exportMocks.downloadNotebookExport).toHaveBeenCalledTimes(1);
+    });
+    expect(screen.getByRole("button", { name: "Pesquisa" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Buscar notas")).toHaveValue("mapa");
+    expect(screen.getByRole("heading", { name: "Editar nota" })).toBeInTheDocument();
+    expect(screen.getByDisplayValue("Rascunho preservado")).toBeInTheDocument();
   });
 
   test("excluir categoria usada como filtro ativo muda para Sem categoria", async () => {
