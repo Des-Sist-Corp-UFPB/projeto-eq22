@@ -4,6 +4,9 @@ import com.iwrite.book.entity.Book;
 import com.iwrite.book.service.BookService;
 import com.iwrite.chapter.entity.Chapter;
 import com.iwrite.chapter.repository.ChapterRepository;
+import com.iwrite.export.ExportFile;
+import com.iwrite.export.ExportFileNameService;
+import com.iwrite.export.ExportFormat;
 import com.iwrite.scene.entity.Scene;
 import com.iwrite.scene.repository.SceneRepository;
 import com.iwrite.section.entity.BookSection;
@@ -17,9 +20,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.text.Normalizer;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -33,6 +35,8 @@ public class BookExportService {
     private final SceneRepository sceneRepository;
     private final TipTapMarkdownRenderer tipTapMarkdownRenderer;
     private final TipTapDocxRenderer tipTapDocxRenderer;
+    private final TipTapPlainTextRenderer tipTapPlainTextRenderer;
+    private final ExportFileNameService exportFileNameService;
 
     public BookExportService(
             BookService bookService,
@@ -40,7 +44,9 @@ public class BookExportService {
             ChapterRepository chapterRepository,
             SceneRepository sceneRepository,
             TipTapMarkdownRenderer tipTapMarkdownRenderer,
-            TipTapDocxRenderer tipTapDocxRenderer
+            TipTapDocxRenderer tipTapDocxRenderer,
+            TipTapPlainTextRenderer tipTapPlainTextRenderer,
+            ExportFileNameService exportFileNameService
     ) {
         this.bookService = bookService;
         this.sectionRepository = sectionRepository;
@@ -48,12 +54,60 @@ public class BookExportService {
         this.sceneRepository = sceneRepository;
         this.tipTapMarkdownRenderer = tipTapMarkdownRenderer;
         this.tipTapDocxRenderer = tipTapDocxRenderer;
+        this.tipTapPlainTextRenderer = tipTapPlainTextRenderer;
+        this.exportFileNameService = exportFileNameService;
+    }
+
+    @Transactional(readOnly = true)
+    public ExportFile exportManuscript(
+            UUID bookId,
+            ExportFormat format,
+            boolean includeSceneTitles,
+            boolean includeEmptyScenes
+    ) {
+        ManuscriptExport manuscript = getManuscriptExport(bookId);
+        String fileName = manuscriptFileName(manuscript.book(), format);
+
+        return switch (format) {
+            case TXT -> new ExportFile(
+                    exportTxt(manuscript, includeSceneTitles, includeEmptyScenes).getBytes(StandardCharsets.UTF_8),
+                    format.contentType(),
+                    fileName
+            );
+            case MD -> new ExportFile(
+                    exportMarkdown(manuscript, includeSceneTitles, includeEmptyScenes).getBytes(StandardCharsets.UTF_8),
+                    format.contentType(),
+                    fileName
+            );
+            case DOCX -> new ExportFile(
+                    exportDocx(manuscript, includeSceneTitles, includeEmptyScenes),
+                    format.contentType(),
+                    fileName
+            );
+        };
     }
 
     @Transactional(readOnly = true)
     public String exportMarkdown(UUID bookId, boolean includeSceneTitles, boolean includeEmptyScenes) {
-        ManuscriptExport manuscript = getManuscriptExport(bookId);
+        return exportMarkdown(getManuscriptExport(bookId), includeSceneTitles, includeEmptyScenes);
+    }
 
+    @Transactional(readOnly = true)
+    public byte[] exportDocx(UUID bookId, boolean includeSceneTitles, boolean includeEmptyScenes) {
+        return exportDocx(getManuscriptExport(bookId), includeSceneTitles, includeEmptyScenes);
+    }
+
+    public String getMarkdownFileName(UUID bookId) {
+        Book book = bookService.getBook(bookId);
+        return manuscriptFileName(book, ExportFormat.MD);
+    }
+
+    public String getDocxFileName(UUID bookId) {
+        Book book = bookService.getBook(bookId);
+        return manuscriptFileName(book, ExportFormat.DOCX);
+    }
+
+    private String exportMarkdown(ManuscriptExport manuscript, boolean includeSceneTitles, boolean includeEmptyScenes) {
         StringBuilder markdown = new StringBuilder();
         appendHeading(markdown, "#", manuscript.book().getTitle());
         appendOptionalBlock(markdown, manuscript.book().getSubtitle());
@@ -71,10 +125,7 @@ public class BookExportService {
         return markdown.toString();
     }
 
-    @Transactional(readOnly = true)
-    public byte[] exportDocx(UUID bookId, boolean includeSceneTitles, boolean includeEmptyScenes) {
-        ManuscriptExport manuscript = getManuscriptExport(bookId);
-
+    private byte[] exportDocx(ManuscriptExport manuscript, boolean includeSceneTitles, boolean includeEmptyScenes) {
         try (XWPFDocument document = new XWPFDocument();
              ByteArrayOutputStream outputStream = new ByteArrayOutputStream()) {
             appendDocxHeading(document, "Title", manuscript.book().getTitle());
@@ -97,14 +148,22 @@ public class BookExportService {
         }
     }
 
-    public String getMarkdownFileName(UUID bookId) {
-        Book book = bookService.getBook(bookId);
-        return getExportFileName(book, "md");
-    }
+    private String exportTxt(ManuscriptExport manuscript, boolean includeSceneTitles, boolean includeEmptyScenes) {
+        StringBuilder text = new StringBuilder();
+        appendTextBlock(text, manuscript.book().getTitle());
+        appendOptionalTextBlock(text, manuscript.book().getSubtitle());
+        appendOptionalTextBlock(text, manuscript.book().getDescription());
 
-    public String getDocxFileName(UUID bookId) {
-        Book book = bookService.getBook(bookId);
-        return getExportFileName(book, "docx");
+        for (BookSection section : manuscript.sections()) {
+            appendTextBlock(text, section.getTitle());
+
+            for (Chapter chapter : manuscript.chaptersBySection().getOrDefault(section.getId(), List.of())) {
+                appendTextBlock(text, chapter.getTitle());
+                appendTxtChapterScenes(text, manuscript.scenesByChapter().getOrDefault(chapter.getId(), List.of()), includeSceneTitles, includeEmptyScenes);
+            }
+        }
+
+        return normalizeLineEndings(text.toString());
     }
 
     private ManuscriptExport getManuscriptExport(UUID bookId) {
@@ -121,18 +180,8 @@ public class BookExportService {
         return new ManuscriptExport(book, sections, chaptersBySection, scenesByChapter);
     }
 
-    private String getExportFileName(Book book, String extension) {
-        String normalizedTitle = Normalizer.normalize(book.getTitle(), Normalizer.Form.NFD)
-                .replaceAll("\\p{M}", "")
-                .toLowerCase(Locale.ROOT)
-                .replaceAll("[^a-z0-9]+", "-")
-                .replaceAll("(^-+|-+$)", "");
-
-        if (normalizedTitle.isBlank()) {
-            normalizedTitle = "manuscrito";
-        }
-
-        return normalizedTitle + "." + extension;
+    private String manuscriptFileName(Book book, ExportFormat format) {
+        return exportFileNameService.fileName(book.getTitle(), "manuscrito", format.extension());
     }
 
     private void appendHeading(StringBuilder markdown, String marker, String title) {
@@ -203,6 +252,76 @@ public class BookExportService {
         }
 
         markdown.append(block);
+    }
+
+    private void appendTxtChapterScenes(
+            StringBuilder text,
+            List<Scene> scenes,
+            boolean includeSceneTitles,
+            boolean includeEmptyScenes
+    ) {
+        boolean hasPreviousSceneContent = false;
+
+        for (Scene scene : scenes) {
+            String sceneBlock = buildTxtSceneBlock(scene, includeSceneTitles, includeEmptyScenes);
+            if (sceneBlock == null) {
+                continue;
+            }
+
+            if (hasPreviousSceneContent && !includeSceneTitles) {
+                appendTextBlock(text, "***");
+            }
+
+            appendTextBlock(text, sceneBlock);
+            hasPreviousSceneContent = true;
+        }
+    }
+
+    private String buildTxtSceneBlock(Scene scene, boolean includeSceneTitles, boolean includeEmptyScenes) {
+        String sceneContent = getPlainSceneContent(scene);
+        boolean hasContent = sceneContent != null && !sceneContent.isBlank();
+
+        if (!hasContent && !includeEmptyScenes) {
+            return null;
+        }
+
+        StringBuilder sceneBlock = new StringBuilder();
+        if (includeSceneTitles) {
+            sceneBlock.append(scene.getTitle());
+        }
+        if (hasContent) {
+            if (!sceneBlock.isEmpty()) {
+                sceneBlock.append("\n\n");
+            }
+            sceneBlock.append(sceneContent);
+        }
+
+        return sceneBlock.isEmpty() ? null : sceneBlock.toString();
+    }
+
+    private String getPlainSceneContent(Scene scene) {
+        return tipTapPlainTextRenderer.render(scene.getContentJson())
+                .orElseGet(() -> scene.getContentText() == null || scene.getContentText().isBlank() ? null : normalizeLineEndings(scene.getContentText()));
+    }
+
+    private void appendOptionalTextBlock(StringBuilder text, String block) {
+        if (block == null || block.isBlank()) {
+            return;
+        }
+
+        appendTextBlock(text, block);
+    }
+
+    private void appendTextBlock(StringBuilder text, String block) {
+        if (!text.isEmpty()) {
+            text.append("\n\n");
+        }
+
+        text.append(normalizeLineEndings(block));
+    }
+
+    private String normalizeLineEndings(String text) {
+        return text.replaceAll("\\R", "\n");
     }
 
     private void appendDocxChapterScenes(

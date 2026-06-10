@@ -27,6 +27,199 @@ class BookExportIntegrationTest extends PostgresIntegrationTest {
     private MockMvc mockMvc;
 
     @Test
+    void canonicalTxtEndpointReturnsAttachmentWithPlainTextContentTypeAndFileName() throws Exception {
+        var book = createBook("Livro TXT Agil");
+        var section = createSection(book, "Parte");
+        var chapter = createChapter(section, "Capitulo");
+        createScene(chapter, "Cena", SceneStatus.DRAFT, 0, "texto da cena");
+
+        mockMvc.perform(get("/api/books/{bookId}/exports/manuscript", book.id())
+                        .param("format", "txt"))
+                .andExpect(status().isOk())
+                .andExpect(content().contentType("text/plain;charset=UTF-8"))
+                .andExpect(header().string(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"livro-txt-agil.txt\""))
+                .andExpect(header().string(HttpHeaders.ACCESS_CONTROL_EXPOSE_HEADERS, HttpHeaders.CONTENT_DISPOSITION))
+                .andExpect(content().string("""
+                        Livro TXT Agil
+
+                        Parte
+
+                        Capitulo
+
+                        texto da cena"""));
+    }
+
+    @Test
+    void txtExportPreservesHierarchyAndOrdering() throws Exception {
+        var book = createBook("Livro TXT ordenado");
+        var firstSection = sectionService.create(book.id(), new BookSectionRequest("Primeira parte", SectionType.PART, 0));
+        var secondSection = sectionService.create(book.id(), new BookSectionRequest("Segunda parte", SectionType.PART, 1));
+        var firstChapter = chapterService.create(firstSection.id(), new ChapterRequest("Primeiro capitulo", null, 0));
+        var secondChapter = chapterService.create(secondSection.id(), new ChapterRequest("Segundo capitulo", null, 0));
+        createScene(firstChapter, "Cena dois", SceneStatus.DRAFT, 1, "conteudo dois");
+        createScene(firstChapter, "Cena um", SceneStatus.DRAFT, 0, "conteudo um");
+        createScene(secondChapter, "Cena tres", SceneStatus.DRAFT, 0, "conteudo tres");
+
+        mockMvc.perform(get("/api/books/{bookId}/exports/manuscript", book.id())
+                        .param("format", "txt"))
+                .andExpect(status().isOk())
+                .andExpect(content().string("""
+                        Livro TXT ordenado
+
+                        Primeira parte
+
+                        Primeiro capitulo
+
+                        conteudo um
+
+                        ***
+
+                        conteudo dois
+
+                        Segunda parte
+
+                        Segundo capitulo
+
+                        conteudo tres"""));
+    }
+
+    @Test
+    void txtExportIncludesSceneTitlesWhenRequested() throws Exception {
+        var book = bookService.create(new BookRequest("Livro TXT com titulos", "Subtitulo", "Descricao", null, null));
+        var section = sectionService.create(book.id(), new BookSectionRequest("Parte", SectionType.PART, 0));
+        var chapter = chapterService.create(section.id(), new ChapterRequest("Capitulo", null, 0));
+        createScene(chapter, "Cena visivel", SceneStatus.DRAFT, 0, "texto da cena");
+
+        mockMvc.perform(get("/api/books/{bookId}/exports/manuscript", book.id())
+                        .param("format", "txt")
+                        .param("includeSceneTitles", "true"))
+                .andExpect(status().isOk())
+                .andExpect(content().string("""
+                        Livro TXT com titulos
+
+                        Subtitulo
+
+                        Descricao
+
+                        Parte
+
+                        Capitulo
+
+                        Cena visivel
+
+                        texto da cena"""));
+    }
+
+    @Test
+    void txtExportIncludesEmptyScenesOnlyWhenTitlesAreIncluded() throws Exception {
+        var book = createBook("Livro TXT com vazias");
+        var section = createSection(book, "Parte");
+        var chapter = createChapter(section, "Capitulo");
+        createScene(chapter, "Cena preenchida", SceneStatus.DRAFT, 0, "texto");
+        createScene(chapter, "Cena vazia", SceneStatus.DRAFT, 1, null);
+
+        mockMvc.perform(get("/api/books/{bookId}/exports/manuscript", book.id())
+                        .param("format", "txt")
+                        .param("includeEmptyScenes", "true"))
+                .andExpect(status().isOk())
+                .andExpect(content().string(not(containsString("Cena vazia"))));
+
+        mockMvc.perform(get("/api/books/{bookId}/exports/manuscript", book.id())
+                        .param("format", "txt")
+                        .param("includeSceneTitles", "true")
+                        .param("includeEmptyScenes", "true"))
+                .andExpect(status().isOk())
+                .andExpect(content().string("""
+                        Livro TXT com vazias
+
+                        Parte
+
+                        Capitulo
+
+                        Cena preenchida
+
+                        texto
+
+                        Cena vazia"""));
+    }
+
+    @Test
+    void txtExportUsesTipTapPlainTextAndFallsBackToContentText() throws Exception {
+        var book = createBook("Livro TXT tiptap");
+        var section = createSection(book, "Parte");
+        var chapter = createChapter(section, "Capitulo");
+        var renderedScene = createScene(chapter, "Cena json", SceneStatus.DRAFT, 0, "fallback ignorado");
+        var fallbackScene = createScene(chapter, "Cena fallback", SceneStatus.DRAFT, 1, "fallback usado");
+        sceneService.updateContent(renderedScene.id(), new SceneContentRequest("""
+                {"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Primeira linha"},{"type":"hardBreak"},{"type":"text","text":"segunda linha"}]},{"type":"bulletList","content":[{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"Item simples","marks":[{"type":"bold"}]}]}]}]}]}""", "fallback ignorado"));
+        sceneService.updateContent(fallbackScene.id(), new SceneContentRequest("{invalid", "fallback usado"));
+
+        mockMvc.perform(get("/api/books/{bookId}/exports/manuscript", book.id())
+                        .param("format", "txt"))
+                .andExpect(status().isOk())
+                .andExpect(content().string("""
+                        Livro TXT tiptap
+
+                        Parte
+
+                        Capitulo
+
+                        Primeira linha
+                        segunda linha
+
+                        - Item simples
+
+                        ***
+
+                        fallback usado"""));
+    }
+
+    @Test
+    void canonicalMarkdownEndpointPreservesCurrentMarkdownSemantics() throws Exception {
+        var book = bookService.create(new BookRequest("Livro canonico markdown", "Subtitulo", "Descricao", null, null));
+        var section = sectionService.create(book.id(), new BookSectionRequest("Parte", SectionType.PART, 0));
+        var chapter = chapterService.create(section.id(), new ChapterRequest("Capitulo", null, 0));
+        createScene(chapter, "Cena visivel", SceneStatus.DRAFT, 0, "texto da cena");
+
+        mockMvc.perform(get("/api/books/{bookId}/exports/manuscript", book.id())
+                        .param("format", "md")
+                        .param("includeSceneTitles", "true"))
+                .andExpect(status().isOk())
+                .andExpect(content().contentType("text/markdown;charset=UTF-8"))
+                .andExpect(header().string(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"livro-canonico-markdown.md\""))
+                .andExpect(content().string("""
+                        # Livro canonico markdown
+
+                        Subtitulo
+
+                        Descricao
+
+                        ## Parte
+
+                        ### Capitulo
+
+                        #### Cena visivel
+
+                        texto da cena"""));
+    }
+
+    @Test
+    void invalidCanonicalFormatReturnsBadRequest() throws Exception {
+        var book = createBook("Livro formato invalido");
+
+        mockMvc.perform(get("/api/books/{bookId}/exports/manuscript", book.id())
+                        .param("format", "pdf"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void missingBookOnCanonicalExportReturnsNotFound() throws Exception {
+        mockMvc.perform(get("/api/books/{bookId}/exports/manuscript", java.util.UUID.randomUUID())
+                        .param("format", "txt"))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
     void exportOmitsSceneTitlesByDefault() throws Exception {
         var book = createBook("Livro sem titulos");
         var section = createSection(book, "Parte");

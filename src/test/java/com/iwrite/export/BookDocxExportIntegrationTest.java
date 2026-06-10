@@ -56,6 +56,38 @@ class BookDocxExportIntegrationTest extends PostgresIntegrationTest {
     }
 
     @Test
+    void canonicalDocxEndpointPreservesHierarchyAndContent() throws Exception {
+        var book = createBook("Livro DOCX canonico");
+        var section = createSection(book, "Parte canonica");
+        var chapter = createChapter(section, "Capitulo canonico");
+        createScene(chapter, "Cena canonica", SceneStatus.DRAFT, 0, "texto canonico");
+
+        byte[] responseBody = mockMvc.perform(get("/api/books/{bookId}/exports/manuscript", book.id())
+                        .param("format", "docx")
+                        .param("includeSceneTitles", "true"))
+                .andExpect(status().isOk())
+                .andExpect(header().string(HttpHeaders.CONTENT_TYPE, DOCX_CONTENT_TYPE))
+                .andExpect(header().string(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"livro-docx-canonico.docx\""))
+                .andExpect(header().string(HttpHeaders.ACCESS_CONTROL_EXPOSE_HEADERS, HttpHeaders.CONTENT_DISPOSITION))
+                .andReturn()
+                .getResponse()
+                .getContentAsByteArray();
+
+        try (XWPFDocument document = openDocument(responseBody)) {
+            List<String> paragraphs = paragraphTexts(document);
+
+            assertThat(paragraphContaining(document, "Livro DOCX canonico").getStyle()).isEqualTo("Title");
+            assertThat(paragraphContaining(document, "Parte canonica").getStyle()).isEqualTo("Heading1");
+            assertThat(paragraphContaining(document, "Capitulo canonico").getStyle()).isEqualTo("Heading2");
+            assertThat(paragraphContaining(document, "Cena canonica").getStyle()).isEqualTo("Heading3");
+            assertComesBefore(paragraphs, "Livro DOCX canonico", "Parte canonica");
+            assertComesBefore(paragraphs, "Parte canonica", "Capitulo canonico");
+            assertComesBefore(paragraphs, "Capitulo canonico", "Cena canonica");
+            assertComesBefore(paragraphs, "Cena canonica", "texto canonico");
+        }
+    }
+
+    @Test
     void docxExportUsesDistinctHeadingStylesForBookSectionAndChapterTitles() throws Exception {
         var book = createBook("Livro com estilos");
         var section = createSection(book, "Parte principal");

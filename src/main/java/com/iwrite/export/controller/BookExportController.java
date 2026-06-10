@@ -1,8 +1,9 @@
 package com.iwrite.export.controller;
 
+import com.iwrite.export.ExportFile;
+import com.iwrite.export.ExportFormat;
+import com.iwrite.export.ExportResponseFactory;
 import com.iwrite.export.service.BookExportService;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -16,29 +17,45 @@ import java.util.UUID;
 @RequestMapping("/api/books")
 public class BookExportController {
 
-    private static final MediaType MARKDOWN_MEDIA_TYPE = MediaType.parseMediaType("text/markdown; charset=UTF-8");
-    private static final MediaType DOCX_MEDIA_TYPE = MediaType.parseMediaType("application/vnd.openxmlformats-officedocument.wordprocessingml.document");
-
     private final BookExportService bookExportService;
+    private final ExportResponseFactory exportResponseFactory;
 
-    public BookExportController(BookExportService bookExportService) {
+    public BookExportController(BookExportService bookExportService, ExportResponseFactory exportResponseFactory) {
         this.bookExportService = bookExportService;
+        this.exportResponseFactory = exportResponseFactory;
+    }
+
+    @GetMapping("/{bookId}/exports/manuscript")
+    public ResponseEntity<byte[]> exportManuscript(
+            @PathVariable UUID bookId,
+            @RequestParam(defaultValue = "md") String format,
+            @RequestParam(defaultValue = "false") boolean includeSceneTitles,
+            @RequestParam(defaultValue = "false") boolean includeEmptyScenes
+    ) {
+        ExportFile file = bookExportService.exportManuscript(
+                bookId,
+                ExportFormat.parse(format),
+                includeSceneTitles,
+                includeEmptyScenes
+        );
+
+        return exportResponseFactory.attachment(file);
     }
 
     @GetMapping("/{bookId}/export/markdown")
-    public ResponseEntity<String> exportMarkdown(
+    public ResponseEntity<byte[]> exportMarkdown(
             @PathVariable UUID bookId,
             @RequestParam(defaultValue = "false") boolean includeSceneTitles,
             @RequestParam(defaultValue = "false") boolean includeEmptyScenes
     ) {
-        String markdown = bookExportService.exportMarkdown(bookId, includeSceneTitles, includeEmptyScenes);
-        String fileName = bookExportService.getMarkdownFileName(bookId);
+        ExportFile file = bookExportService.exportManuscript(
+                bookId,
+                ExportFormat.MD,
+                includeSceneTitles,
+                includeEmptyScenes
+        );
 
-        return ResponseEntity.ok()
-                .contentType(MARKDOWN_MEDIA_TYPE)
-                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + fileName + "\"")
-                .header(HttpHeaders.ACCESS_CONTROL_EXPOSE_HEADERS, HttpHeaders.CONTENT_DISPOSITION)
-                .body(markdown);
+        return exportResponseFactory.attachment(file);
     }
 
     @GetMapping("/{bookId}/export/docx")
@@ -47,13 +64,13 @@ public class BookExportController {
             @RequestParam(defaultValue = "false") boolean includeSceneTitles,
             @RequestParam(defaultValue = "false") boolean includeEmptyScenes
     ) {
-        byte[] docx = bookExportService.exportDocx(bookId, includeSceneTitles, includeEmptyScenes);
-        String fileName = bookExportService.getDocxFileName(bookId);
+        ExportFile file = bookExportService.exportManuscript(
+                bookId,
+                ExportFormat.DOCX,
+                includeSceneTitles,
+                includeEmptyScenes
+        );
 
-        return ResponseEntity.ok()
-                .contentType(DOCX_MEDIA_TYPE)
-                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + fileName + "\"")
-                .header(HttpHeaders.ACCESS_CONTROL_EXPOSE_HEADERS, HttpHeaders.CONTENT_DISPOSITION)
-                .body(docx);
+        return exportResponseFactory.attachment(file);
     }
 }
