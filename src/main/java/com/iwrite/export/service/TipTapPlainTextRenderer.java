@@ -11,6 +11,8 @@ import java.util.Optional;
 @Component
 public class TipTapPlainTextRenderer {
 
+    public static final String TEXT_SEPARATOR = "----------------------------------------";
+
     private final ObjectMapper objectMapper;
 
     public TipTapPlainTextRenderer(ObjectMapper objectMapper) {
@@ -48,7 +50,7 @@ public class TipTapPlainTextRenderer {
         }
 
         if ("bulletList".equals(type)) {
-            return renderList(node, "- ", 1);
+            return renderList(node, "• ", 1);
         }
 
         if ("orderedList".equals(type)) {
@@ -61,7 +63,7 @@ public class TipTapPlainTextRenderer {
 
         if ("blockquote".equals(type)) {
             return renderChildBlocks(node)
-                    .map(block -> prefixLines(block, "> "))
+                    .map(block -> "CITAÇÃO:\n" + block)
                     .filter(text -> !text.isBlank());
         }
 
@@ -71,7 +73,7 @@ public class TipTapPlainTextRenderer {
         }
 
         if ("horizontalRule".equals(type)) {
-            return Optional.of("***");
+            return Optional.of(TEXT_SEPARATOR);
         }
 
         if (hasTextContent(node)) {
@@ -128,20 +130,6 @@ public class TipTapPlainTextRenderer {
         }
 
         return item.toString();
-    }
-
-    private String prefixLines(String text, String prefix) {
-        String[] lines = text.split("\\R", -1);
-        StringBuilder prefixedText = new StringBuilder();
-
-        for (int index = 0; index < lines.length; index++) {
-            if (index > 0) {
-                prefixedText.append("\n");
-            }
-            prefixedText.append(prefix).append(lines[index]);
-        }
-
-        return prefixedText.toString();
     }
 
     private Optional<String> renderInlineContent(JsonNode node) {

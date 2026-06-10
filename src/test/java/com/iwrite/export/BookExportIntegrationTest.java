@@ -13,6 +13,7 @@ import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMock
 import org.springframework.http.HttpHeaders;
 import org.springframework.test.web.servlet.MockMvc;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.containsString;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -25,6 +26,9 @@ class BookExportIntegrationTest extends PostgresIntegrationTest {
 
     @Autowired
     private MockMvc mockMvc;
+
+    @Autowired
+    private ExportFileNameService exportFileNameService;
 
     @Test
     void canonicalTxtEndpointReturnsAttachmentWithPlainTextContentTypeAndFileName() throws Exception {
@@ -72,7 +76,7 @@ class BookExportIntegrationTest extends PostgresIntegrationTest {
 
                         conteudo um
 
-                        ***
+                        ----------------------------------------
 
                         conteudo dois
 
@@ -151,7 +155,7 @@ class BookExportIntegrationTest extends PostgresIntegrationTest {
         var renderedScene = createScene(chapter, "Cena json", SceneStatus.DRAFT, 0, "fallback ignorado");
         var fallbackScene = createScene(chapter, "Cena fallback", SceneStatus.DRAFT, 1, "fallback usado");
         sceneService.updateContent(renderedScene.id(), new SceneContentRequest("""
-                {"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Primeira linha"},{"type":"hardBreak"},{"type":"text","text":"segunda linha"}]},{"type":"bulletList","content":[{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"Item simples","marks":[{"type":"bold"}]}]}]}]}]}""", "fallback ignorado"));
+                {"type":"doc","content":[{"type":"heading","attrs":{"level":1},"content":[{"type":"text","text":"Titulo interno"}]},{"type":"paragraph","content":[{"type":"text","text":"Primeira linha"},{"type":"hardBreak"},{"type":"text","text":"segunda linha"}]},{"type":"bulletList","content":[{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"Item simples","marks":[{"type":"bold"}]}]}]}]},{"type":"orderedList","attrs":{"start":2},"content":[{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"Item numerado"}]}]}]},{"type":"blockquote","content":[{"type":"paragraph","content":[{"type":"text","text":"Texto citado"}]}]},{"type":"horizontalRule"}]}""", "fallback ignorado"));
         sceneService.updateContent(fallbackScene.id(), new SceneContentRequest("{invalid", "fallback usado"));
 
         mockMvc.perform(get("/api/books/{bookId}/exports/manuscript", book.id())
@@ -164,14 +168,54 @@ class BookExportIntegrationTest extends PostgresIntegrationTest {
 
                         Capitulo
 
+                        Titulo interno
+
                         Primeira linha
                         segunda linha
 
-                        - Item simples
+                        • Item simples
 
-                        ***
+                        2. Item numerado
+
+                        CITAÇÃO:
+                        Texto citado
+
+                        ----------------------------------------
+
+                        ----------------------------------------
 
                         fallback usado"""));
+    }
+
+    @Test
+    void fileNameServiceRemovesAccentsAndPreservesExtension() {
+        assertThat(exportFileNameService.fileName("Coração, Razão & Memória", "manuscrito", "txt"))
+                .isEqualTo("coracao-razao-memoria.txt");
+    }
+
+    @Test
+    void fileNameServiceCollapsesRepeatedSeparatorsAndTrimsEdges() {
+        assertThat(exportFileNameService.fileName("  -- Livro... com   espaços && sinais --  ", "manuscrito", "md"))
+                .isEqualTo("livro-com-espacos-sinais.md");
+    }
+
+    @Test
+    void fileNameServiceUsesFallbackWhenSlugIsEmptyAndPreservesDocxExtension() {
+        assertThat(exportFileNameService.fileName("!!!", "manuscrito", "docx"))
+                .isEqualTo("manuscrito.docx");
+    }
+
+    @Test
+    void canonicalTxtEndpointUsesFallbackFileNameWhenTitleSlugIsEmpty() throws Exception {
+        var book = createBook("!!!");
+        var section = createSection(book, "Parte");
+        var chapter = createChapter(section, "Capitulo");
+        createScene(chapter, "Cena", SceneStatus.DRAFT, 0, "texto");
+
+        mockMvc.perform(get("/api/books/{bookId}/exports/manuscript", book.id())
+                        .param("format", "txt"))
+                .andExpect(status().isOk())
+                .andExpect(header().string(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"manuscrito.txt\""));
     }
 
     @Test

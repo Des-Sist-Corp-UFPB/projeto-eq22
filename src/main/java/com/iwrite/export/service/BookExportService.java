@@ -269,7 +269,7 @@ public class BookExportService {
             }
 
             if (hasPreviousSceneContent && !includeSceneTitles) {
-                appendTextBlock(text, "***");
+                appendTextBlock(text, TipTapPlainTextRenderer.TEXT_SEPARATOR);
             }
 
             appendTextBlock(text, sceneBlock);
