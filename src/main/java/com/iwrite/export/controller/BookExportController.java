@@ -42,6 +42,23 @@ public class BookExportController {
         return exportResponseFactory.attachment(file);
     }
 
+    @GetMapping("/{bookId}/exports/notebook")
+    public ResponseEntity<byte[]> exportNotebook(
+            @PathVariable UUID bookId,
+            @RequestParam(defaultValue = "md") String format,
+            @RequestParam(defaultValue = "true") boolean includeOpen,
+            @RequestParam(defaultValue = "true") boolean includeResolved
+    ) {
+        ExportFile file = bookExportService.exportNotebook(
+                bookId,
+                ExportFormat.parse(format),
+                includeOpen,
+                includeResolved
+        );
+
+        return exportResponseFactory.attachment(file);
+    }
+
     @GetMapping("/{bookId}/export/markdown")
     public ResponseEntity<byte[]> exportMarkdown(
             @PathVariable UUID bookId,

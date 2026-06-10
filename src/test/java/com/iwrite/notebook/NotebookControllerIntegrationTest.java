@@ -3,6 +3,7 @@ package com.iwrite.notebook;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.iwrite.support.PostgresIntegrationTest;
+import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -39,6 +40,9 @@ class NotebookControllerIntegrationTest extends PostgresIntegrationTest {
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
+
+    @Autowired
+    private EntityManager entityManager;
 
     @Test
     void getCategoriesInitializesStarterCategoriesOnceForExistingBook() throws Exception {
@@ -115,6 +119,7 @@ class NotebookControllerIntegrationTest extends PostgresIntegrationTest {
     @Test
     void existingCategorizedBooksMarkedInitializedByBackfillDoNotReceiveStarters() throws Exception {
         var book = createBook("Notebook backfilled settings");
+        entityManager.flush();
         UUID categoryId = UUID.randomUUID();
         jdbcTemplate.update(
                 """

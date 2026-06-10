@@ -1,5 +1,7 @@
 package com.iwrite.export;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.iwrite.book.dto.BookRequest;
 import com.iwrite.chapter.dto.ChapterRequest;
 import com.iwrite.scene.dto.SceneContentRequest;
@@ -11,12 +13,15 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 
+import java.time.LocalDate;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.containsString;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -26,6 +31,9 @@ class BookExportIntegrationTest extends PostgresIntegrationTest {
 
     @Autowired
     private MockMvc mockMvc;
+
+    @Autowired
+    private ObjectMapper objectMapper;
 
     @Autowired
     private ExportFileNameService exportFileNameService;
@@ -216,6 +224,102 @@ class BookExportIntegrationTest extends PostgresIntegrationTest {
                         .param("format", "txt"))
                 .andExpect(status().isOk())
                 .andExpect(header().string(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"manuscrito.txt\""));
+    }
+
+    @Test
+    void notebookTxtEndpointExportsFullNotebookGroupedByCategoryAndStatus() throws Exception {
+        String today = LocalDate.now().toString();
+        var book = createBook("Livro Caderno Agil");
+        var pesquisaId = findNotebookCategoryId(book.id(), "Pesquisa");
+        var outroId = findNotebookCategoryId(book.id(), "Outro");
+        createNotebookNote(book.id(), "Nota resolvida", "Conteudo resolvido", outroId, "RESOLVED");
+        createNotebookNote(book.id(), "Nota solta", "Conteudo solto", null, "OPEN");
+        createNotebookNote(book.id(), "Nota pesquisa", "Conteudo pesquisa\ncom linha", pesquisaId, "OPEN");
+
+        mockMvc.perform(get("/api/books/{bookId}/exports/notebook", book.id())
+                        .param("format", "txt"))
+                .andExpect(status().isOk())
+                .andExpect(content().contentType("text/plain;charset=UTF-8"))
+                .andExpect(header().string(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"caderno-livro-caderno-agil.txt\""))
+                .andExpect(header().string(HttpHeaders.ACCESS_CONTROL_EXPOSE_HEADERS, HttpHeaders.CONTENT_DISPOSITION))
+                .andExpect(content().string("""
+                        Caderno \u2014 Livro Caderno Agil
+
+                        Pesquisa
+
+                        Abertas
+
+                        Nota pesquisa
+                        Status: Aberta | Atualizada em: %s
+
+                        Conteudo pesquisa
+                        com linha
+
+                        Outro
+
+                        Resolvidas
+
+                        Nota resolvida
+                        Status: Resolvida | Atualizada em: %s
+
+                        Conteudo resolvido
+
+                        Sem categoria
+
+                        Abertas
+
+                        Nota solta
+                        Status: Aberta | Atualizada em: %s
+
+                        Conteudo solto""".formatted(today, today, today)));
+    }
+
+    @Test
+    void notebookMarkdownEndpointPreservesHierarchyAndCanExcludeResolvedNotes() throws Exception {
+        String today = LocalDate.now().toString();
+        var book = createBook("Livro Caderno Markdown");
+        var pesquisaId = findNotebookCategoryId(book.id(), "Pesquisa");
+        createNotebookNote(book.id(), "Nota aberta", "Conteudo aberto", pesquisaId, "OPEN");
+        createNotebookNote(book.id(), "Nota resolvida", "Conteudo resolvido", pesquisaId, "RESOLVED");
+
+        mockMvc.perform(get("/api/books/{bookId}/exports/notebook", book.id())
+                        .param("format", "md")
+                        .param("includeResolved", "false"))
+                .andExpect(status().isOk())
+                .andExpect(content().contentType("text/markdown;charset=UTF-8"))
+                .andExpect(header().string(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"caderno-livro-caderno-markdown.md\""))
+                .andExpect(content().string("""
+                        # Caderno \u2014 Livro Caderno Markdown
+
+                        ## Pesquisa
+
+                        ### Abertas
+
+                        #### Nota aberta
+
+                        Status: Aberta | Atualizada em: %s
+
+                        Conteudo aberto""".formatted(today)))
+                .andExpect(content().string(not(containsString("Nota resolvida"))))
+                .andExpect(content().string(not(containsString("Resolvidas"))));
+    }
+
+    @Test
+    void notebookExportRejectsEmptyStatusSelection() throws Exception {
+        var book = createBook("Livro Caderno status invalido");
+
+        mockMvc.perform(get("/api/books/{bookId}/exports/notebook", book.id())
+                        .param("format", "txt")
+                        .param("includeOpen", "false")
+                        .param("includeResolved", "false"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void missingBookOnNotebookExportReturnsNotFound() throws Exception {
+        mockMvc.perform(get("/api/books/{bookId}/exports/notebook", java.util.UUID.randomUUID())
+                        .param("format", "txt"))
+                .andExpect(status().isNotFound());
     }
 
     @Test
@@ -633,5 +737,46 @@ class BookExportIntegrationTest extends PostgresIntegrationTest {
 
         mockMvc.perform(get("/api/books/{bookId}/export", book.id()))
                 .andExpect(status().isNotFound());
+    }
+
+    private java.util.UUID findNotebookCategoryId(java.util.UUID bookId, String name) throws Exception {
+        String response = mockMvc.perform(get("/api/books/{bookId}/notebook/categories", bookId))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        for (JsonNode category : objectMapper.readTree(response)) {
+            if (name.equals(category.get("name").asText())) {
+                return java.util.UUID.fromString(category.get("id").asText());
+            }
+        }
+        throw new IllegalStateException("Notebook category not found: " + name);
+    }
+
+    private java.util.UUID createNotebookNote(
+            java.util.UUID bookId,
+            String title,
+            String content,
+            java.util.UUID categoryId,
+            String status
+    ) throws Exception {
+        java.util.Map<String, Object> body = new java.util.LinkedHashMap<>();
+        body.put("title", title);
+        body.put("content", content);
+        if (categoryId != null) {
+            body.put("categoryId", categoryId);
+        }
+        body.put("status", status);
+
+        String response = mockMvc.perform(post("/api/books/{bookId}/notebook/notes", bookId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(body)))
+                .andExpect(status().isCreated())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        return java.util.UUID.fromString(objectMapper.readTree(response).get("id").asText());
     }
 }

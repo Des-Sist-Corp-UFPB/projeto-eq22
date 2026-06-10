@@ -103,7 +103,8 @@ public class NotebookService {
     @Transactional
     public void deleteCategory(UUID categoryId) {
         NotebookCategory category = getCategory(categoryId);
-        noteRepository.clearCategory(categoryId);
+        noteRepository.findByCategoryId(categoryId)
+                .forEach(note -> note.setCategory(null));
         categoryRepository.delete(category);
         categoryRepository.flush();
     }
