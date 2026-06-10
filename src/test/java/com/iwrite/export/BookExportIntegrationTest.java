@@ -21,6 +21,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.containsString;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
@@ -316,10 +317,67 @@ class BookExportIntegrationTest extends PostgresIntegrationTest {
     }
 
     @Test
+    void notebookExportRejectsInvalidFormat() throws Exception {
+        var book = createBook("Livro Caderno formato invalido");
+
+        mockMvc.perform(get("/api/books/{bookId}/exports/notebook", book.id())
+                        .param("format", "pdf"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
     void missingBookOnNotebookExportReturnsNotFound() throws Exception {
         mockMvc.perform(get("/api/books/{bookId}/exports/notebook", java.util.UUID.randomUUID())
                         .param("format", "txt"))
                 .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void notebookExportAndCategoryApiShareNamedCategoryOrdering() throws Exception {
+        String today = LocalDate.now().toString();
+        var book = createBook("Livro Caderno ordem compartilhada");
+        var ideiaId = findNotebookCategoryId(book.id(), "Ideia");
+        var pesquisaId = findNotebookCategoryId(book.id(), "Pesquisa");
+        var outroId = findNotebookCategoryId(book.id(), "Outro");
+
+        mockMvc.perform(patch("/api/notebook/categories/{categoryId}", outroId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(java.util.Map.of(
+                                "name", "  outro  ",
+                                "sortOrder", -10
+                        ))))
+                .andExpect(status().isOk());
+
+        createNotebookNote(book.id(), "Nota ideia", "Conteudo ideia", ideiaId, "OPEN");
+        createNotebookNote(book.id(), "Nota pesquisa", "Conteudo pesquisa", pesquisaId, "OPEN");
+        createNotebookNote(book.id(), "Nota outro", "Conteudo outro", outroId, "OPEN");
+
+        String categoriesResponse = mockMvc.perform(get("/api/books/{bookId}/notebook/categories", book.id()))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        JsonNode categories = objectMapper.readTree(categoriesResponse);
+        assertThat(categories.get(0).get("name").asText()).isEqualTo("Ideia");
+        assertThat(categories.get(1).get("name").asText()).isEqualTo("Pesquisa");
+        assertThat(categories.get(categories.size() - 1).get("name").asText()).isEqualTo("  outro  ");
+
+        String export = mockMvc.perform(get("/api/books/{bookId}/exports/notebook", book.id())
+                        .param("format", "txt"))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("Status: Aberta | Atualizada em: " + today)))
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        assertThat(export).containsSubsequence(
+                "Ideia",
+                "Nota ideia",
+                "Pesquisa",
+                "Nota pesquisa",
+                "  outro  ",
+                "Nota outro"
+        );
     }
 
     @Test

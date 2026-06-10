@@ -8,6 +8,7 @@ import com.iwrite.export.ExportFile;
 import com.iwrite.export.ExportFileNameService;
 import com.iwrite.export.ExportFormat;
 import com.iwrite.common.exception.BadRequestException;
+import com.iwrite.notebook.NotebookCategoryOrdering;
 import com.iwrite.notebook.entity.NotebookCategory;
 import com.iwrite.notebook.entity.NotebookNote;
 import com.iwrite.notebook.entity.NotebookNoteStatus;
@@ -27,11 +28,8 @@ import org.springframework.transaction.annotation.Transactional;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
-import java.text.Collator;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -41,7 +39,6 @@ public class BookExportService {
 
     private static final String NOTEBOOK_TITLE_PREFIX = "Caderno \u2014 ";
     private static final String UNCATEGORIZED_CATEGORY_NAME = "Sem categoria";
-    private static final Collator CATEGORY_COLLATOR = Collator.getInstance(Locale.forLanguageTag("pt-BR"));
 
     private final BookService bookService;
     private final BookSectionRepository sectionRepository;
@@ -239,7 +236,8 @@ public class BookExportService {
                 .stream()
                 .filter(note -> shouldIncludeNotebookStatus(note.getStatus(), includeOpen, includeResolved))
                 .toList();
-        List<NotebookCategory> categories = orderedNotebookCategories(notebookCategoryRepository.findByBookIdOrderBySortOrderAscNameAscIdAsc(bookId));
+        List<NotebookCategory> categories = NotebookCategoryOrdering.ordered(
+                notebookCategoryRepository.findByBookIdOrderBySortOrderAscNameAscIdAsc(bookId));
         List<NotebookCategoryExport> categoryExports = new ArrayList<>();
 
         for (NotebookCategory category : categories) {
@@ -264,20 +262,6 @@ public class BookExportService {
     private boolean shouldIncludeNotebookStatus(NotebookNoteStatus status, boolean includeOpen, boolean includeResolved) {
         return (includeOpen && status == NotebookNoteStatus.OPEN)
                 || (includeResolved && status == NotebookNoteStatus.RESOLVED);
-    }
-
-    private List<NotebookCategory> orderedNotebookCategories(List<NotebookCategory> categories) {
-        return categories.stream()
-                .sorted(Comparator
-                        .comparing(BookExportService::isOutroCategory)
-                        .thenComparing(NotebookCategory::getSortOrder)
-                        .thenComparing(NotebookCategory::getName, CATEGORY_COLLATOR)
-                        .thenComparing(NotebookCategory::getId))
-                .toList();
-    }
-
-    private static boolean isOutroCategory(NotebookCategory category) {
-        return category.getName().trim().equalsIgnoreCase("Outro");
     }
 
     private String manuscriptFileName(Book book, ExportFormat format) {

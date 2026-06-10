@@ -5,6 +5,7 @@ import com.iwrite.book.service.BookService;
 import com.iwrite.common.exception.BadRequestException;
 import com.iwrite.common.exception.ResourceNotFoundException;
 import com.iwrite.common.validation.RequestValidation;
+import com.iwrite.notebook.NotebookCategoryOrdering;
 import com.iwrite.notebook.dto.NotebookCategoryRequest;
 import com.iwrite.notebook.dto.NotebookCategoryResponse;
 import com.iwrite.notebook.dto.NotebookCategoryUpdateRequest;
@@ -20,10 +21,7 @@ import com.iwrite.notebook.repository.NotebookNoteRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.text.Collator;
-import java.util.Comparator;
 import java.util.List;
-import java.util.Locale;
 import java.util.UUID;
 
 @Service
@@ -39,7 +37,6 @@ public class NotebookService {
             "Trecho",
             "Outro"
     );
-    private static final Collator CATEGORY_COLLATOR = Collator.getInstance(Locale.forLanguageTag("pt-BR"));
 
     private final NotebookCategoryRepository categoryRepository;
     private final NotebookNoteRepository noteRepository;
@@ -231,17 +228,7 @@ public class NotebookService {
     }
 
     private List<NotebookCategory> orderedCategories(UUID bookId) {
-        return categoryRepository.findByBookIdOrderBySortOrderAscNameAscIdAsc(bookId)
-                .stream()
-                .sorted(Comparator
-                        .comparing(NotebookService::isOutroCategory)
-                        .thenComparing(NotebookCategory::getSortOrder)
-                        .thenComparing(NotebookCategory::getName, CATEGORY_COLLATOR)
-                        .thenComparing(NotebookCategory::getId))
-                .toList();
-    }
-
-    private static boolean isOutroCategory(NotebookCategory category) {
-        return category.getName().trim().equalsIgnoreCase("Outro");
+        return NotebookCategoryOrdering.ordered(
+                categoryRepository.findByBookIdOrderBySortOrderAscNameAscIdAsc(bookId));
     }
 }
