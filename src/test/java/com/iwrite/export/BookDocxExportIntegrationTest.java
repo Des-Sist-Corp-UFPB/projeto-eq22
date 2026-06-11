@@ -1,5 +1,7 @@
 package com.iwrite.export;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.iwrite.chapter.dto.ChapterRequest;
 import com.iwrite.scene.dto.SceneContentRequest;
 import com.iwrite.scene.entity.SceneStatus;
@@ -14,14 +16,19 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.io.ByteArrayInputStream;
+import java.time.LocalDate;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -32,6 +39,9 @@ class BookDocxExportIntegrationTest extends PostgresIntegrationTest {
 
     @Autowired
     private MockMvc mockMvc;
+
+    @Autowired
+    private ObjectMapper objectMapper;
 
     @Test
     void docxEndpointReturnsAttachmentWithDocxContentTypeAndFileName() throws Exception {
@@ -52,6 +62,75 @@ class BookDocxExportIntegrationTest extends PostgresIntegrationTest {
         assertThat(responseBody).isNotEmpty();
         try (XWPFDocument document = openDocument(responseBody)) {
             assertThat(documentText(document)).contains("Livro DOCX Agil");
+        }
+    }
+
+    @Test
+    void canonicalDocxEndpointPreservesHierarchyAndContent() throws Exception {
+        var book = createBook("Livro DOCX canonico");
+        var section = createSection(book, "Parte canonica");
+        var chapter = createChapter(section, "Capitulo canonico");
+        createScene(chapter, "Cena canonica", SceneStatus.DRAFT, 0, "texto canonico");
+
+        byte[] responseBody = mockMvc.perform(get("/api/books/{bookId}/exports/manuscript", book.id())
+                        .param("format", "docx")
+                        .param("includeSceneTitles", "true"))
+                .andExpect(status().isOk())
+                .andExpect(header().string(HttpHeaders.CONTENT_TYPE, DOCX_CONTENT_TYPE))
+                .andExpect(header().string(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"livro-docx-canonico.docx\""))
+                .andExpect(header().string(HttpHeaders.ACCESS_CONTROL_EXPOSE_HEADERS, HttpHeaders.CONTENT_DISPOSITION))
+                .andReturn()
+                .getResponse()
+                .getContentAsByteArray();
+
+        try (XWPFDocument document = openDocument(responseBody)) {
+            List<String> paragraphs = paragraphTexts(document);
+
+            assertThat(paragraphContaining(document, "Livro DOCX canonico").getStyle()).isEqualTo("Title");
+            assertThat(paragraphContaining(document, "Parte canonica").getStyle()).isEqualTo("Heading1");
+            assertThat(paragraphContaining(document, "Capitulo canonico").getStyle()).isEqualTo("Heading2");
+            assertThat(paragraphContaining(document, "Cena canonica").getStyle()).isEqualTo("Heading3");
+            assertComesBefore(paragraphs, "Livro DOCX canonico", "Parte canonica");
+            assertComesBefore(paragraphs, "Parte canonica", "Capitulo canonico");
+            assertComesBefore(paragraphs, "Capitulo canonico", "Cena canonica");
+            assertComesBefore(paragraphs, "Cena canonica", "texto canonico");
+        }
+    }
+
+    @Test
+    void canonicalNotebookDocxEndpointPreservesHeadingStructureAndContent() throws Exception {
+        String today = LocalDate.now().toString();
+        var book = createBook("Livro DOCX Caderno");
+        UUID pesquisaId = findNotebookCategoryId(book.id(), "Pesquisa");
+        createNotebookNote(book.id(), "Nota DOCX", "Primeiro paragrafo\n\nSegundo paragrafo", pesquisaId, "OPEN");
+
+        byte[] responseBody = mockMvc.perform(get("/api/books/{bookId}/exports/notebook", book.id())
+                        .param("format", "docx"))
+                .andExpect(status().isOk())
+                .andExpect(header().string(HttpHeaders.CONTENT_TYPE, DOCX_CONTENT_TYPE))
+                .andExpect(header().string(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"caderno-livro-docx-caderno.docx\""))
+                .andExpect(header().string(HttpHeaders.ACCESS_CONTROL_EXPOSE_HEADERS, HttpHeaders.CONTENT_DISPOSITION))
+                .andReturn()
+                .getResponse()
+                .getContentAsByteArray();
+
+        try (XWPFDocument document = openDocument(responseBody)) {
+            List<String> paragraphs = paragraphTexts(document);
+
+            assertThat(paragraphContaining(document, "Caderno \u2014 Livro DOCX Caderno").getStyle()).isEqualTo("Title");
+            assertThat(paragraphContaining(document, "Pesquisa").getStyle()).isEqualTo("Heading1");
+            assertThat(paragraphContaining(document, "Abertas").getStyle()).isEqualTo("Heading2");
+            assertThat(paragraphContaining(document, "Nota DOCX").getStyle()).isEqualTo("Heading3");
+            assertThat(paragraphs).contains(
+                    "Status: Aberta | Atualizada em: " + today,
+                    "Primeiro paragrafo",
+                    "Segundo paragrafo"
+            );
+            assertComesBefore(paragraphs, "Caderno \u2014 Livro DOCX Caderno", "Pesquisa");
+            assertComesBefore(paragraphs, "Pesquisa", "Abertas");
+            assertComesBefore(paragraphs, "Abertas", "Nota DOCX");
+            assertComesBefore(paragraphs, "Nota DOCX", "Status: Aberta | Atualizada em: " + today);
+            assertComesBefore(paragraphs, "Primeiro paragrafo", "Segundo paragrafo");
         }
     }
 
@@ -282,5 +361,40 @@ class BookDocxExportIntegrationTest extends PostgresIntegrationTest {
         XWPFRun run = runWithText(paragraph, text);
         assertThat(run.isBold()).isTrue();
         assertThat(run.getFontSize()).isEqualTo(fontSize);
+    }
+
+    private UUID findNotebookCategoryId(UUID bookId, String name) throws Exception {
+        String response = mockMvc.perform(get("/api/books/{bookId}/notebook/categories", bookId))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        for (JsonNode category : objectMapper.readTree(response)) {
+            if (name.equals(category.get("name").asText())) {
+                return UUID.fromString(category.get("id").asText());
+            }
+        }
+        throw new IllegalStateException("Notebook category not found: " + name);
+    }
+
+    private UUID createNotebookNote(UUID bookId, String title, String content, UUID categoryId, String status) throws Exception {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("title", title);
+        body.put("content", content);
+        if (categoryId != null) {
+            body.put("categoryId", categoryId);
+        }
+        body.put("status", status);
+
+        String response = mockMvc.perform(post("/api/books/{bookId}/notebook/notes", bookId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(body)))
+                .andExpect(status().isCreated())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        return UUID.fromString(objectMapper.readTree(response).get("id").asText());
     }
 }

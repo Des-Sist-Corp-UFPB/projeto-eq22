@@ -34,9 +34,6 @@ public class NotebookCategory {
     @Column(nullable = false)
     private Integer sortOrder;
 
-    @Column(nullable = false)
-    private boolean isDefault;
-
     @Column(nullable = false, updatable = false)
     private OffsetDateTime createdAt;
 
@@ -81,14 +78,6 @@ public class NotebookCategory {
 
     public void setSortOrder(Integer sortOrder) {
         this.sortOrder = sortOrder;
-    }
-
-    public boolean isDefault() {
-        return isDefault;
-    }
-
-    public void setDefault(boolean aDefault) {
-        isDefault = aDefault;
     }
 
     public OffsetDateTime getCreatedAt() {

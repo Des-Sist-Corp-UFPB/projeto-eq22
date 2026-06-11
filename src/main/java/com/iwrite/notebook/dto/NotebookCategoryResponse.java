@@ -1,6 +1,5 @@
 package com.iwrite.notebook.dto;
 
-import com.fasterxml.jackson.annotation.JsonProperty;
 import com.iwrite.notebook.entity.NotebookCategory;
 
 import java.time.OffsetDateTime;
@@ -11,8 +10,6 @@ public record NotebookCategoryResponse(
         UUID bookId,
         String name,
         Integer sortOrder,
-        @JsonProperty("isDefault")
-        boolean isDefault,
         OffsetDateTime createdAt,
         OffsetDateTime updatedAt
 ) {
@@ -23,7 +20,6 @@ public record NotebookCategoryResponse(
                 category.getBook().getId(),
                 category.getName(),
                 category.getSortOrder(),
-                category.isDefault(),
                 category.getCreatedAt(),
                 category.getUpdatedAt()
         );

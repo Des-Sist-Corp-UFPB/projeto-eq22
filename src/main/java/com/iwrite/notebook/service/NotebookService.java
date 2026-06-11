@@ -5,6 +5,7 @@ import com.iwrite.book.service.BookService;
 import com.iwrite.common.exception.BadRequestException;
 import com.iwrite.common.exception.ResourceNotFoundException;
 import com.iwrite.common.validation.RequestValidation;
+import com.iwrite.notebook.NotebookCategoryOrdering;
 import com.iwrite.notebook.dto.NotebookCategoryRequest;
 import com.iwrite.notebook.dto.NotebookCategoryResponse;
 import com.iwrite.notebook.dto.NotebookCategoryUpdateRequest;
@@ -14,6 +15,7 @@ import com.iwrite.notebook.dto.NotebookNoteUpdateRequest;
 import com.iwrite.notebook.entity.NotebookCategory;
 import com.iwrite.notebook.entity.NotebookNote;
 import com.iwrite.notebook.entity.NotebookNoteStatus;
+import com.iwrite.notebook.repository.BookNotebookSettingsRepository;
 import com.iwrite.notebook.repository.NotebookCategoryRepository;
 import com.iwrite.notebook.repository.NotebookNoteRepository;
 import org.springframework.stereotype.Service;
@@ -25,7 +27,7 @@ import java.util.UUID;
 @Service
 public class NotebookService {
 
-    private static final List<String> DEFAULT_CATEGORY_NAMES = List.of(
+    private static final List<String> STARTER_CATEGORY_NAMES = List.of(
             "Ideia",
             "Pesquisa",
             "Mundo",
@@ -38,23 +40,26 @@ public class NotebookService {
 
     private final NotebookCategoryRepository categoryRepository;
     private final NotebookNoteRepository noteRepository;
+    private final BookNotebookSettingsRepository settingsRepository;
     private final BookService bookService;
 
     public NotebookService(
             NotebookCategoryRepository categoryRepository,
             NotebookNoteRepository noteRepository,
+            BookNotebookSettingsRepository settingsRepository,
             BookService bookService
     ) {
         this.categoryRepository = categoryRepository;
         this.noteRepository = noteRepository;
+        this.settingsRepository = settingsRepository;
         this.bookService = bookService;
     }
 
     @Transactional
     public List<NotebookCategoryResponse> findCategoriesByBook(UUID bookId) {
         Book book = bookService.getBook(bookId);
-        ensureDefaultCategories(book);
-        return categoryRepository.findByBookIdOrderBySortOrderAscNameAscIdAsc(bookId)
+        initializeStarterCategories(book);
+        return orderedCategories(bookId)
                 .stream()
                 .map(NotebookCategoryResponse::fromEntity)
                 .toList();
@@ -63,14 +68,13 @@ public class NotebookService {
     @Transactional
     public NotebookCategoryResponse createCategory(UUID bookId, NotebookCategoryRequest request) {
         Book book = bookService.getBook(bookId);
-        ensureDefaultCategories(book);
+        initializeStarterCategories(book);
         rejectDuplicateCategoryName(bookId, request.name());
 
         NotebookCategory category = new NotebookCategory();
         category.setBook(book);
         category.setName(request.name());
         category.setSortOrder(request.sortOrder() == null ? nextSortOrder(bookId) : request.sortOrder());
-        category.setDefault(false);
 
         return NotebookCategoryResponse.fromEntity(categoryRepository.save(category));
     }
@@ -80,9 +84,6 @@ public class NotebookService {
         NotebookCategory category = getCategory(categoryId);
         RequestValidation.rejectBlankWhenPresent("name", request.name());
 
-        if (request.name() != null && category.isDefault()) {
-            throw new BadRequestException("Default notebook categories cannot be renamed");
-        }
         if (request.name() != null && !category.getName().equals(request.name())) {
             if (!category.getName().equalsIgnoreCase(request.name())) {
                 rejectDuplicateCategoryName(category.getBook().getId(), request.name());
@@ -99,9 +100,6 @@ public class NotebookService {
     @Transactional
     public void deleteCategory(UUID categoryId) {
         NotebookCategory category = getCategory(categoryId);
-        if (category.isDefault()) {
-            throw new BadRequestException("Default notebook categories cannot be deleted");
-        }
         noteRepository.findByCategoryId(categoryId)
                 .forEach(note -> note.setCategory(null));
         categoryRepository.delete(category);
@@ -187,11 +185,16 @@ public class NotebookService {
                 .orElseThrow(() -> new ResourceNotFoundException("Notebook note not found: " + noteId));
     }
 
-    private void ensureDefaultCategories(Book book) {
+    private void initializeStarterCategories(Book book) {
         UUID bookId = book.getId();
+        int insertedSettingsRows = settingsRepository.insertInitializedIfMissing(bookId);
+        if (insertedSettingsRows == 0) {
+            return;
+        }
+
         int sortOrder = 0;
-        for (String name : DEFAULT_CATEGORY_NAMES) {
-            categoryRepository.insertDefaultCategoryIfMissing(UUID.randomUUID(), bookId, name, sortOrder);
+        for (String name : STARTER_CATEGORY_NAMES) {
+            categoryRepository.insertStarterCategoryIfMissing(UUID.randomUUID(), bookId, name, sortOrder);
             sortOrder++;
         }
     }
@@ -210,7 +213,7 @@ public class NotebookService {
     }
 
     private int nextSortOrder(UUID bookId) {
-        return categoryRepository.findByBookIdOrderBySortOrderAscNameAscIdAsc(bookId)
+        return orderedCategories(bookId)
                 .stream()
                 .map(NotebookCategory::getSortOrder)
                 .max(Integer::compareTo)
@@ -222,5 +225,10 @@ public class NotebookService {
         if (categoryRepository.existsByBookIdAndNameIgnoreCase(bookId, name)) {
             throw new BadRequestException("Notebook category name must be unique within the book");
         }
+    }
+
+    private List<NotebookCategory> orderedCategories(UUID bookId) {
+        return NotebookCategoryOrdering.ordered(
+                categoryRepository.findByBookIdOrderBySortOrderAscNameAscIdAsc(bookId));
     }
 }

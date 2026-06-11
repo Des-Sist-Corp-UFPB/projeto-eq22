@@ -3,7 +3,6 @@ export type NotebookCategory = {
   bookId: string;
   name: string;
   sortOrder: number;
-  isDefault: boolean;
   createdAt: string;
   updatedAt: string;
 };

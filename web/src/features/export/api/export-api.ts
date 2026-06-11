@@ -1,57 +1,53 @@
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8085";
+import { downloadFile } from "@/lib/api/download-file";
 
-export type BookExportFormat = "markdown" | "docx";
+export type ExportFormat = "txt" | "md" | "docx";
 
-export type BookExportOptions = {
-  format: BookExportFormat;
+export type ManuscriptExportOptions = {
+  format: ExportFormat;
   includeSceneTitles: boolean;
   includeEmptyScenes: boolean;
 };
 
-const EXPORT_FORMAT_CONFIG: Record<BookExportFormat, { path: string; fallbackFileName: string }> = {
-  markdown: { path: "export/markdown", fallbackFileName: "manuscrito.md" },
-  docx: { path: "export/docx", fallbackFileName: "manuscrito.docx" },
+export type NotebookExportOptions = {
+  format: ExportFormat;
+  includeOpen: boolean;
+  includeResolved: boolean;
 };
 
-export async function downloadBookExport(bookId: string, options: BookExportOptions) {
-  const formatConfig = EXPORT_FORMAT_CONFIG[options.format];
+const fallbackFileNames: Record<ExportFormat, string> = {
+  txt: "manuscrito.txt",
+  md: "manuscrito.md",
+  docx: "manuscrito.docx",
+};
+
+const notebookFallbackFileNames: Record<ExportFormat, string> = {
+  txt: "caderno.txt",
+  md: "caderno.md",
+  docx: "caderno.docx",
+};
+
+export async function downloadBookExport(bookId: string, options: ManuscriptExportOptions) {
   const params = new URLSearchParams({
+    format: options.format,
     includeSceneTitles: String(options.includeSceneTitles),
     includeEmptyScenes: String(options.includeEmptyScenes),
   });
-  const response = await fetch(`${API_URL}/api/books/${bookId}/${formatConfig.path}?${params.toString()}`);
 
-  if (!response.ok) {
-    throw new Error(await readExportErrorMessage(response));
-  }
-
-  const blob = await response.blob();
-  const fileName = getFileNameFromContentDisposition(response.headers.get("content-disposition")) ?? formatConfig.fallbackFileName;
-  const url = window.URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-
-  anchor.href = url;
-  anchor.download = fileName;
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
-  window.URL.revokeObjectURL(url);
+  return downloadFile({
+    path: `/api/books/${bookId}/exports/manuscript?${params.toString()}`,
+    fallbackFileName: fallbackFileNames[options.format],
+  });
 }
 
-function getFileNameFromContentDisposition(contentDisposition: string | null) {
-  if (!contentDisposition) {
-    return null;
-  }
+export async function downloadNotebookExport(bookId: string, options: NotebookExportOptions) {
+  const params = new URLSearchParams({
+    format: options.format,
+    includeOpen: String(options.includeOpen),
+    includeResolved: String(options.includeResolved),
+  });
 
-  const fileNameMatch = contentDisposition.match(/filename="([^"]+)"/i) ?? contentDisposition.match(/filename=([^;]+)/i);
-  return fileNameMatch?.[1]?.trim() || null;
-}
-
-async function readExportErrorMessage(response: Response) {
-  try {
-    const data = (await response.json()) as { messages?: string[]; error?: string };
-    return data.messages?.join(", ") ?? data.error ?? `HTTP ${response.status}`;
-  } catch {
-    return `HTTP ${response.status}`;
-  }
+  return downloadFile({
+    path: `/api/books/${bookId}/exports/notebook?${params.toString()}`,
+    fallbackFileName: notebookFallbackFileNames[options.format],
+  });
 }

@@ -4,6 +4,16 @@ import com.iwrite.book.entity.Book;
 import com.iwrite.book.service.BookService;
 import com.iwrite.chapter.entity.Chapter;
 import com.iwrite.chapter.repository.ChapterRepository;
+import com.iwrite.export.ExportFile;
+import com.iwrite.export.ExportFileNameService;
+import com.iwrite.export.ExportFormat;
+import com.iwrite.common.exception.BadRequestException;
+import com.iwrite.notebook.NotebookCategoryOrdering;
+import com.iwrite.notebook.entity.NotebookCategory;
+import com.iwrite.notebook.entity.NotebookNote;
+import com.iwrite.notebook.entity.NotebookNoteStatus;
+import com.iwrite.notebook.repository.NotebookCategoryRepository;
+import com.iwrite.notebook.repository.NotebookNoteRepository;
 import com.iwrite.scene.entity.Scene;
 import com.iwrite.scene.repository.SceneRepository;
 import com.iwrite.section.entity.BookSection;
@@ -17,9 +27,9 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.text.Normalizer;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -27,33 +37,123 @@ import java.util.stream.Collectors;
 @Service
 public class BookExportService {
 
+    private static final String NOTEBOOK_TITLE_PREFIX = "Caderno \u2014 ";
+    private static final String UNCATEGORIZED_CATEGORY_NAME = "Sem categoria";
+
     private final BookService bookService;
     private final BookSectionRepository sectionRepository;
     private final ChapterRepository chapterRepository;
     private final SceneRepository sceneRepository;
+    private final NotebookCategoryRepository notebookCategoryRepository;
+    private final NotebookNoteRepository notebookNoteRepository;
     private final TipTapMarkdownRenderer tipTapMarkdownRenderer;
     private final TipTapDocxRenderer tipTapDocxRenderer;
+    private final TipTapPlainTextRenderer tipTapPlainTextRenderer;
+    private final ExportFileNameService exportFileNameService;
 
     public BookExportService(
             BookService bookService,
             BookSectionRepository sectionRepository,
             ChapterRepository chapterRepository,
             SceneRepository sceneRepository,
+            NotebookCategoryRepository notebookCategoryRepository,
+            NotebookNoteRepository notebookNoteRepository,
             TipTapMarkdownRenderer tipTapMarkdownRenderer,
-            TipTapDocxRenderer tipTapDocxRenderer
+            TipTapDocxRenderer tipTapDocxRenderer,
+            TipTapPlainTextRenderer tipTapPlainTextRenderer,
+            ExportFileNameService exportFileNameService
     ) {
         this.bookService = bookService;
         this.sectionRepository = sectionRepository;
         this.chapterRepository = chapterRepository;
         this.sceneRepository = sceneRepository;
+        this.notebookCategoryRepository = notebookCategoryRepository;
+        this.notebookNoteRepository = notebookNoteRepository;
         this.tipTapMarkdownRenderer = tipTapMarkdownRenderer;
         this.tipTapDocxRenderer = tipTapDocxRenderer;
+        this.tipTapPlainTextRenderer = tipTapPlainTextRenderer;
+        this.exportFileNameService = exportFileNameService;
+    }
+
+    @Transactional(readOnly = true)
+    public ExportFile exportManuscript(
+            UUID bookId,
+            ExportFormat format,
+            boolean includeSceneTitles,
+            boolean includeEmptyScenes
+    ) {
+        ManuscriptExport manuscript = getManuscriptExport(bookId);
+        String fileName = manuscriptFileName(manuscript.book(), format);
+
+        return switch (format) {
+            case TXT -> new ExportFile(
+                    exportTxt(manuscript, includeSceneTitles, includeEmptyScenes).getBytes(StandardCharsets.UTF_8),
+                    format.contentType(),
+                    fileName
+            );
+            case MD -> new ExportFile(
+                    exportMarkdown(manuscript, includeSceneTitles, includeEmptyScenes).getBytes(StandardCharsets.UTF_8),
+                    format.contentType(),
+                    fileName
+            );
+            case DOCX -> new ExportFile(
+                    exportDocx(manuscript, includeSceneTitles, includeEmptyScenes),
+                    format.contentType(),
+                    fileName
+            );
+        };
+    }
+
+    @Transactional(readOnly = true)
+    public ExportFile exportNotebook(
+            UUID bookId,
+            ExportFormat format,
+            boolean includeOpen,
+            boolean includeResolved
+    ) {
+        NotebookExport notebook = getNotebookExport(bookId, includeOpen, includeResolved);
+        String fileName = exportFileNameService.fileName("caderno " + notebook.book().getTitle(), "caderno", format.extension());
+
+        return switch (format) {
+            case TXT -> new ExportFile(
+                    exportNotebookTxt(notebook).getBytes(StandardCharsets.UTF_8),
+                    format.contentType(),
+                    fileName
+            );
+            case MD -> new ExportFile(
+                    exportNotebookMarkdown(notebook).getBytes(StandardCharsets.UTF_8),
+                    format.contentType(),
+                    fileName
+            );
+            case DOCX -> new ExportFile(
+                    exportNotebookDocx(notebook),
+                    format.contentType(),
+                    fileName
+            );
+        };
     }
 
     @Transactional(readOnly = true)
     public String exportMarkdown(UUID bookId, boolean includeSceneTitles, boolean includeEmptyScenes) {
-        ManuscriptExport manuscript = getManuscriptExport(bookId);
+        return exportMarkdown(getManuscriptExport(bookId), includeSceneTitles, includeEmptyScenes);
+    }
 
+    @Transactional(readOnly = true)
+    public byte[] exportDocx(UUID bookId, boolean includeSceneTitles, boolean includeEmptyScenes) {
+        return exportDocx(getManuscriptExport(bookId), includeSceneTitles, includeEmptyScenes);
+    }
+
+    public String getMarkdownFileName(UUID bookId) {
+        Book book = bookService.getBook(bookId);
+        return manuscriptFileName(book, ExportFormat.MD);
+    }
+
+    public String getDocxFileName(UUID bookId) {
+        Book book = bookService.getBook(bookId);
+        return manuscriptFileName(book, ExportFormat.DOCX);
+    }
+
+    private String exportMarkdown(ManuscriptExport manuscript, boolean includeSceneTitles, boolean includeEmptyScenes) {
         StringBuilder markdown = new StringBuilder();
         appendHeading(markdown, "#", manuscript.book().getTitle());
         appendOptionalBlock(markdown, manuscript.book().getSubtitle());
@@ -71,10 +171,7 @@ public class BookExportService {
         return markdown.toString();
     }
 
-    @Transactional(readOnly = true)
-    public byte[] exportDocx(UUID bookId, boolean includeSceneTitles, boolean includeEmptyScenes) {
-        ManuscriptExport manuscript = getManuscriptExport(bookId);
-
+    private byte[] exportDocx(ManuscriptExport manuscript, boolean includeSceneTitles, boolean includeEmptyScenes) {
         try (XWPFDocument document = new XWPFDocument();
              ByteArrayOutputStream outputStream = new ByteArrayOutputStream()) {
             appendDocxHeading(document, "Title", manuscript.book().getTitle());
@@ -97,14 +194,22 @@ public class BookExportService {
         }
     }
 
-    public String getMarkdownFileName(UUID bookId) {
-        Book book = bookService.getBook(bookId);
-        return getExportFileName(book, "md");
-    }
+    private String exportTxt(ManuscriptExport manuscript, boolean includeSceneTitles, boolean includeEmptyScenes) {
+        StringBuilder text = new StringBuilder();
+        appendTextBlock(text, manuscript.book().getTitle());
+        appendOptionalTextBlock(text, manuscript.book().getSubtitle());
+        appendOptionalTextBlock(text, manuscript.book().getDescription());
 
-    public String getDocxFileName(UUID bookId) {
-        Book book = bookService.getBook(bookId);
-        return getExportFileName(book, "docx");
+        for (BookSection section : manuscript.sections()) {
+            appendTextBlock(text, section.getTitle());
+
+            for (Chapter chapter : manuscript.chaptersBySection().getOrDefault(section.getId(), List.of())) {
+                appendTextBlock(text, chapter.getTitle());
+                appendTxtChapterScenes(text, manuscript.scenesByChapter().getOrDefault(chapter.getId(), List.of()), includeSceneTitles, includeEmptyScenes);
+            }
+        }
+
+        return normalizeLineEndings(text.toString());
     }
 
     private ManuscriptExport getManuscriptExport(UUID bookId) {
@@ -121,18 +226,175 @@ public class BookExportService {
         return new ManuscriptExport(book, sections, chaptersBySection, scenesByChapter);
     }
 
-    private String getExportFileName(Book book, String extension) {
-        String normalizedTitle = Normalizer.normalize(book.getTitle(), Normalizer.Form.NFD)
-                .replaceAll("\\p{M}", "")
-                .toLowerCase(Locale.ROOT)
-                .replaceAll("[^a-z0-9]+", "-")
-                .replaceAll("(^-+|-+$)", "");
-
-        if (normalizedTitle.isBlank()) {
-            normalizedTitle = "manuscrito";
+    private NotebookExport getNotebookExport(UUID bookId, boolean includeOpen, boolean includeResolved) {
+        if (!includeOpen && !includeResolved) {
+            throw new BadRequestException("At least one notebook note status must be included");
         }
 
-        return normalizedTitle + "." + extension;
+        Book book = bookService.getBook(bookId);
+        List<NotebookNote> notes = notebookNoteRepository.findByBookIdOrderByUpdatedAtDescIdAsc(bookId)
+                .stream()
+                .filter(note -> shouldIncludeNotebookStatus(note.getStatus(), includeOpen, includeResolved))
+                .toList();
+        List<NotebookCategory> categories = NotebookCategoryOrdering.ordered(
+                notebookCategoryRepository.findByBookIdOrderBySortOrderAscNameAscIdAsc(bookId));
+        List<NotebookCategoryExport> categoryExports = new ArrayList<>();
+
+        for (NotebookCategory category : categories) {
+            List<NotebookNote> categoryNotes = notes.stream()
+                    .filter(note -> note.getCategory() != null && note.getCategory().getId().equals(category.getId()))
+                    .toList();
+            if (!categoryNotes.isEmpty()) {
+                categoryExports.add(new NotebookCategoryExport(category.getName(), categoryNotes));
+            }
+        }
+
+        List<NotebookNote> uncategorizedNotes = notes.stream()
+                .filter(note -> note.getCategory() == null)
+                .toList();
+        if (!uncategorizedNotes.isEmpty()) {
+            categoryExports.add(new NotebookCategoryExport(UNCATEGORIZED_CATEGORY_NAME, uncategorizedNotes));
+        }
+
+        return new NotebookExport(book, categoryExports);
+    }
+
+    private boolean shouldIncludeNotebookStatus(NotebookNoteStatus status, boolean includeOpen, boolean includeResolved) {
+        return (includeOpen && status == NotebookNoteStatus.OPEN)
+                || (includeResolved && status == NotebookNoteStatus.RESOLVED);
+    }
+
+    private String manuscriptFileName(Book book, ExportFormat format) {
+        return exportFileNameService.fileName(book.getTitle(), "manuscrito", format.extension());
+    }
+
+    private String exportNotebookTxt(NotebookExport notebook) {
+        StringBuilder text = new StringBuilder();
+        appendTextBlock(text, notebookTitle(notebook));
+
+        for (NotebookCategoryExport category : notebook.categories()) {
+            appendTextBlock(text, category.name());
+            appendNotebookTxtStatusSection(text, "Abertas", category.openNotes());
+            appendNotebookTxtStatusSection(text, "Resolvidas", category.resolvedNotes());
+        }
+
+        return normalizeLineEndings(text.toString());
+    }
+
+    private void appendNotebookTxtStatusSection(StringBuilder text, String statusTitle, List<NotebookNote> notes) {
+        if (notes.isEmpty()) {
+            return;
+        }
+
+        appendTextBlock(text, statusTitle);
+        for (NotebookNote note : notes) {
+            appendTextBlock(text, notebookNoteTxtBlock(note));
+        }
+    }
+
+    private String notebookNoteTxtBlock(NotebookNote note) {
+        StringBuilder block = new StringBuilder(note.getTitle());
+        block.append("\n").append(notebookMetadata(note));
+        appendNotebookContent(block, note.getContent());
+        return block.toString();
+    }
+
+    private String exportNotebookMarkdown(NotebookExport notebook) {
+        StringBuilder markdown = new StringBuilder();
+        appendHeading(markdown, "#", notebookTitle(notebook));
+
+        for (NotebookCategoryExport category : notebook.categories()) {
+            appendHeading(markdown, "##", category.name());
+            appendNotebookMarkdownStatusSection(markdown, "Abertas", category.openNotes());
+            appendNotebookMarkdownStatusSection(markdown, "Resolvidas", category.resolvedNotes());
+        }
+
+        return markdown.toString();
+    }
+
+    private void appendNotebookMarkdownStatusSection(StringBuilder markdown, String statusTitle, List<NotebookNote> notes) {
+        if (notes.isEmpty()) {
+            return;
+        }
+
+        appendHeading(markdown, "###", statusTitle);
+        for (NotebookNote note : notes) {
+            appendHeading(markdown, "####", note.getTitle());
+            appendBlock(markdown, notebookMetadata(note));
+            appendOptionalBlock(markdown, normalizeNotebookContent(note.getContent()));
+        }
+    }
+
+    private byte[] exportNotebookDocx(NotebookExport notebook) {
+        try (XWPFDocument document = new XWPFDocument();
+             ByteArrayOutputStream outputStream = new ByteArrayOutputStream()) {
+            appendDocxHeading(document, "Title", notebookTitle(notebook));
+
+            for (NotebookCategoryExport category : notebook.categories()) {
+                appendDocxHeading(document, "Heading1", category.name());
+                appendNotebookDocxStatusSection(document, "Abertas", category.openNotes());
+                appendNotebookDocxStatusSection(document, "Resolvidas", category.resolvedNotes());
+            }
+
+            document.write(outputStream);
+            return outputStream.toByteArray();
+        } catch (IOException exception) {
+            throw new IllegalStateException("Failed to export DOCX notebook", exception);
+        }
+    }
+
+    private void appendNotebookDocxStatusSection(XWPFDocument document, String statusTitle, List<NotebookNote> notes) {
+        if (notes.isEmpty()) {
+            return;
+        }
+
+        appendDocxHeading(document, "Heading2", statusTitle);
+        for (NotebookNote note : notes) {
+            appendDocxHeading(document, "Heading3", note.getTitle());
+            appendDocxParagraph(document, notebookMetadata(note));
+            appendDocxNotebookContent(document, note.getContent());
+        }
+    }
+
+    private String notebookTitle(NotebookExport notebook) {
+        return NOTEBOOK_TITLE_PREFIX + notebook.book().getTitle();
+    }
+
+    private String notebookMetadata(NotebookNote note) {
+        return "Status: " + notebookStatusLabel(note.getStatus())
+                + " | Atualizada em: " + note.getUpdatedAt().toLocalDate();
+    }
+
+    private String notebookStatusLabel(NotebookNoteStatus status) {
+        return status == NotebookNoteStatus.RESOLVED ? "Resolvida" : "Aberta";
+    }
+
+    private void appendNotebookContent(StringBuilder block, String content) {
+        String normalizedContent = normalizeNotebookContent(content);
+        if (normalizedContent == null) {
+            return;
+        }
+
+        block.append("\n\n").append(normalizedContent);
+    }
+
+    private String normalizeNotebookContent(String content) {
+        if (content == null || content.isBlank()) {
+            return null;
+        }
+
+        return normalizeLineEndings(content).strip();
+    }
+
+    private void appendDocxNotebookContent(XWPFDocument document, String content) {
+        String normalizedContent = normalizeNotebookContent(content);
+        if (normalizedContent == null) {
+            return;
+        }
+
+        for (String paragraph : normalizedContent.split("\\n{2,}", -1)) {
+            appendDocxParagraph(document, paragraph);
+        }
     }
 
     private void appendHeading(StringBuilder markdown, String marker, String title) {
@@ -203,6 +465,76 @@ public class BookExportService {
         }
 
         markdown.append(block);
+    }
+
+    private void appendTxtChapterScenes(
+            StringBuilder text,
+            List<Scene> scenes,
+            boolean includeSceneTitles,
+            boolean includeEmptyScenes
+    ) {
+        boolean hasPreviousSceneContent = false;
+
+        for (Scene scene : scenes) {
+            String sceneBlock = buildTxtSceneBlock(scene, includeSceneTitles, includeEmptyScenes);
+            if (sceneBlock == null) {
+                continue;
+            }
+
+            if (hasPreviousSceneContent && !includeSceneTitles) {
+                appendTextBlock(text, TipTapPlainTextRenderer.TEXT_SEPARATOR);
+            }
+
+            appendTextBlock(text, sceneBlock);
+            hasPreviousSceneContent = true;
+        }
+    }
+
+    private String buildTxtSceneBlock(Scene scene, boolean includeSceneTitles, boolean includeEmptyScenes) {
+        String sceneContent = getPlainSceneContent(scene);
+        boolean hasContent = sceneContent != null && !sceneContent.isBlank();
+
+        if (!hasContent && !includeEmptyScenes) {
+            return null;
+        }
+
+        StringBuilder sceneBlock = new StringBuilder();
+        if (includeSceneTitles) {
+            sceneBlock.append(scene.getTitle());
+        }
+        if (hasContent) {
+            if (!sceneBlock.isEmpty()) {
+                sceneBlock.append("\n\n");
+            }
+            sceneBlock.append(sceneContent);
+        }
+
+        return sceneBlock.isEmpty() ? null : sceneBlock.toString();
+    }
+
+    private String getPlainSceneContent(Scene scene) {
+        return tipTapPlainTextRenderer.render(scene.getContentJson())
+                .orElseGet(() -> scene.getContentText() == null || scene.getContentText().isBlank() ? null : normalizeLineEndings(scene.getContentText()));
+    }
+
+    private void appendOptionalTextBlock(StringBuilder text, String block) {
+        if (block == null || block.isBlank()) {
+            return;
+        }
+
+        appendTextBlock(text, block);
+    }
+
+    private void appendTextBlock(StringBuilder text, String block) {
+        if (!text.isEmpty()) {
+            text.append("\n\n");
+        }
+
+        text.append(normalizeLineEndings(block));
+    }
+
+    private String normalizeLineEndings(String text) {
+        return text.replaceAll("\\R", "\n");
     }
 
     private void appendDocxChapterScenes(
@@ -362,5 +694,29 @@ public class BookExportService {
             Map<UUID, List<Chapter>> chaptersBySection,
             Map<UUID, List<Scene>> scenesByChapter
     ) {
+    }
+
+    private record NotebookExport(
+            Book book,
+            List<NotebookCategoryExport> categories
+    ) {
+    }
+
+    private record NotebookCategoryExport(
+            String name,
+            List<NotebookNote> notes
+    ) {
+
+        List<NotebookNote> openNotes() {
+            return notes.stream()
+                    .filter(note -> note.getStatus() == NotebookNoteStatus.OPEN)
+                    .toList();
+        }
+
+        List<NotebookNote> resolvedNotes() {
+            return notes.stream()
+                    .filter(note -> note.getStatus() == NotebookNoteStatus.RESOLVED)
+                    .toList();
+        }
     }
 }
