@@ -1,3 +1,4 @@
+import { Blob as NodeBlob } from "node:buffer";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { downloadFile, getFileNameFromContentDisposition } from "@/lib/api/download-file";
 
@@ -35,17 +36,30 @@ describe("downloadFile", () => {
       return Document.prototype.createElement.call(document, tagName, options);
     });
     const appendSpy = vi.spyOn(document.body, "appendChild");
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response("conteudo", {
-        status: 200,
-        headers: { "content-disposition": 'attachment; filename="livro-exportado.md"' },
-      })
+    const response = new Response(null, {
+      status: 200,
+      headers: {
+        "content-disposition": 'attachment; filename="livro-exportado.md"',
+        "content-type": "text/plain;charset=utf-8",
+      },
+    });
+    vi.spyOn(response, "blob").mockResolvedValue(
+      new NodeBlob(["conteudo"], { type: "text/plain;charset=utf-8" }) as Blob
     );
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(response);
 
     await downloadFile({ path: "/api/export", fallbackFileName: "fallback.md" });
 
     expect(fetchMock).toHaveBeenCalledWith("http://localhost:8085/api/export");
-    expect(window.URL.createObjectURL).toHaveBeenCalledWith(expect.any(Blob));
+    expect(window.URL.createObjectURL).toHaveBeenCalledTimes(1);
+    const [blob] = vi.mocked(window.URL.createObjectURL).mock.calls[0];
+    expect(blob).toBeDefined();
+    expect(blob.size).toBe(8);
+    expect(blob.type).toBe("text/plain;charset=utf-8");
+    expect(typeof blob.arrayBuffer).toBe("function");
+    if (typeof blob.text === "function") {
+      await expect(blob.text()).resolves.toBe("conteudo");
+    }
     expect(createElementSpy).toHaveBeenCalledWith("a");
     expect(appendSpy).toHaveBeenCalledWith(expect.objectContaining({ download: "livro-exportado.md" }));
     expect(clickMock).toHaveBeenCalledTimes(1);
