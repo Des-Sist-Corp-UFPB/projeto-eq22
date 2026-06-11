@@ -24,7 +24,16 @@ describe("downloadFile", () => {
   });
 
   test("baixa blob com nome do header e revoga object URL", async () => {
-    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+    const anchor = document.createElement("a");
+    const clickMock = vi.fn();
+    anchor.click = clickMock;
+    const createElementSpy = vi.spyOn(document, "createElement").mockImplementation((tagName, options) => {
+      if (tagName.toLowerCase() === "a") {
+        return anchor;
+      }
+
+      return Document.prototype.createElement.call(document, tagName, options);
+    });
     const appendSpy = vi.spyOn(document.body, "appendChild");
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response("conteudo", {
@@ -37,8 +46,9 @@ describe("downloadFile", () => {
 
     expect(fetchMock).toHaveBeenCalledWith("http://localhost:8085/api/export");
     expect(window.URL.createObjectURL).toHaveBeenCalledWith(expect.any(Blob));
+    expect(createElementSpy).toHaveBeenCalledWith("a");
     expect(appendSpy).toHaveBeenCalledWith(expect.objectContaining({ download: "livro-exportado.md" }));
-    expect(clickSpy).toHaveBeenCalledTimes(1);
+    expect(clickMock).toHaveBeenCalledTimes(1);
     expect(window.URL.revokeObjectURL).toHaveBeenCalledWith("blob:export");
   });
 });
