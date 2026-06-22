@@ -9,6 +9,7 @@ import com.iwrite.sceneversion.dto.SceneVersionSummaryResponse;
 import com.iwrite.sceneversion.entity.SceneVersion;
 import com.iwrite.sceneversion.entity.SceneVersionSource;
 import com.iwrite.sceneversion.repository.SceneVersionRepository;
+import com.iwrite.user.context.CurrentUserProvider;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import org.springframework.data.domain.PageRequest;
@@ -36,13 +37,19 @@ public class SceneVersionService {
 
     private final SceneVersionRepository versionRepository;
     private final SceneRepository sceneRepository;
+    private final CurrentUserProvider currentUserProvider;
 
     @PersistenceContext
     private EntityManager entityManager;
 
-    public SceneVersionService(SceneVersionRepository versionRepository, SceneRepository sceneRepository) {
+    public SceneVersionService(
+            SceneVersionRepository versionRepository,
+            SceneRepository sceneRepository,
+            CurrentUserProvider currentUserProvider
+    ) {
         this.versionRepository = versionRepository;
         this.sceneRepository = sceneRepository;
+        this.currentUserProvider = currentUserProvider;
     }
 
     @Transactional(readOnly = true)
@@ -71,7 +78,11 @@ public class SceneVersionService {
 
     @Transactional(readOnly = true)
     public SceneVersion getCurrentSceneVersion(UUID sceneId, UUID versionId) {
-        return versionRepository.findByIdAndSceneId(versionId, sceneId)
+        return versionRepository.findByIdAndSceneIdAndTenantId(
+                        versionId,
+                        sceneId,
+                        currentUserProvider.tenantId()
+                )
                 .orElseThrow(() -> new ResourceNotFoundException("Scene version not found: " + versionId));
     }
 
@@ -164,7 +175,7 @@ public class SceneVersionService {
     }
 
     private void requireCurrentScene(UUID sceneId) {
-        if (!sceneRepository.existsById(sceneId)) {
+        if (sceneRepository.findByIdAndTenantId(sceneId, currentUserProvider.tenantId()).isEmpty()) {
             throw new ResourceNotFoundException("Scene not found: " + sceneId);
         }
     }

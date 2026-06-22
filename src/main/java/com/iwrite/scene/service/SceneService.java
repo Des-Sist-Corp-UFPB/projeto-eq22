@@ -213,12 +213,12 @@ public class SceneService {
     public SceneResponse restoreVersion(UUID sceneId, UUID versionId, SceneVersionRestoreRequest request) {
         Scene scene = getSceneForUpdate(sceneId);
         rejectMissingOperationId(request.operationId());
-        SceneResponse idempotentRetryResponse = idempotentRestoreRetryResponse(scene, versionId, request);
+        SceneVersion version = sceneVersionService.getCurrentSceneVersion(sceneId, versionId);
+        SceneResponse idempotentRetryResponse = idempotentRestoreRetryResponse(scene, version, request);
         if (idempotentRetryResponse != null) {
             return idempotentRetryResponse;
         }
         rejectStaleContentRevision(scene, request.expectedContentRevision());
-        SceneVersion version = sceneVersionService.getCurrentSceneVersion(sceneId, versionId);
 
         if (sameContent(scene, version.getContentJson(), version.getContentText())) {
             return SceneResponse.fromEntity(scene);
@@ -439,13 +439,17 @@ public class SceneService {
                 .orElse(null);
     }
 
-    private SceneResponse idempotentRestoreRetryResponse(Scene scene, UUID versionId, SceneVersionRestoreRequest request) {
+    private SceneResponse idempotentRestoreRetryResponse(
+            Scene scene,
+            SceneVersion version,
+            SceneVersionRestoreRequest request
+    ) {
         if (request.expectedContentRevision() == null || request.expectedContentRevision().equals(scene.getContentRevision())) {
             return null;
         }
 
         return wordCountEventRepository.findByBookIdAndIdempotencyKey(scene.getBook().getId(), request.operationId())
-                .filter(event -> isMatchingVersionRestoreRetry(event, scene, versionId, request))
+                .filter(event -> isMatchingVersionRestoreRetry(event, scene, version, request))
                 .map(event -> SceneResponse.fromEntity(scene))
                 .orElse(null);
     }
@@ -462,10 +466,9 @@ public class SceneService {
     private boolean isMatchingVersionRestoreRetry(
             BookWordCountEvent event,
             Scene scene,
-            UUID versionId,
+            SceneVersion version,
             SceneVersionRestoreRequest request
     ) {
-        SceneVersion version = sceneVersionService.getCurrentSceneVersion(scene.getId(), versionId);
         return event.getEventType() == BookWordCountEventType.VERSION_RESTORE
                 && event.getScene() != null
                 && event.getScene().getId().equals(scene.getId())
