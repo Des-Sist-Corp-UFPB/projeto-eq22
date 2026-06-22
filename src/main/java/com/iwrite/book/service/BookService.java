@@ -40,7 +40,7 @@ public class BookService {
 
     @Transactional(readOnly = true)
     public List<BookResponse> findAll() {
-        return bookRepository.findAll()
+        return bookRepository.findAllByTenant_Id(currentUserProvider.tenantId())
                 .stream()
                 .map(book -> BookResponse.fromEntity(book, writingScheduleService.getActivePlannedWritingDays(book.getId())))
                 .toList();
@@ -107,7 +107,7 @@ public class BookService {
 
     @Transactional(readOnly = true)
     public Book getBook(UUID bookId) {
-        return bookRepository.findById(bookId)
+        return bookRepository.findByIdAndTenant_Id(bookId, currentUserProvider.tenantId())
                 .orElseThrow(() -> new ResourceNotFoundException("Book not found: " + bookId));
     }
 }
