@@ -1,0 +1,191 @@
+package com.iwrite.book;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.iwrite.book.entity.Book;
+import com.iwrite.book.repository.BookRepository;
+import com.iwrite.support.PostgresIntegrationTest;
+import com.iwrite.support.SwitchableCurrentUserProvider;
+import com.iwrite.tenant.entity.Tenant;
+import com.iwrite.tenant.repository.TenantRepository;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Import;
+import org.springframework.context.annotation.Primary;
+import org.springframework.http.MediaType;
+import org.springframework.test.web.servlet.MockMvc;
+
+import java.time.ZoneId;
+import java.util.Map;
+import java.util.UUID;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.hasItem;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+@AutoConfigureMockMvc
+@Import(BookTenantIsolationIntegrationTest.CurrentUserTestConfiguration.class)
+class BookTenantIsolationIntegrationTest extends PostgresIntegrationTest {
+
+    private static final UUID TENANT_B_USER_ID = UUID.fromString("10000000-0000-0000-0000-000000000002");
+
+    @Autowired
+    private MockMvc mockMvc;
+
+    @Autowired
+    private ObjectMapper objectMapper;
+
+    @Autowired
+    private SwitchableCurrentUserProvider currentUserProvider;
+
+    @Autowired
+    private TenantRepository tenantRepository;
+
+    @Autowired
+    private BookRepository bookRepository;
+
+    private UUID tenantBId;
+
+    @BeforeEach
+    void setUpCurrentTenant() {
+        currentUserProvider.reset();
+        Tenant tenantB = new Tenant();
+        tenantB.setName("Tenant B");
+        tenantB.setDefaultTimeZoneId("UTC");
+        tenantBId = tenantRepository.save(tenantB).getId();
+    }
+
+    @AfterEach
+    void resetCurrentTenant() {
+        currentUserProvider.reset();
+    }
+
+    @Test
+    void listsOnlyCurrentTenantBooksAndAssignsTenantOnCreate() throws Exception {
+        var bookA = createBook("Book A");
+
+        switchToTenantB();
+        var bookB = createBook("Book B");
+
+        mockMvc.perform(get("/api/books"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].id").value(bookB.id().toString()))
+                .andExpect(jsonPath("$[?(@.id == '%s')]".formatted(bookA.id())).isEmpty());
+
+        currentUserProvider.reset();
+        mockMvc.perform(get("/api/books"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[?(@.id == '%s')]".formatted(bookA.id())).exists())
+                .andExpect(jsonPath("$[?(@.id == '%s')]".formatted(bookB.id())).isEmpty());
+
+        assertThat(bookRepository.findById(bookA.id()).orElseThrow().getTenant().getId())
+                .isEqualTo(SwitchableCurrentUserProvider.DEFAULT_TENANT_ID);
+        assertThat(bookRepository.findById(bookB.id()).orElseThrow().getTenant().getId())
+                .isEqualTo(tenantBId);
+
+        String response = mockMvc.perform(post("/api/books")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "title", "Client tenant ignored",
+                                "tenantId", tenantBId
+                        ))))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        UUID createdId = UUID.fromString(objectMapper.readTree(response).get("id").asText());
+        assertThat(bookRepository.findById(createdId).orElseThrow().getTenant().getId())
+                .isEqualTo(SwitchableCurrentUserProvider.DEFAULT_TENANT_ID);
+    }
+
+    @Test
+    void inaccessibleReadUpdateAndDeleteReturnNotFoundWithoutChangingBook() throws Exception {
+        var bookA = createBook("Protected Book A");
+        switchToTenantB();
+
+        assertBookNotFound(get("/api/books/{bookId}", bookA.id()));
+        assertBookNotFound(patch("/api/books/{bookId}", bookA.id())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"title\":\"Compromised\"}"));
+
+        Book unchanged = bookRepository.findById(bookA.id()).orElseThrow();
+        assertThat(unchanged.getTitle()).isEqualTo("Protected Book A");
+
+        assertBookNotFound(delete("/api/books/{bookId}", bookA.id()));
+        assertThat(bookRepository.findById(bookA.id())).isPresent();
+
+        assertBookNotFound(get("/api/books/{bookId}", UUID.randomUUID()));
+    }
+
+    @Test
+    void inaccessibleManuscriptAndNotebookExportsReturnNotFoundForEveryRequiredFormat() throws Exception {
+        var bookA = createBook("Private exports");
+        switchToTenantB();
+
+        for (String format : new String[]{"txt", "md", "docx"}) {
+            assertBookNotFound(get("/api/books/{bookId}/exports/manuscript", bookA.id())
+                    .param("format", format));
+        }
+        assertBookNotFound(get("/api/books/{bookId}/exports/notebook", bookA.id())
+                .param("format", "md"));
+    }
+
+    @Test
+    void owningTenantRetainsReadUpdateDeleteAndExportBehavior() throws Exception {
+        var bookA = createBook("Owned Book A");
+
+        mockMvc.perform(get("/api/books/{bookId}", bookA.id()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.title").value("Owned Book A"));
+        mockMvc.perform(patch("/api/books/{bookId}", bookA.id())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"title\":\"Updated Book A\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.title").value("Updated Book A"));
+
+        for (String format : new String[]{"txt", "md", "docx"}) {
+            mockMvc.perform(get("/api/books/{bookId}/exports/manuscript", bookA.id())
+                            .param("format", format))
+                    .andExpect(status().isOk());
+        }
+        mockMvc.perform(get("/api/books/{bookId}/exports/notebook", bookA.id())
+                        .param("format", "md"))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(delete("/api/books/{bookId}", bookA.id()))
+                .andExpect(status().isNoContent());
+        assertThat(bookRepository.findById(bookA.id())).isEmpty();
+    }
+
+    private void switchToTenantB() {
+        currentUserProvider.switchTo(TENANT_B_USER_ID, tenantBId, ZoneId.of("UTC"));
+    }
+
+    private void assertBookNotFound(org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder request)
+            throws Exception {
+        mockMvc.perform(request)
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.status").value(404))
+                .andExpect(jsonPath("$.error").value("Not Found"))
+                .andExpect(jsonPath("$.messages", hasItem(containsString("Book not found"))));
+    }
+
+    @TestConfiguration(proxyBeanMethods = false)
+    static class CurrentUserTestConfiguration {
+
+        @Bean
+        @Primary
+        SwitchableCurrentUserProvider switchableCurrentUserProvider() {
+            return new SwitchableCurrentUserProvider();
+        }
+
+    }
+}
