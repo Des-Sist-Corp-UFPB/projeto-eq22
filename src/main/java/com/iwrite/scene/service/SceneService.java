@@ -26,6 +26,7 @@ import com.iwrite.sceneversion.dto.SceneVersionRestoreRequest;
 import com.iwrite.sceneversion.entity.SceneVersion;
 import com.iwrite.sceneversion.entity.SceneVersionSource;
 import com.iwrite.sceneversion.service.SceneVersionService;
+import com.iwrite.user.context.CurrentUserProvider;
 import com.iwrite.writingprogress.ledger.entity.BookWordCountEvent;
 import com.iwrite.writingprogress.ledger.entity.BookWordCountEventType;
 import com.iwrite.writingprogress.ledger.repository.BookWordCountEventRepository;
@@ -58,6 +59,7 @@ public class SceneService {
     private final SceneDeletionLedgerService sceneDeletionLedgerService;
     private final WordCountEventService wordCountEventService;
     private final BookWordCountEventRepository wordCountEventRepository;
+    private final CurrentUserProvider currentUserProvider;
 
     public SceneService(
             SceneRepository sceneRepository,
@@ -70,7 +72,8 @@ public class SceneService {
             SceneVersionService sceneVersionService,
             SceneDeletionLedgerService sceneDeletionLedgerService,
             WordCountEventService wordCountEventService,
-            BookWordCountEventRepository wordCountEventRepository
+            BookWordCountEventRepository wordCountEventRepository,
+            CurrentUserProvider currentUserProvider
     ) {
         this.sceneRepository = sceneRepository;
         this.chapterService = chapterService;
@@ -83,6 +86,7 @@ public class SceneService {
         this.sceneDeletionLedgerService = sceneDeletionLedgerService;
         this.wordCountEventService = wordCountEventService;
         this.wordCountEventRepository = wordCountEventRepository;
+        this.currentUserProvider = currentUserProvider;
     }
 
     @Transactional(readOnly = true)
@@ -289,12 +293,12 @@ public class SceneService {
 
     @Transactional(readOnly = true)
     public Scene getScene(UUID sceneId) {
-        return sceneRepository.findById(sceneId)
+        return sceneRepository.findByIdAndTenantId(sceneId, currentUserProvider.tenantId())
                 .orElseThrow(() -> new ResourceNotFoundException("Scene not found: " + sceneId));
     }
 
     private Scene getSceneForUpdate(UUID sceneId) {
-        return sceneRepository.findByIdForUpdate(sceneId)
+        return sceneRepository.findByIdAndTenantIdForUpdate(sceneId, currentUserProvider.tenantId())
                 .orElseThrow(() -> new ResourceNotFoundException("Scene not found: " + sceneId));
     }
 
@@ -380,12 +384,12 @@ public class SceneService {
         Map<UUID, T> childrenById = children.stream()
                 .collect(Collectors.toMap(idGetter, Function.identity()));
 
+        if (!childrenById.keySet().equals(new HashSet<>(orderedIds))) {
+            throw new BadRequestException("All IDs must exist and belong to the parent");
+        }
+
         for (int index = 0; index < orderedIds.size(); index++) {
             T child = childrenById.get(orderedIds.get(index));
-            if (child == null) {
-                throw new BadRequestException("All IDs must exist and belong to the parent");
-            }
-
             orderSetter.setSortOrder(child, index);
         }
     }
