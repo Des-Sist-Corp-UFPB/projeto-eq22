@@ -23,7 +23,7 @@ server:
 iwrite:
   current-user:
     development:
-      enabled: ${IWRITE_DEVELOPMENT_CURRENT_USER_ENABLED:true}
+      enabled: ${IWRITE_DEVELOPMENT_CURRENT_USER_ENABLED:false}
       user-id: ${IWRITE_DEVELOPMENT_CURRENT_USER_ID:00000000-0000-0000-0000-000000000002}
       tenant-id: ${IWRITE_DEVELOPMENT_TENANT_ID:00000000-0000-0000-0000-000000000001}
       time-zone-id: ${IWRITE_DEVELOPMENT_TIME_ZONE_ID:America/Sao_Paulo}

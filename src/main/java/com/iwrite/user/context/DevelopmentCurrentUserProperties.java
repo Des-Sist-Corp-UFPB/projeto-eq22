@@ -7,7 +7,7 @@ import java.util.UUID;
 @ConfigurationProperties(prefix = "iwrite.current-user.development")
 public class DevelopmentCurrentUserProperties {
 
-    private boolean enabled = true;
+    private boolean enabled = false;
     private UUID userId = UUID.fromString("00000000-0000-0000-0000-000000000002");
     private UUID tenantId = UUID.fromString("00000000-0000-0000-0000-000000000001");
     private String timeZoneId = "America/Sao_Paulo";

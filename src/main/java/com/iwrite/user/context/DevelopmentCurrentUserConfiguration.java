@@ -13,7 +13,7 @@ import org.springframework.context.annotation.Configuration;
         prefix = "iwrite.current-user.development",
         name = "enabled",
         havingValue = "true",
-        matchIfMissing = true
+        matchIfMissing = false
 )
 public class DevelopmentCurrentUserConfiguration {
 

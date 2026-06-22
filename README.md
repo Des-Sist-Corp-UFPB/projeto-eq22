@@ -48,10 +48,10 @@ Compile o backend no Windows:
 mvnw.cmd -DskipTests compile
 ```
 
-Execute o backend no Windows:
+Execute o backend no Windows com o perfil de desenvolvimento, que habilita explicitamente a identidade temporaria local:
 
 ```powershell
-mvnw.cmd spring-boot:run
+mvnw.cmd spring-boot:run -Dspring-boot.run.profiles=development
 ```
 
 Compile o backend no Linux/macOS:
@@ -60,10 +60,10 @@ Compile o backend no Linux/macOS:
 ./mvnw -DskipTests compile
 ```
 
-Execute o backend no Linux/macOS:
+Execute o backend no Linux/macOS com o perfil de desenvolvimento:
 
 ```bash
-./mvnw spring-boot:run
+./mvnw spring-boot:run -Dspring-boot.run.profiles=development
 ```
 
 ## Frontend local
