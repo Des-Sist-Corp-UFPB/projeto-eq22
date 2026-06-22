@@ -16,7 +16,22 @@ public interface SceneVersionRepository extends JpaRepository<SceneVersion, UUID
 
     Page<SceneVersion> findBySceneIdOrderByCreatedAtDesc(UUID sceneId, Pageable pageable);
 
-    Optional<SceneVersion> findByIdAndSceneId(UUID versionId, UUID sceneId);
+    @Query("""
+            select version
+            from SceneVersion version
+            join version.scene scene
+            join scene.chapter chapter
+            join chapter.section section
+            join section.book book
+            where version.id = :versionId
+              and scene.id = :sceneId
+              and book.tenant.id = :tenantId
+            """)
+    Optional<SceneVersion> findByIdAndSceneIdAndTenantId(
+            @Param("versionId") UUID versionId,
+            @Param("sceneId") UUID sceneId,
+            @Param("tenantId") UUID tenantId
+    );
 
     Optional<SceneVersion> findTopBySceneIdOrderByCreatedAtDesc(UUID sceneId);
 
