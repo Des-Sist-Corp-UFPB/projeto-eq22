@@ -8,6 +8,8 @@ import com.iwrite.book.entity.BookStatus;
 import com.iwrite.book.repository.BookRepository;
 import com.iwrite.common.exception.ResourceNotFoundException;
 import com.iwrite.common.validation.RequestValidation;
+import com.iwrite.tenant.repository.TenantRepository;
+import com.iwrite.user.context.CurrentUserProvider;
 import com.iwrite.writingprogress.service.WritingScheduleService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -21,10 +23,19 @@ public class BookService {
 
     private final BookRepository bookRepository;
     private final WritingScheduleService writingScheduleService;
+    private final TenantRepository tenantRepository;
+    private final CurrentUserProvider currentUserProvider;
 
-    public BookService(BookRepository bookRepository, WritingScheduleService writingScheduleService) {
+    public BookService(
+            BookRepository bookRepository,
+            WritingScheduleService writingScheduleService,
+            TenantRepository tenantRepository,
+            CurrentUserProvider currentUserProvider
+    ) {
         this.bookRepository = bookRepository;
         this.writingScheduleService = writingScheduleService;
+        this.tenantRepository = tenantRepository;
+        this.currentUserProvider = currentUserProvider;
     }
 
     @Transactional(readOnly = true)
@@ -44,6 +55,7 @@ public class BookService {
     @Transactional
     public BookResponse create(BookRequest request) {
         Book book = new Book();
+        book.setTenant(tenantRepository.getReferenceById(currentUserProvider.tenantId()));
         book.setTitle(request.title());
         book.setSubtitle(request.subtitle());
         book.setDescription(request.description());

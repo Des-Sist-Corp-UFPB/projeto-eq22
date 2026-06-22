@@ -42,6 +42,7 @@ public abstract class PostgresIntegrationTest {
         registry.add("spring.datasource.url", TestDatabaseInitializer::testDbUrl);
         registry.add("spring.datasource.username", TestDatabaseInitializer::username);
         registry.add("spring.datasource.password", TestDatabaseInitializer::password);
+        registry.add("iwrite.current-user.development.enabled", () -> "true");
     }
 
     @Autowired

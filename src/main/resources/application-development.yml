@@ -1,0 +1,4 @@
+iwrite:
+  current-user:
+    development:
+      enabled: true
