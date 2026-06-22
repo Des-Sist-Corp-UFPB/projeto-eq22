@@ -14,6 +14,7 @@ import com.iwrite.section.dto.BookSectionUpdateRequest;
 import com.iwrite.section.entity.BookSection;
 import com.iwrite.section.entity.SectionType;
 import com.iwrite.section.repository.BookSectionRepository;
+import com.iwrite.user.context.CurrentUserProvider;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -31,17 +32,20 @@ public class BookSectionService {
     private final BookService bookService;
     private final SceneRepository sceneRepository;
     private final SceneDeletionLedgerService sceneDeletionLedgerService;
+    private final CurrentUserProvider currentUserProvider;
 
     public BookSectionService(
             BookSectionRepository sectionRepository,
             BookService bookService,
             SceneRepository sceneRepository,
-            SceneDeletionLedgerService sceneDeletionLedgerService
+            SceneDeletionLedgerService sceneDeletionLedgerService,
+            CurrentUserProvider currentUserProvider
     ) {
         this.sectionRepository = sectionRepository;
         this.bookService = bookService;
         this.sceneRepository = sceneRepository;
         this.sceneDeletionLedgerService = sceneDeletionLedgerService;
+        this.currentUserProvider = currentUserProvider;
     }
 
     @Transactional
@@ -91,7 +95,7 @@ public class BookSectionService {
 
     @Transactional(readOnly = true)
     public BookSection getSection(UUID sectionId) {
-        return sectionRepository.findById(sectionId)
+        return sectionRepository.findByIdAndBook_Tenant_Id(sectionId, currentUserProvider.tenantId())
                 .orElseThrow(() -> new ResourceNotFoundException("Section not found: " + sectionId));
     }
 
@@ -112,12 +116,12 @@ public class BookSectionService {
         Map<UUID, T> childrenById = children.stream()
                 .collect(Collectors.toMap(idGetter, Function.identity()));
 
+        if (!childrenById.keySet().equals(new HashSet<>(orderedIds))) {
+            throw new BadRequestException("All IDs must exist and belong to the parent");
+        }
+
         for (int index = 0; index < orderedIds.size(); index++) {
             T child = childrenById.get(orderedIds.get(index));
-            if (child == null) {
-                throw new BadRequestException("All IDs must exist and belong to the parent");
-            }
-
             orderSetter.setSortOrder(child, index);
         }
     }
