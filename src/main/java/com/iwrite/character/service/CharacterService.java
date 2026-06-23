@@ -131,9 +131,9 @@ public class CharacterService {
     public void delete(UUID characterId) {
         UUID tenantId = currentUserProvider.tenantId();
         Character character = getCharacterForUpdate(characterId, tenantId);
-        if (sceneRepository.existsByPovCharacter_IdAndBook_Tenant_Id(characterId, tenantId)
-                || sceneRepository.existsByParticipantCharacters_IdAndBook_Tenant_Id(characterId, tenantId)
-                || itemRepository.existsByCurrentOwnerCharacter_IdAndBook_Tenant_Id(characterId, tenantId)) {
+        if (sceneRepository.existsByPovCharacter_Id(characterId)
+                || sceneRepository.existsByParticipantCharacterId(characterId)
+                || itemRepository.existsByCurrentOwnerCharacter_Id(characterId)) {
             throw characterReferencedConflict();
         }
 

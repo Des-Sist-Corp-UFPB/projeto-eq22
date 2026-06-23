@@ -103,7 +103,7 @@ public class LocationService {
     public void delete(UUID locationId) {
         UUID tenantId = currentUserProvider.tenantId();
         Location location = getLocationForUpdate(locationId, tenantId);
-        if (sceneRepository.existsByMainLocation_IdAndBook_Tenant_Id(locationId, tenantId)) {
+        if (sceneRepository.existsByMainLocation_Id(locationId)) {
             throw locationReferencedConflict();
         }
 

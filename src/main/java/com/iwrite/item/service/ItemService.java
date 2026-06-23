@@ -117,7 +117,7 @@ public class ItemService {
     public void delete(UUID itemId) {
         UUID tenantId = currentUserProvider.tenantId();
         Item item = getItemForUpdate(itemId, tenantId);
-        if (sceneRepository.existsByItems_IdAndBook_Tenant_Id(itemId, tenantId)) {
+        if (sceneRepository.existsByItemId(itemId)) {
             throw itemReferencedConflict();
         }
 

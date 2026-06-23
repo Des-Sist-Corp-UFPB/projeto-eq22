@@ -17,7 +17,7 @@ public interface ItemRepository extends JpaRepository<Item, UUID> {
 
     Optional<Item> findByIdAndBook_Tenant_Id(UUID itemId, UUID tenantId);
 
-    boolean existsByCurrentOwnerCharacter_IdAndBook_Tenant_Id(UUID characterId, UUID tenantId);
+    boolean existsByCurrentOwnerCharacter_Id(UUID characterId);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("""

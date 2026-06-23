@@ -467,6 +467,62 @@ class PlanningEntityTenantIsolationIntegrationTest extends PostgresIntegrationTe
         assertEquivalentNotFound(foreignItem, missingItem);
     }
 
+    @Test
+    void legacyCrossTenantReferencesBlockOwnerDeletesWithoutExposingForeignMetadata() throws Exception {
+        CharacterResponse crossTenantPov = createCharacter(worldA1.book(), "Legacy cross-tenant POV");
+        CharacterResponse crossTenantParticipant = createCharacter(worldA1.book(), "Legacy cross-tenant participant");
+        CharacterResponse crossTenantOwner = createCharacter(worldA1.book(), "Legacy cross-tenant owner");
+        LocationResponse crossTenantLocation = createLocation(worldA1.book(), "Legacy cross-tenant location");
+        ItemResponse crossTenantItem = createItem(worldA1.book(), "Legacy cross-tenant item");
+
+        createLegacyCrossTenantReferences(
+                crossTenantPov,
+                crossTenantParticipant,
+                crossTenantOwner,
+                crossTenantLocation,
+                crossTenantItem
+        );
+
+        assertGenericConflictWithoutForeignMetadata(
+                delete("/api/characters/{id}", crossTenantPov.id()),
+                "Character cannot be deleted"
+        );
+        assertThat(characterRepository.findById(crossTenantPov.id())).isPresent();
+        assertThat(persistedScene(worldB.scene().id()).getPovCharacter().getId()).isEqualTo(crossTenantPov.id());
+
+        assertGenericConflictWithoutForeignMetadata(
+                delete("/api/characters/{id}", crossTenantParticipant.id()),
+                "Character cannot be deleted"
+        );
+        assertThat(characterRepository.findById(crossTenantParticipant.id())).isPresent();
+        assertThat(persistedScene(worldB.scene().id()).getParticipantCharacters())
+                .extracting(Character::getId)
+                .contains(crossTenantParticipant.id());
+
+        assertGenericConflictWithoutForeignMetadata(
+                delete("/api/characters/{id}", crossTenantOwner.id()),
+                "Character cannot be deleted"
+        );
+        assertThat(characterRepository.findById(crossTenantOwner.id())).isPresent();
+        assertThat(persistedItem(worldB.item().id()).getCurrentOwnerCharacter().getId()).isEqualTo(crossTenantOwner.id());
+
+        assertGenericConflictWithoutForeignMetadata(
+                delete("/api/locations/{id}", crossTenantLocation.id()),
+                "Location cannot be deleted"
+        );
+        assertThat(locationRepository.findById(crossTenantLocation.id())).isPresent();
+        assertThat(persistedScene(worldB.scene().id()).getMainLocation().getId()).isEqualTo(crossTenantLocation.id());
+
+        assertGenericConflictWithoutForeignMetadata(
+                delete("/api/items/{id}", crossTenantItem.id()),
+                "Item cannot be deleted"
+        );
+        assertThat(itemRepository.findById(crossTenantItem.id())).isPresent();
+        assertThat(persistedScene(worldB.scene().id()).getItems())
+                .extracting(Item::getId)
+                .contains(crossTenantItem.id());
+    }
+
     private PlanningWorld createPlanningWorld(String label) {
         BookResponse book = createBook("Book " + label);
         BookSectionResponse section = createSection(book, "Section " + label);
@@ -537,6 +593,22 @@ class PlanningEntityTenantIsolationIntegrationTest extends PostgresIntegrationTe
                 .andReturn();
     }
 
+    private void assertGenericConflictWithoutForeignMetadata(
+            org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder request,
+            String message
+    ) throws Exception {
+        String responseBody = assertConflict(request, message).getResponse().getContentAsString();
+        assertThat(responseBody)
+                .doesNotContain("Tenant B")
+                .doesNotContain("Book B")
+                .doesNotContain("Scene B")
+                .doesNotContain("Item B")
+                .doesNotContain(tenantB.tenantId().toString())
+                .doesNotContain(worldB.book().id().toString())
+                .doesNotContain(worldB.scene().id().toString())
+                .doesNotContain(worldB.item().id().toString());
+    }
+
     private void assertEquivalentNotFound(MvcResult first, MvcResult second) throws Exception {
         assertThat(first.getResponse().getStatus()).isEqualTo(second.getResponse().getStatus());
         assertThat(first.getResponse().getContentType()).isEqualTo(second.getResponse().getContentType());
@@ -582,6 +654,38 @@ class PlanningEntityTenantIsolationIntegrationTest extends PostgresIntegrationTe
 
     private List<UUID> sortedIds(Set<UUID> ids) {
         return ids.stream().sorted(Comparator.comparing(UUID::toString)).toList();
+    }
+
+    private void createLegacyCrossTenantReferences(
+            CharacterResponse povCharacter,
+            CharacterResponse participantCharacter,
+            CharacterResponse ownerCharacter,
+            LocationResponse location,
+            ItemResponse item
+    ) {
+        Scene tenantBScene = sceneRepository.findById(worldB.scene().id()).orElseThrow();
+        tenantBScene.setPovCharacter(characterRepository.findById(povCharacter.id()).orElseThrow());
+        tenantBScene.getParticipantCharacters().add(characterRepository.findById(participantCharacter.id()).orElseThrow());
+        tenantBScene.setMainLocation(locationRepository.findById(location.id()).orElseThrow());
+        tenantBScene.getItems().add(itemRepository.findById(item.id()).orElseThrow());
+
+        Item tenantBItem = itemRepository.findById(worldB.item().id()).orElseThrow();
+        tenantBItem.setCurrentOwnerCharacter(characterRepository.findById(ownerCharacter.id()).orElseThrow());
+
+        entityManager.flush();
+        entityManager.clear();
+    }
+
+    private Scene persistedScene(UUID sceneId) {
+        entityManager.flush();
+        entityManager.clear();
+        return sceneRepository.findById(sceneId).orElseThrow();
+    }
+
+    private Item persistedItem(UUID itemId) {
+        entityManager.flush();
+        entityManager.clear();
+        return itemRepository.findById(itemId).orElseThrow();
     }
 
     private ItemState itemState(UUID itemId) {

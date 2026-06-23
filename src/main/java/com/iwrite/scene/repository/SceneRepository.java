@@ -77,13 +77,25 @@ public interface SceneRepository extends JpaRepository<Scene, UUID> {
 
     int countByChapterId(UUID chapterId);
 
-    boolean existsByPovCharacter_IdAndBook_Tenant_Id(UUID characterId, UUID tenantId);
+    boolean existsByPovCharacter_Id(UUID characterId);
 
-    boolean existsByParticipantCharacters_IdAndBook_Tenant_Id(UUID characterId, UUID tenantId);
+    @Query("""
+            select count(scene) > 0
+            from Scene scene
+            join scene.participantCharacters character
+            where character.id = :characterId
+            """)
+    boolean existsByParticipantCharacterId(@Param("characterId") UUID characterId);
 
-    boolean existsByMainLocation_IdAndBook_Tenant_Id(UUID locationId, UUID tenantId);
+    boolean existsByMainLocation_Id(UUID locationId);
 
-    boolean existsByItems_IdAndBook_Tenant_Id(UUID itemId, UUID tenantId);
+    @Query("""
+            select count(scene) > 0
+            from Scene scene
+            join scene.items item
+            where item.id = :itemId
+            """)
+    boolean existsByItemId(@Param("itemId") UUID itemId);
 
     @Query("select coalesce(sum(scene.wordCount), 0) from Scene scene where scene.book.id = :bookId")
     long sumWordCountByBookId(@Param("bookId") UUID bookId);
