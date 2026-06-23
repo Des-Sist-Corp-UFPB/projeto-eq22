@@ -31,6 +31,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -238,6 +239,9 @@ public class BookExportService {
                 .toList();
         List<NotebookCategory> categories = NotebookCategoryOrdering.ordered(
                 notebookCategoryRepository.findByBookIdOrderBySortOrderAscNameAscIdAsc(bookId));
+        Set<UUID> categoryIds = categories.stream()
+                .map(NotebookCategory::getId)
+                .collect(Collectors.toSet());
         List<NotebookCategoryExport> categoryExports = new ArrayList<>();
 
         for (NotebookCategory category : categories) {
@@ -250,7 +254,7 @@ public class BookExportService {
         }
 
         List<NotebookNote> uncategorizedNotes = notes.stream()
-                .filter(note -> note.getCategory() == null)
+                .filter(note -> note.getCategory() == null || !categoryIds.contains(note.getCategory().getId()))
                 .toList();
         if (!uncategorizedNotes.isEmpty()) {
             categoryExports.add(new NotebookCategoryExport(UNCATEGORIZED_CATEGORY_NAME, uncategorizedNotes));
