@@ -7,8 +7,13 @@ import com.iwrite.character.dto.CharacterResponse;
 import com.iwrite.character.dto.CharacterUpdateRequest;
 import com.iwrite.character.entity.Character;
 import com.iwrite.character.repository.CharacterRepository;
+import com.iwrite.common.exception.ConflictException;
 import com.iwrite.common.exception.ResourceNotFoundException;
 import com.iwrite.common.validation.RequestValidation;
+import com.iwrite.item.repository.ItemRepository;
+import com.iwrite.scene.repository.SceneRepository;
+import com.iwrite.user.context.CurrentUserProvider;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -20,16 +25,31 @@ public class CharacterService {
 
     private final CharacterRepository characterRepository;
     private final BookService bookService;
+    private final CurrentUserProvider currentUserProvider;
+    private final SceneRepository sceneRepository;
+    private final ItemRepository itemRepository;
 
-    public CharacterService(CharacterRepository characterRepository, BookService bookService) {
+    public CharacterService(
+            CharacterRepository characterRepository,
+            BookService bookService,
+            CurrentUserProvider currentUserProvider,
+            SceneRepository sceneRepository,
+            ItemRepository itemRepository
+    ) {
         this.characterRepository = characterRepository;
         this.bookService = bookService;
+        this.currentUserProvider = currentUserProvider;
+        this.sceneRepository = sceneRepository;
+        this.itemRepository = itemRepository;
     }
 
     @Transactional(readOnly = true)
     public List<CharacterResponse> findByBook(UUID bookId) {
         bookService.getBook(bookId);
-        return characterRepository.findByBookIdOrderByNameAscIdAsc(bookId)
+        return characterRepository.findByBook_IdAndBook_Tenant_IdOrderByNameAscIdAsc(
+                        bookId,
+                        currentUserProvider.tenantId()
+                )
                 .stream()
                 .map(CharacterResponse::fromEntity)
                 .toList();
@@ -109,13 +129,34 @@ public class CharacterService {
 
     @Transactional
     public void delete(UUID characterId) {
-        Character character = getCharacter(characterId);
-        characterRepository.delete(character);
+        UUID tenantId = currentUserProvider.tenantId();
+        Character character = getCharacterForUpdate(characterId, tenantId);
+        if (sceneRepository.existsByPovCharacter_IdAndBook_Tenant_Id(characterId, tenantId)
+                || sceneRepository.existsByParticipantCharacters_IdAndBook_Tenant_Id(characterId, tenantId)
+                || itemRepository.existsByCurrentOwnerCharacter_IdAndBook_Tenant_Id(characterId, tenantId)) {
+            throw characterReferencedConflict();
+        }
+
+        try {
+            characterRepository.delete(character);
+            characterRepository.flush();
+        } catch (DataIntegrityViolationException exception) {
+            throw characterReferencedConflict();
+        }
     }
 
     @Transactional(readOnly = true)
     public Character getCharacter(UUID characterId) {
-        return characterRepository.findById(characterId)
+        return characterRepository.findByIdAndBook_Tenant_Id(characterId, currentUserProvider.tenantId())
                 .orElseThrow(() -> new ResourceNotFoundException("Character not found: " + characterId));
+    }
+
+    private Character getCharacterForUpdate(UUID characterId, UUID tenantId) {
+        return characterRepository.findByIdAndBookTenantIdForUpdate(characterId, tenantId)
+                .orElseThrow(() -> new ResourceNotFoundException("Character not found: " + characterId));
+    }
+
+    private ConflictException characterReferencedConflict() {
+        return new ConflictException("Character cannot be deleted while it is referenced.");
     }
 }

@@ -261,15 +261,19 @@ public class SceneService {
         List<String> gapsBefore = scene.getStatus() == SceneStatus.PLANNED
                 ? planningCompletenessService.planningGaps(scene)
                 : List.of();
+        Character povCharacter = findCharacterForBook(bookId, request.povCharacterId(), "povCharacterId");
+        Location mainLocation = findLocationForBook(bookId, request.mainLocationId());
+        Set<Character> participantCharacters = findParticipantsForBook(bookId, request.participantCharacterIds());
+        Set<Item> items = findItemsForBook(bookId, request.itemIds());
 
         scene.setGoal(request.goal());
         scene.setConflict(request.conflict());
         scene.setOutcome(request.outcome());
         scene.setPlanningNotes(request.planningNotes());
-        scene.setPovCharacter(findCharacterForBook(bookId, request.povCharacterId(), "povCharacterId"));
-        scene.setMainLocation(findLocationForBook(bookId, request.mainLocationId()));
-        scene.setParticipantCharacters(findParticipantsForBook(bookId, request.participantCharacterIds()));
-        scene.setItems(findItemsForBook(bookId, request.itemIds()));
+        scene.setPovCharacter(povCharacter);
+        scene.setMainLocation(mainLocation);
+        scene.setParticipantCharacters(participantCharacters);
+        scene.setItems(items);
         if (scene.getStatus() == SceneStatus.PLANNED) {
             rejectIntroducedPlanningGaps(scene, gapsBefore);
         }
