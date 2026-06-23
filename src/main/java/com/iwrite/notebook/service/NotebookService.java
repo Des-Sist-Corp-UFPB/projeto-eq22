@@ -3,6 +3,7 @@ package com.iwrite.notebook.service;
 import com.iwrite.book.entity.Book;
 import com.iwrite.book.service.BookService;
 import com.iwrite.common.exception.BadRequestException;
+import com.iwrite.common.exception.ConflictException;
 import com.iwrite.common.exception.ResourceNotFoundException;
 import com.iwrite.common.validation.RequestValidation;
 import com.iwrite.notebook.NotebookCategoryOrdering;
@@ -18,6 +19,8 @@ import com.iwrite.notebook.entity.NotebookNoteStatus;
 import com.iwrite.notebook.repository.BookNotebookSettingsRepository;
 import com.iwrite.notebook.repository.NotebookCategoryRepository;
 import com.iwrite.notebook.repository.NotebookNoteRepository;
+import com.iwrite.user.context.CurrentUserProvider;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -42,24 +45,27 @@ public class NotebookService {
     private final NotebookNoteRepository noteRepository;
     private final BookNotebookSettingsRepository settingsRepository;
     private final BookService bookService;
+    private final CurrentUserProvider currentUserProvider;
 
     public NotebookService(
             NotebookCategoryRepository categoryRepository,
             NotebookNoteRepository noteRepository,
             BookNotebookSettingsRepository settingsRepository,
-            BookService bookService
+            BookService bookService,
+            CurrentUserProvider currentUserProvider
     ) {
         this.categoryRepository = categoryRepository;
         this.noteRepository = noteRepository;
         this.settingsRepository = settingsRepository;
         this.bookService = bookService;
+        this.currentUserProvider = currentUserProvider;
     }
 
     @Transactional
     public List<NotebookCategoryResponse> findCategoriesByBook(UUID bookId) {
         Book book = bookService.getBook(bookId);
         initializeStarterCategories(book);
-        return orderedCategories(bookId)
+        return orderedCategories(bookId, currentUserProvider.tenantId())
                 .stream()
                 .map(NotebookCategoryResponse::fromEntity)
                 .toList();
@@ -69,12 +75,13 @@ public class NotebookService {
     public NotebookCategoryResponse createCategory(UUID bookId, NotebookCategoryRequest request) {
         Book book = bookService.getBook(bookId);
         initializeStarterCategories(book);
-        rejectDuplicateCategoryName(bookId, request.name());
+        UUID tenantId = currentUserProvider.tenantId();
+        rejectDuplicateCategoryName(bookId, tenantId, request.name());
 
         NotebookCategory category = new NotebookCategory();
         category.setBook(book);
         category.setName(request.name());
-        category.setSortOrder(request.sortOrder() == null ? nextSortOrder(bookId) : request.sortOrder());
+        category.setSortOrder(request.sortOrder() == null ? nextSortOrder(bookId, tenantId) : request.sortOrder());
 
         return NotebookCategoryResponse.fromEntity(categoryRepository.save(category));
     }
@@ -86,7 +93,11 @@ public class NotebookService {
 
         if (request.name() != null && !category.getName().equals(request.name())) {
             if (!category.getName().equalsIgnoreCase(request.name())) {
-                rejectDuplicateCategoryName(category.getBook().getId(), request.name());
+                rejectDuplicateCategoryName(
+                        category.getBook().getId(),
+                        currentUserProvider.tenantId(),
+                        request.name()
+                );
             }
             category.setName(request.name());
         }
@@ -99,29 +110,43 @@ public class NotebookService {
 
     @Transactional
     public void deleteCategory(UUID categoryId) {
-        NotebookCategory category = getCategory(categoryId);
-        noteRepository.findByCategoryId(categoryId)
+        NotebookCategory category = getCategoryForUpdate(categoryId);
+        UUID bookId = category.getBook().getId();
+        if (noteRepository.existsByCategoryIdAndBookIdNot(categoryId, bookId)) {
+            throw notebookCategoryReferencedConflict();
+        }
+
+        noteRepository.findByBook_IdAndCategory_Id(bookId, categoryId)
                 .forEach(note -> note.setCategory(null));
-        categoryRepository.delete(category);
-        categoryRepository.flush();
+        try {
+            categoryRepository.delete(category);
+            categoryRepository.flush();
+        } catch (DataIntegrityViolationException exception) {
+            throw notebookCategoryReferencedConflict();
+        }
     }
 
     @Transactional(readOnly = true)
     public List<NotebookNoteResponse> findNotesByBook(UUID bookId, UUID categoryId) {
         bookService.getBook(bookId);
+        UUID tenantId = currentUserProvider.tenantId();
 
         if (categoryId != null) {
             NotebookCategory category = getCategory(categoryId);
             if (!category.getBook().getId().equals(bookId)) {
                 throw new BadRequestException("categoryId must belong to the same book");
             }
-            return noteRepository.findByBookIdAndCategoryIdOrderByUpdatedAtDescIdAsc(bookId, categoryId)
+            return noteRepository.findByBook_IdAndBook_Tenant_IdAndCategory_IdOrderByUpdatedAtDescIdAsc(
+                            bookId,
+                            tenantId,
+                            categoryId
+                    )
                     .stream()
                     .map(NotebookNoteResponse::fromEntity)
                     .toList();
         }
 
-        return noteRepository.findByBookIdOrderByUpdatedAtDescIdAsc(bookId)
+        return noteRepository.findByBook_IdAndBook_Tenant_IdOrderByUpdatedAtDescIdAsc(bookId, tenantId)
                 .stream()
                 .map(NotebookNoteResponse::fromEntity)
                 .toList();
@@ -130,12 +155,13 @@ public class NotebookService {
     @Transactional
     public NotebookNoteResponse createNote(UUID bookId, NotebookNoteRequest request) {
         Book book = bookService.getBook(bookId);
+        NotebookCategory category = findCategoryForBook(bookId, request.categoryId());
 
         NotebookNote note = new NotebookNote();
         note.setBook(book);
         note.setTitle(request.title());
         note.setContent(request.content());
-        note.setCategory(findCategoryForBook(bookId, request.categoryId()));
+        note.setCategory(category);
         note.setStatus(request.status() == null ? NotebookNoteStatus.OPEN : request.status());
 
         return NotebookNoteResponse.fromEntity(noteRepository.save(note));
@@ -150,6 +176,9 @@ public class NotebookService {
     public NotebookNoteResponse updateNote(UUID noteId, NotebookNoteUpdateRequest request) {
         NotebookNote note = getNote(noteId);
         RequestValidation.rejectBlankWhenPresent("title", request.title());
+        NotebookCategory category = request.isCategoryIdPresent()
+                ? findCategoryForBook(note.getBook().getId(), request.categoryId())
+                : note.getCategory();
 
         if (request.title() != null) {
             note.setTitle(request.title());
@@ -158,7 +187,7 @@ public class NotebookService {
             note.setContent(request.content());
         }
         if (request.isCategoryIdPresent()) {
-            note.setCategory(findCategoryForBook(note.getBook().getId(), request.categoryId()));
+            note.setCategory(category);
         }
         if (request.status() != null) {
             note.setStatus(request.status());
@@ -175,13 +204,13 @@ public class NotebookService {
 
     @Transactional(readOnly = true)
     public NotebookCategory getCategory(UUID categoryId) {
-        return categoryRepository.findById(categoryId)
+        return categoryRepository.findByIdAndBook_Tenant_Id(categoryId, currentUserProvider.tenantId())
                 .orElseThrow(() -> new ResourceNotFoundException("Notebook category not found: " + categoryId));
     }
 
     @Transactional(readOnly = true)
     public NotebookNote getNote(UUID noteId) {
-        return noteRepository.findById(noteId)
+        return noteRepository.findByIdAndBook_Tenant_Id(noteId, currentUserProvider.tenantId())
                 .orElseThrow(() -> new ResourceNotFoundException("Notebook note not found: " + noteId));
     }
 
@@ -212,8 +241,13 @@ public class NotebookService {
         return category;
     }
 
-    private int nextSortOrder(UUID bookId) {
-        return orderedCategories(bookId)
+    private NotebookCategory getCategoryForUpdate(UUID categoryId) {
+        return categoryRepository.findByIdAndBookTenantIdForUpdate(categoryId, currentUserProvider.tenantId())
+                .orElseThrow(() -> new ResourceNotFoundException("Notebook category not found: " + categoryId));
+    }
+
+    private int nextSortOrder(UUID bookId, UUID tenantId) {
+        return orderedCategories(bookId, tenantId)
                 .stream()
                 .map(NotebookCategory::getSortOrder)
                 .max(Integer::compareTo)
@@ -221,14 +255,18 @@ public class NotebookService {
                 .orElse(0);
     }
 
-    private void rejectDuplicateCategoryName(UUID bookId, String name) {
-        if (categoryRepository.existsByBookIdAndNameIgnoreCase(bookId, name)) {
+    private void rejectDuplicateCategoryName(UUID bookId, UUID tenantId, String name) {
+        if (categoryRepository.existsByBook_IdAndBook_Tenant_IdAndNameIgnoreCase(bookId, tenantId, name)) {
             throw new BadRequestException("Notebook category name must be unique within the book");
         }
     }
 
-    private List<NotebookCategory> orderedCategories(UUID bookId) {
+    private List<NotebookCategory> orderedCategories(UUID bookId, UUID tenantId) {
         return NotebookCategoryOrdering.ordered(
-                categoryRepository.findByBookIdOrderBySortOrderAscNameAscIdAsc(bookId));
+                categoryRepository.findByBook_IdAndBook_Tenant_IdOrderBySortOrderAscNameAscIdAsc(bookId, tenantId));
+    }
+
+    private ConflictException notebookCategoryReferencedConflict() {
+        return new ConflictException("Notebook category cannot be deleted while it is referenced.");
     }
 }
