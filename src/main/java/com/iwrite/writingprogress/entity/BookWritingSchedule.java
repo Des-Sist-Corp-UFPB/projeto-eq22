@@ -14,8 +14,6 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
-import jakarta.persistence.PrePersist;
-import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
 
 import java.time.DayOfWeek;
@@ -60,18 +58,6 @@ public class BookWritingSchedule {
 
     @Column(nullable = false)
     private OffsetDateTime updatedAt;
-
-    @PrePersist
-    void onCreate() {
-        OffsetDateTime now = OffsetDateTime.now();
-        createdAt = now;
-        updatedAt = now;
-    }
-
-    @PreUpdate
-    void onUpdate() {
-        updatedAt = OffsetDateTime.now();
-    }
 
     public UUID getId() {
         return id;
@@ -121,7 +107,15 @@ public class BookWritingSchedule {
         return createdAt;
     }
 
+    public void setCreatedAt(OffsetDateTime createdAt) {
+        this.createdAt = createdAt;
+    }
+
     public OffsetDateTime getUpdatedAt() {
         return updatedAt;
+    }
+
+    public void setUpdatedAt(OffsetDateTime updatedAt) {
+        this.updatedAt = updatedAt;
     }
 }

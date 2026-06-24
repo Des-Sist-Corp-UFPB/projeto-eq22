@@ -32,9 +32,11 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.TimeZone;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
@@ -50,6 +52,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class WordCountEventServiceIntegrationTest extends PostgresIntegrationTest {
 
     private static final LocalDate TODAY = LocalDate.of(2026, 6, 2);
+    private static final Instant DEFAULT_INSTANT = Instant.parse("2026-06-02T12:00:00Z");
 
     @Autowired
     private WordCountEventService eventService;
@@ -63,12 +66,16 @@ class WordCountEventServiceIntegrationTest extends PostgresIntegrationTest {
     @Autowired
     private SwitchableCurrentUserProvider currentUserProvider;
 
+    @Autowired
+    private MutableClock writingProgressClock;
+
     @PersistenceContext
     private EntityManager entityManager;
 
     @AfterEach
     void resetCurrentUser() {
         currentUserProvider.reset();
+        writingProgressClock.reset();
     }
 
     @Test
@@ -285,6 +292,125 @@ class WordCountEventServiceIntegrationTest extends PostgresIntegrationTest {
         }
     }
 
+    @Test
+    void eventProgressDateUsesEventInstantAndCurrentUserTimezone() {
+        var book = createBook("ledger timezone event");
+        var scene = createEmptyScene(book.id(), "Timezone scene");
+        entityManager.flush();
+        Instant eventInstant = Instant.parse("2026-06-02T01:30:00Z");
+        UUID idempotencyKey = UUID.randomUUID();
+        writingProgressClock.setInstant(eventInstant);
+        currentUserProvider.switchTo(DEFAULT_USER_ID, DEFAULT_TENANT_ID, ZoneId.of("America/Los_Angeles"));
+
+        eventService.record(command(book.id(), scene, BookWordCountEventType.CONTENT_SAVE, 4, 4, idempotencyKey, 14));
+
+        assertThat(progressRepository.findByUser_IdAndBookIdAndProgressDate(DEFAULT_USER_ID, book.id(), LocalDate.of(2026, 6, 1)))
+                .hasValueSatisfying(progress -> assertThat(progress.getProductiveWordCountChange()).isEqualTo(4));
+        assertThat(progressRepository.findByUser_IdAndBookIdAndProgressDate(DEFAULT_USER_ID, book.id(), LocalDate.of(2026, 6, 2)))
+                .isEmpty();
+        assertThat(eventRepository.findByBookIdAndIdempotencyKey(book.id(), idempotencyKey))
+                .hasValueSatisfying(event -> assertThat(event.getCreatedAt().toInstant()).isEqualTo(eventInstant));
+    }
+
+    @Test
+    void sameBookSameInstantCanRollUpToDifferentLocalDatesForDifferentUsers() {
+        var book = createBook("ledger same instant zones");
+        var scene = createEmptyScene(book.id(), "Same instant scene");
+        UUID userBId = createMember("ledger-zoned-user-b@iwrite.local");
+        entityManager.flush();
+        writingProgressClock.setInstant(Instant.parse("2026-06-02T23:30:00Z"));
+
+        currentUserProvider.switchTo(DEFAULT_USER_ID, DEFAULT_TENANT_ID, ZoneId.of("America/Los_Angeles"));
+        eventService.record(command(book.id(), scene, BookWordCountEventType.CONTENT_SAVE, 5, 5, UUID.randomUUID(), 15));
+
+        currentUserProvider.switchTo(userBId, DEFAULT_TENANT_ID, ZoneId.of("Asia/Tokyo"));
+        eventService.record(command(book.id(), scene, BookWordCountEventType.CONTENT_SAVE, 3, 3, UUID.randomUUID(), 18));
+
+        assertThat(progressRepository.findByUser_IdAndBookIdAndProgressDate(DEFAULT_USER_ID, book.id(), LocalDate.of(2026, 6, 2)))
+                .hasValueSatisfying(progress -> assertThat(progress.getProductiveWordCountChange()).isEqualTo(5));
+        assertThat(progressRepository.findByUser_IdAndBookIdAndProgressDate(userBId, book.id(), LocalDate.of(2026, 6, 3)))
+                .hasValueSatisfying(progress -> assertThat(progress.getProductiveWordCountChange()).isEqualTo(3));
+    }
+
+    @Test
+    void jvmDefaultZoneDoesNotDetermineProgressDate() {
+        var book = createBook("ledger jvm zone ignored");
+        var scene = createEmptyScene(book.id(), "Jvm zone scene");
+        entityManager.flush();
+        TimeZone originalDefault = TimeZone.getDefault();
+        try {
+            TimeZone.setDefault(TimeZone.getTimeZone("Pacific/Kiritimati"));
+            writingProgressClock.setInstant(Instant.parse("2026-06-02T01:30:00Z"));
+            currentUserProvider.switchTo(DEFAULT_USER_ID, DEFAULT_TENANT_ID, ZoneId.of("America/Los_Angeles"));
+
+            eventService.record(command(book.id(), scene, BookWordCountEventType.CONTENT_SAVE, 4, 4, UUID.randomUUID(), 14));
+
+            assertThat(progressRepository.findByUser_IdAndBookIdAndProgressDate(DEFAULT_USER_ID, book.id(), LocalDate.of(2026, 6, 1)))
+                    .hasValueSatisfying(progress -> assertThat(progress.getProductiveWordCountChange()).isEqualTo(4));
+            assertThat(progressRepository.findByUser_IdAndBookIdAndProgressDate(DEFAULT_USER_ID, book.id(), LocalDate.of(2026, 6, 2)))
+                    .isEmpty();
+        } finally {
+            TimeZone.setDefault(originalDefault);
+        }
+    }
+
+    @Test
+    void fallBackRepeatedHourInstantsUpdateOneLocalDateRow() {
+        var book = createBook("ledger fall back");
+        var scene = createEmptyScene(book.id(), "Fall back scene");
+        entityManager.flush();
+        currentUserProvider.switchTo(DEFAULT_USER_ID, DEFAULT_TENANT_ID, ZoneId.of("America/New_York"));
+
+        writingProgressClock.setInstant(Instant.parse("2026-11-01T05:30:00Z"));
+        eventService.record(command(book.id(), scene, BookWordCountEventType.CONTENT_SAVE, 2, 2, UUID.randomUUID(), 12));
+        writingProgressClock.setInstant(Instant.parse("2026-11-01T06:30:00Z"));
+        eventService.record(command(book.id(), scene, BookWordCountEventType.CONTENT_SAVE, 3, 3, UUID.randomUUID(), 15));
+
+        assertThat(progressRepository.findByUser_IdAndBookIdAndProgressDate(DEFAULT_USER_ID, book.id(), LocalDate.of(2026, 11, 1)))
+                .hasValueSatisfying(progress -> {
+                    assertThat(progress.getProductiveWordCountChange()).isEqualTo(5);
+                    assertThat(progress.getEndingManuscriptWordCount()).isEqualTo(15);
+                });
+        assertThat(progressRepository.findByUser_IdAndBookIdAndProgressDate(DEFAULT_USER_ID, book.id(), LocalDate.of(2026, 10, 31)))
+                .isEmpty();
+    }
+
+    @Test
+    void springForwardInstantMapsToValidLocalDate() {
+        var book = createBook("ledger spring forward");
+        var scene = createEmptyScene(book.id(), "Spring forward scene");
+        entityManager.flush();
+        writingProgressClock.setInstant(Instant.parse("2026-03-08T07:30:00Z"));
+        currentUserProvider.switchTo(DEFAULT_USER_ID, DEFAULT_TENANT_ID, ZoneId.of("America/New_York"));
+
+        eventService.record(command(book.id(), scene, BookWordCountEventType.CONTENT_SAVE, 4, 4, UUID.randomUUID(), 14));
+
+        assertThat(progressRepository.findByUser_IdAndBookIdAndProgressDate(DEFAULT_USER_ID, book.id(), LocalDate.of(2026, 3, 8)))
+                .hasValueSatisfying(progress -> assertThat(progress.getProductiveWordCountChange()).isEqualTo(4));
+    }
+
+    @Test
+    void timezoneChangeKeepsHistoricalRowAndFutureEventUsesNewZone() {
+        var book = createBook("ledger timezone change");
+        var scene = createEmptyScene(book.id(), "Timezone change scene");
+        entityManager.flush();
+
+        writingProgressClock.setInstant(Instant.parse("2026-06-02T06:30:00Z"));
+        currentUserProvider.switchTo(DEFAULT_USER_ID, DEFAULT_TENANT_ID, ZoneId.of("America/Los_Angeles"));
+        eventService.record(command(book.id(), scene, BookWordCountEventType.CONTENT_SAVE, 4, 4, UUID.randomUUID(), 14));
+
+        writingProgressClock.setInstant(Instant.parse("2026-06-02T15:30:00Z"));
+        currentUserProvider.switchTo(DEFAULT_USER_ID, DEFAULT_TENANT_ID, ZoneId.of("Asia/Tokyo"));
+        eventService.record(command(book.id(), scene, BookWordCountEventType.CONTENT_SAVE, 6, 6, UUID.randomUUID(), 20));
+
+        assertThat(progressRepository.findByUser_IdAndBookIdAndProgressDate(DEFAULT_USER_ID, book.id(), LocalDate.of(2026, 6, 1)))
+                .hasValueSatisfying(progress -> assertThat(progress.getProductiveWordCountChange()).isEqualTo(4));
+        assertThat(progressRepository.findByUser_IdAndBookIdAndProgressDate(DEFAULT_USER_ID, book.id(), LocalDate.of(2026, 6, 3)))
+                .hasValueSatisfying(progress -> assertThat(progress.getProductiveWordCountChange()).isEqualTo(6));
+        assertThat(progressRepository.findByUser_IdAndBookIdAndProgressDate(DEFAULT_USER_ID, book.id(), LocalDate.of(2026, 6, 2)))
+                .isEmpty();
+    }
+
     private SceneResponse createEmptyScene(UUID bookId, String title) {
         var section = createSection(bookService.findById(bookId), "Part " + title);
         var chapter = createChapter(section, "Chapter " + title);
@@ -342,12 +468,12 @@ class WordCountEventServiceIntegrationTest extends PostgresIntegrationTest {
     }
 
     @TestConfiguration
-    static class FixedWritingProgressClockConfig {
+    static class MutableWritingProgressClockConfig {
 
         @Bean
         @Primary
-        Clock fixedWritingProgressClock() {
-            return Clock.fixed(Instant.parse("2026-06-02T12:00:00Z"), ZoneOffset.UTC);
+        MutableClock mutableWritingProgressClock() {
+            return new MutableClock(DEFAULT_INSTANT, ZoneOffset.UTC);
         }
     }
 
@@ -358,6 +484,40 @@ class WordCountEventServiceIntegrationTest extends PostgresIntegrationTest {
         @Primary
         SwitchableCurrentUserProvider switchableCurrentUserProvider() {
             return new SwitchableCurrentUserProvider();
+        }
+    }
+
+    static class MutableClock extends Clock {
+
+        private final ZoneId zone;
+        private volatile Instant instant;
+
+        MutableClock(Instant instant, ZoneId zone) {
+            this.instant = instant;
+            this.zone = zone;
+        }
+
+        void setInstant(Instant instant) {
+            this.instant = instant;
+        }
+
+        void reset() {
+            this.instant = DEFAULT_INSTANT;
+        }
+
+        @Override
+        public ZoneId getZone() {
+            return zone;
+        }
+
+        @Override
+        public Clock withZone(ZoneId zone) {
+            return Clock.fixed(instant, zone);
+        }
+
+        @Override
+        public Instant instant() {
+            return instant;
         }
     }
 }

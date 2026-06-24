@@ -11,7 +11,6 @@ import com.iwrite.writingprogress.repository.DailyWritingProgressRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.Clock;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
@@ -28,7 +27,7 @@ public class DailyWritingProgressService {
     private final WritingScheduleService writingScheduleService;
     private final CurrentUserMembershipService currentUserMembershipService;
     private final UserRepository userRepository;
-    private final Clock clock;
+    private final WritingDayResolver writingDayResolver;
 
     public DailyWritingProgressService(
             BookService bookService,
@@ -36,14 +35,14 @@ public class DailyWritingProgressService {
             WritingScheduleService writingScheduleService,
             CurrentUserMembershipService currentUserMembershipService,
             UserRepository userRepository,
-            Clock clock
+            WritingDayResolver writingDayResolver
     ) {
         this.bookService = bookService;
         this.progressRepository = progressRepository;
         this.writingScheduleService = writingScheduleService;
         this.currentUserMembershipService = currentUserMembershipService;
         this.userRepository = userRepository;
-        this.clock = clock;
+        this.writingDayResolver = writingDayResolver;
     }
 
     @Transactional
@@ -268,6 +267,6 @@ public class DailyWritingProgressService {
     }
 
     public LocalDate today() {
-        return LocalDate.now(clock);
+        return writingDayResolver.currentWritingDate();
     }
 }
