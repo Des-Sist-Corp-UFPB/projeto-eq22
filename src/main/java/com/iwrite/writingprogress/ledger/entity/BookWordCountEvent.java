@@ -70,6 +70,9 @@ public class BookWordCountEvent {
 
     private Long contentRevisionAfter;
 
+    @Column(length = 64)
+    private String requestFingerprint;
+
     @Column(nullable = false, updatable = false)
     private OffsetDateTime createdAt;
 
@@ -178,6 +181,14 @@ public class BookWordCountEvent {
 
     public void setContentRevisionAfter(Long contentRevisionAfter) {
         this.contentRevisionAfter = contentRevisionAfter;
+    }
+
+    public String getRequestFingerprint() {
+        return requestFingerprint;
+    }
+
+    public void setRequestFingerprint(String requestFingerprint) {
+        this.requestFingerprint = requestFingerprint;
     }
 
     public OffsetDateTime getCreatedAt() {

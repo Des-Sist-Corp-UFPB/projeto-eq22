@@ -102,6 +102,7 @@ class BookWordCountEventIntegrationTest extends PostgresIntegrationTest {
         Scene scene = entityManager.find(Scene.class, world.scene().id());
         UUID operationId = UUID.randomUUID();
         UUID idempotencyKey = UUID.randomUUID();
+        String requestFingerprint = "0".repeat(64);
 
         BookWordCountEvent event = new BookWordCountEvent();
         event.setBook(book);
@@ -116,6 +117,7 @@ class BookWordCountEventIntegrationTest extends PostgresIntegrationTest {
         event.setIdempotencyKey(idempotencyKey);
         event.setContentRevisionBefore(3L);
         event.setContentRevisionAfter(4L);
+        event.setRequestFingerprint(requestFingerprint);
 
         BookWordCountEvent saved = eventRepository.saveAndFlush(event);
         entityManager.clear();
@@ -133,6 +135,7 @@ class BookWordCountEventIntegrationTest extends PostgresIntegrationTest {
         assertThat(loaded.getIdempotencyKey()).isEqualTo(idempotencyKey);
         assertThat(loaded.getContentRevisionBefore()).isEqualTo(3L);
         assertThat(loaded.getContentRevisionAfter()).isEqualTo(4L);
+        assertThat(loaded.getRequestFingerprint()).isEqualTo(requestFingerprint);
         assertThat(loaded.getCreatedAt()).isNotNull();
     }
 

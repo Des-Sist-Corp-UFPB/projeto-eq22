@@ -1,5 +1,7 @@
 package com.iwrite.chapter.service;
 
+import com.iwrite.book.entity.Book;
+import com.iwrite.book.service.BookService;
 import com.iwrite.chapter.dto.ChapterRequest;
 import com.iwrite.chapter.dto.ChapterResponse;
 import com.iwrite.chapter.dto.ChapterUpdateRequest;
@@ -31,6 +33,7 @@ public class ChapterService {
     private final BookSectionService sectionService;
     private final SceneRepository sceneRepository;
     private final SceneDeletionLedgerService sceneDeletionLedgerService;
+    private final BookService bookService;
     private final CurrentUserProvider currentUserProvider;
 
     public ChapterService(
@@ -38,12 +41,14 @@ public class ChapterService {
             BookSectionService sectionService,
             SceneRepository sceneRepository,
             SceneDeletionLedgerService sceneDeletionLedgerService,
+            BookService bookService,
             CurrentUserProvider currentUserProvider
     ) {
         this.chapterRepository = chapterRepository;
         this.sectionService = sectionService;
         this.sceneRepository = sceneRepository;
         this.sceneDeletionLedgerService = sceneDeletionLedgerService;
+        this.bookService = bookService;
         this.currentUserProvider = currentUserProvider;
     }
 
@@ -81,8 +86,10 @@ public class ChapterService {
 
     @Transactional
     public void delete(UUID chapterId) {
-        getChapter(chapterId);
-        sceneDeletionLedgerService.prepareSceneDeletes(sceneRepository.findByChapterIdForUpdate(chapterId), UUID.randomUUID());
+        Chapter chapter = getChapter(chapterId);
+        var scenes = sceneRepository.findByChapterIdForUpdate(chapterId);
+        Book lockedBook = bookService.getBookForWordCountUpdate(chapter.getBook().getId());
+        sceneDeletionLedgerService.prepareSceneDeletes(scenes, lockedBook, UUID.randomUUID());
         chapterRepository.deleteById(chapterId);
     }
 

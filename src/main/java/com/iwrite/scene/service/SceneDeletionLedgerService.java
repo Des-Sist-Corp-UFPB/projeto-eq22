@@ -1,11 +1,14 @@
 package com.iwrite.scene.service;
 
+import com.iwrite.book.entity.Book;
 import com.iwrite.scene.entity.Scene;
 import com.iwrite.scene.repository.SceneRepository;
 import com.iwrite.sceneversion.service.SceneVersionService;
+import com.iwrite.user.context.CurrentUserProvider;
 import com.iwrite.writingprogress.ledger.entity.BookWordCountEventType;
 import com.iwrite.writingprogress.ledger.service.WordCountEventCommand;
 import com.iwrite.writingprogress.ledger.service.WordCountEventService;
+import com.iwrite.writingprogress.ledger.service.WordCountRequestFingerprint;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -17,22 +20,25 @@ public class SceneDeletionLedgerService {
     private final SceneVersionService sceneVersionService;
     private final WordCountEventService wordCountEventService;
     private final SceneRepository sceneRepository;
+    private final CurrentUserProvider currentUserProvider;
 
     public SceneDeletionLedgerService(
             SceneVersionService sceneVersionService,
             WordCountEventService wordCountEventService,
-            SceneRepository sceneRepository
+            SceneRepository sceneRepository,
+            CurrentUserProvider currentUserProvider
     ) {
         this.sceneVersionService = sceneVersionService;
         this.wordCountEventService = wordCountEventService;
         this.sceneRepository = sceneRepository;
+        this.currentUserProvider = currentUserProvider;
     }
 
-    public void prepareSceneDelete(Scene scene) {
-        prepareSceneDeletes(List.of(scene), UUID.randomUUID());
+    public void prepareSceneDelete(Scene scene, Book lockedBook) {
+        prepareSceneDeletes(List.of(scene), lockedBook, UUID.randomUUID());
     }
 
-    public void prepareSceneDeletes(List<Scene> scenes, UUID operationId) {
+    public void prepareSceneDeletes(List<Scene> scenes, Book lockedBook, UUID operationId) {
         if (scenes.isEmpty()) {
             return;
         }
@@ -40,7 +46,7 @@ public class SceneDeletionLedgerService {
         List<DeletedSceneFacts> deletedScenes = scenes.stream()
                 .map(DeletedSceneFacts::fromScene)
                 .toList();
-        UUID bookId = deletedScenes.getFirst().bookId();
+        UUID bookId = lockedBook.getId();
         int totalBefore = Math.toIntExact(sceneRepository.sumWordCountByBookId(bookId));
 
         sceneVersionService.checkpointBeforeDelete(scenes);
@@ -53,7 +59,8 @@ public class SceneDeletionLedgerService {
             }
 
             removedWordCount += sceneWordCount;
-            wordCountEventService.record(new WordCountEventCommand(
+            UUID idempotencyKey = UUID.randomUUID();
+            wordCountEventService.recordForLockedBook(lockedBook, new WordCountEventCommand(
                     bookId,
                     deletedScene.sceneId(),
                     deletedScene.sceneId(),
@@ -62,9 +69,17 @@ public class SceneDeletionLedgerService {
                     0,
                     -sceneWordCount,
                     operationId,
-                    UUID.randomUUID(),
+                    idempotencyKey,
                     deletedScene.contentRevision(),
                     null,
+                    WordCountRequestFingerprint.sceneDelete(
+                            currentUserProvider.userId(),
+                            bookId,
+                            deletedScene.sceneId(),
+                            operationId,
+                            idempotencyKey,
+                            deletedScene.contentRevision()
+                    ),
                     totalBefore - removedWordCount
             ));
         }

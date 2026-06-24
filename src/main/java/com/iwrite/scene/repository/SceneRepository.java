@@ -47,7 +47,7 @@ public interface SceneRepository extends JpaRepository<Scene, UUID> {
             select scene
             from Scene scene
             where scene.chapter.id = :chapterId
-            order by scene.sortOrder, scene.id
+            order by scene.id
             """)
     List<Scene> findByChapterIdForUpdate(@Param("chapterId") UUID chapterId);
 
@@ -56,7 +56,7 @@ public interface SceneRepository extends JpaRepository<Scene, UUID> {
             select scene
             from Scene scene
             where scene.chapter.section.id = :sectionId
-            order by scene.chapter.sortOrder, scene.sortOrder, scene.id
+            order by scene.id
             """)
     List<Scene> findBySectionIdForUpdate(@Param("sectionId") UUID sectionId);
 

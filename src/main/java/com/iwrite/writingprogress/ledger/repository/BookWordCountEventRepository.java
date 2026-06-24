@@ -34,6 +34,7 @@ public interface BookWordCountEventRepository extends JpaRepository<BookWordCoun
                 idempotency_key,
                 content_revision_before,
                 content_revision_after,
+                request_fingerprint,
                 created_at
             )
             values (
@@ -50,6 +51,7 @@ public interface BookWordCountEventRepository extends JpaRepository<BookWordCoun
                 :idempotencyKey,
                 :contentRevisionBefore,
                 :contentRevisionAfter,
+                :requestFingerprint,
                 :createdAt
             )
             on conflict (book_id, idempotency_key) do nothing
@@ -68,6 +70,7 @@ public interface BookWordCountEventRepository extends JpaRepository<BookWordCoun
             @Param("idempotencyKey") UUID idempotencyKey,
             @Param("contentRevisionBefore") Long contentRevisionBefore,
             @Param("contentRevisionAfter") Long contentRevisionAfter,
+            @Param("requestFingerprint") String requestFingerprint,
             @Param("createdAt") OffsetDateTime createdAt
     );
 }

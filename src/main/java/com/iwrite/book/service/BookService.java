@@ -110,4 +110,10 @@ public class BookService {
         return bookRepository.findByIdAndTenant_Id(bookId, currentUserProvider.tenantId())
                 .orElseThrow(() -> new ResourceNotFoundException("Book not found: " + bookId));
     }
+
+    @Transactional
+    public Book getBookForWordCountUpdate(UUID bookId) {
+        return bookRepository.findByIdAndTenant_IdForUpdate(bookId, currentUserProvider.tenantId())
+                .orElseThrow(() -> new ResourceNotFoundException("Book not found: " + bookId));
+    }
 }

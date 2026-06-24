@@ -126,6 +126,27 @@ describe("SceneEditor content save contract", () => {
       );
     });
   });
+
+  test("failed autosave uses one operationId and is not retried by the editor", async () => {
+    mocks.updateSceneContent.mockRejectedValueOnce(new Error("network down"));
+    renderEditor();
+    await screen.findByRole("heading", { name: sceneForPlanning.title });
+
+    vi.useFakeTimers();
+    fireEvent.click(screen.getByRole("button", { name: "Alterar conteudo" }));
+    await act(async () => {
+      vi.advanceTimersByTime(1200);
+    });
+    vi.useRealTimers();
+
+    await waitFor(() => {
+      expect(mocks.updateSceneContent).toHaveBeenCalledTimes(1);
+    });
+    expect(mocks.randomUUID).toHaveBeenCalledTimes(1);
+    expect(mocks.updateSceneContent).toHaveBeenCalledWith(sceneForPlanning.id, expect.objectContaining({
+      operationId: "operation-autosave",
+    }));
+  });
 });
 
 function renderEditor() {
