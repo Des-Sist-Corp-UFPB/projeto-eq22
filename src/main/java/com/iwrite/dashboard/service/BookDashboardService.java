@@ -68,12 +68,12 @@ public class BookDashboardService {
         this.planningCompletenessService = planningCompletenessService;
     }
 
-    @Transactional(readOnly = true)
+    @Transactional
     public BookDashboardResponse getDashboard(UUID bookId) {
         return getDashboard(bookId, WritingProgressPeriod.DEFAULT);
     }
 
-    @Transactional(readOnly = true)
+    @Transactional
     public BookDashboardResponse getDashboard(UUID bookId, WritingProgressPeriod progressPeriod) {
         Book book = bookService.getBook(bookId);
         List<Scene> scenes = sceneRepository.findByBookIdOrderBySortOrderAsc(bookId);
@@ -99,7 +99,7 @@ public class BookDashboardService {
                 chapterRepository.countByBookId(bookId),
                 totalScenes,
                 buildWritingProgress(bookId, totalWordCount, progressPeriod),
-                buildWritingSchedule(bookId),
+                buildWritingSchedule(book),
                 new PlanningProgressResponse(plannedScenesCount, totalScenes, plannedScenesPercent(plannedScenesCount, totalScenes)),
                 buildStatusCounts(scenes),
                 buildPovStats(scenes),
@@ -121,11 +121,12 @@ public class BookDashboardService {
         return new WritingProgressDashboardResponse(toDailyWritingProgressResponse(today), recentDays, consistency);
     }
 
-    private WritingScheduleResponse buildWritingSchedule(UUID bookId) {
-        var activeSchedule = writingScheduleService.getActiveSchedule(bookId);
+    private WritingScheduleResponse buildWritingSchedule(Book book) {
+        UUID bookId = book.getId();
+        var activeSchedule = writingScheduleService.getOrCreateActiveScheduleForCurrentUser(book);
         List<java.time.DayOfWeek> plannedWritingDays = writingScheduleService.orderedDays(activeSchedule.getPlannedDays());
         LocalDate today = dailyWritingProgressService.today();
-        boolean todayPlannedWritingDay = writingScheduleService.getScheduleForDate(bookId, today)
+        boolean todayPlannedWritingDay = writingScheduleService.getScheduleForDate(book, today)
                 .getPlannedDays()
                 .contains(today.getDayOfWeek());
 

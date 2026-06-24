@@ -78,7 +78,7 @@ public interface DailyWritingProgressRepository extends JpaRepository<DailyWriti
             )
             on conflict (user_id, book_id, progress_date) do update set
                 ending_manuscript_word_count =
-                    book_daily_writing_progress.ending_manuscript_word_count + :manuscriptWordDelta,
+                    :knownManuscriptTotalAfterOperation,
                 productive_word_count_change =
                     book_daily_writing_progress.productive_word_count_change + :productiveWordDelta,
                 manuscript_adjustment_word_count =

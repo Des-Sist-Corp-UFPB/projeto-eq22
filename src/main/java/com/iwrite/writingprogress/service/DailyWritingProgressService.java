@@ -87,17 +87,17 @@ public class DailyWritingProgressService {
         return progressRepository.findByUser_IdAndBookIdAndProgressDateBetweenOrderByProgressDateDesc(userId, bookId, startDate, endDate);
     }
 
-    @Transactional(readOnly = true)
+    @Transactional
     public WritingConsistencyResponse getWritingConsistency(UUID bookId) {
         return getWritingConsistency(bookId, WritingProgressPeriod.DEFAULT);
     }
 
-    @Transactional(readOnly = true)
+    @Transactional
     public WritingConsistencyResponse getWritingConsistency(UUID bookId, WritingProgressPeriod period) {
-        bookService.getBook(bookId);
+        Book book = bookService.getBook(bookId);
         UUID userId = currentUserMembershipService.requireCurrentUserMemberId();
         LocalDate today = today();
-        LocalDate earliestScheduleDate = writingScheduleService.getEarliestEffectiveFrom(bookId);
+        LocalDate earliestScheduleDate = writingScheduleService.getEarliestEffectiveFrom(book);
         LocalDate calculationStartDate = progressRepository.findFirstByUser_IdAndBookIdOrderByProgressDateAsc(userId, bookId)
                 .map(DailyWritingProgress::getProgressDate)
                 .filter(progressDate -> progressDate.isBefore(earliestScheduleDate))
@@ -108,9 +108,9 @@ public class DailyWritingProgressService {
         Map<LocalDate, DailyWritingProgress> progressByDate = progressHistory.stream()
                 .collect(Collectors.toMap(DailyWritingProgress::getProgressDate, Function.identity()));
         List<BookWritingSchedule> fullScheduleHistory =
-                writingScheduleService.getSchedulesForRange(bookId, calculationStartDate, today);
+                writingScheduleService.getSchedulesForRange(book, calculationStartDate, today);
         List<BookWritingSchedule> recentScheduleHistory =
-                writingScheduleService.getSchedulesForRange(bookId, recentStartDate, today);
+                writingScheduleService.getSchedulesForRange(book, recentStartDate, today);
 
         int recentWritingDays = countPositiveProgressBetween(userId, bookId, recentStartDate, today);
         int recentWindowDays = Math.toIntExact(java.time.temporal.ChronoUnit.DAYS.between(recentStartDate, today) + 1);

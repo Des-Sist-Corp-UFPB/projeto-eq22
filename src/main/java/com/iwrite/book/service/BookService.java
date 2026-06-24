@@ -38,18 +38,18 @@ public class BookService {
         this.currentUserProvider = currentUserProvider;
     }
 
-    @Transactional(readOnly = true)
+    @Transactional
     public List<BookResponse> findAll() {
         return bookRepository.findAllByTenant_Id(currentUserProvider.tenantId())
                 .stream()
-                .map(book -> BookResponse.fromEntity(book, writingScheduleService.getActivePlannedWritingDays(book.getId())))
+                .map(book -> BookResponse.fromEntity(book, writingScheduleService.getActivePlannedWritingDays(book)))
                 .toList();
     }
 
-    @Transactional(readOnly = true)
+    @Transactional
     public BookResponse findById(UUID bookId) {
         Book book = getBook(bookId);
-        return BookResponse.fromEntity(book, writingScheduleService.getActivePlannedWritingDays(bookId));
+        return BookResponse.fromEntity(book, writingScheduleService.getActivePlannedWritingDays(book));
     }
 
     @Transactional
@@ -94,7 +94,7 @@ public class BookService {
 
         List<DayOfWeek> plannedWritingDays = request.isPlannedWritingDaysPresent()
                 ? writingScheduleService.changeSchedule(book, request.plannedWritingDays())
-                : writingScheduleService.getActivePlannedWritingDays(bookId);
+                : writingScheduleService.getActivePlannedWritingDays(book);
 
         return BookResponse.fromEntity(book, plannedWritingDays);
     }
