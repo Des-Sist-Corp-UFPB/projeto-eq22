@@ -4,6 +4,11 @@ import com.iwrite.book.dto.BookRequest;
 import com.iwrite.scene.dto.SceneResponse;
 import com.iwrite.scene.entity.SceneStatus;
 import com.iwrite.support.PostgresIntegrationTest;
+import com.iwrite.support.SwitchableCurrentUserProvider;
+import com.iwrite.tenant.entity.Tenant;
+import com.iwrite.tenant.entity.TenantMembership;
+import com.iwrite.tenant.entity.TenantMembershipRole;
+import com.iwrite.user.entity.User;
 import com.iwrite.writingprogress.entity.DailyWritingProgress;
 import com.iwrite.writingprogress.ledger.entity.BookWordCountEventType;
 import com.iwrite.writingprogress.ledger.repository.BookWordCountEventRepository;
@@ -14,10 +19,12 @@ import com.iwrite.writingprogress.ledger.service.WordCountEventService;
 import com.iwrite.writingprogress.repository.DailyWritingProgressRepository;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.Primary;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -34,9 +41,12 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
+import static com.iwrite.support.SwitchableCurrentUserProvider.DEFAULT_USER_ID;
+import static com.iwrite.support.SwitchableCurrentUserProvider.DEFAULT_TENANT_ID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+@Import(WordCountEventServiceIntegrationTest.CurrentUserTestConfiguration.class)
 class WordCountEventServiceIntegrationTest extends PostgresIntegrationTest {
 
     private static final LocalDate TODAY = LocalDate.of(2026, 6, 2);
@@ -50,8 +60,16 @@ class WordCountEventServiceIntegrationTest extends PostgresIntegrationTest {
     @Autowired
     private DailyWritingProgressRepository progressRepository;
 
+    @Autowired
+    private SwitchableCurrentUserProvider currentUserProvider;
+
     @PersistenceContext
     private EntityManager entityManager;
+
+    @AfterEach
+    void resetCurrentUser() {
+        currentUserProvider.reset();
+    }
 
     @Test
     void firstContentSaveEventCreatesLedgerRowAndDailyRollup() {
@@ -70,9 +88,12 @@ class WordCountEventServiceIntegrationTest extends PostgresIntegrationTest {
                 15
         ));
 
-        DailyWritingProgress progress = progressRepository.findByBookIdAndProgressDate(book.id(), TODAY).orElseThrow();
+        DailyWritingProgress progress = progressRepository.findByUser_IdAndBookIdAndProgressDate(DEFAULT_USER_ID, book.id(), TODAY).orElseThrow();
         assertThat(result).isEqualTo(WordCountEventRecordResult.RECORDED);
         assertThat(eventRepository.countByBookId(book.id())).isEqualTo(1);
+        assertThat(eventRepository.findByBookIdAndIdempotencyKey(book.id(), idempotencyKey))
+                .hasValueSatisfying(event -> assertThat(event.getActorUser().getId()).isEqualTo(DEFAULT_USER_ID));
+        assertThat(progress.getUser().getId()).isEqualTo(DEFAULT_USER_ID);
         assertThat(progress.getDailyTargetWordCount()).isEqualTo(400);
         assertThat(progress.getStartingManuscriptWordCount()).isEqualTo(10);
         assertThat(progress.getEndingManuscriptWordCount()).isEqualTo(15);
@@ -99,7 +120,7 @@ class WordCountEventServiceIntegrationTest extends PostgresIntegrationTest {
 
         assertThat(result).isEqualTo(WordCountEventRecordResult.RECORDED);
         assertThat(eventRepository.findByBookIdAndIdempotencyKey(book.id(), idempotencyKey)).isPresent();
-        assertThat(progressRepository.findByBookIdAndProgressDate(book.id(), TODAY)).isEmpty();
+        assertThat(progressRepository.findByUser_IdAndBookIdAndProgressDate(DEFAULT_USER_ID, book.id(), TODAY)).isEmpty();
     }
 
     @Test
@@ -111,7 +132,7 @@ class WordCountEventServiceIntegrationTest extends PostgresIntegrationTest {
         eventService.record(command(book.id(), scene, BookWordCountEventType.CONTENT_SAVE, 5, 5, UUID.randomUUID(), 15));
         eventService.record(command(book.id(), scene, BookWordCountEventType.CONTENT_SAVE, 3, 3, UUID.randomUUID(), 18));
 
-        DailyWritingProgress progress = progressRepository.findByBookIdAndProgressDate(book.id(), TODAY).orElseThrow();
+        DailyWritingProgress progress = progressRepository.findByUser_IdAndBookIdAndProgressDate(DEFAULT_USER_ID, book.id(), TODAY).orElseThrow();
         assertThat(eventRepository.countByBookId(book.id())).isEqualTo(2);
         assertThat(progress.getStartingManuscriptWordCount()).isEqualTo(10);
         assertThat(progress.getEndingManuscriptWordCount()).isEqualTo(18);
@@ -128,12 +149,49 @@ class WordCountEventServiceIntegrationTest extends PostgresIntegrationTest {
         eventService.record(command(book.id(), scene, BookWordCountEventType.CONTENT_SAVE, 2, 2, UUID.randomUUID(), 12));
         eventService.record(command(book.id(), scene, BookWordCountEventType.VERSION_RESTORE, 0, 8, UUID.randomUUID(), 20));
 
-        DailyWritingProgress progress = progressRepository.findByBookIdAndProgressDate(book.id(), TODAY).orElseThrow();
+        DailyWritingProgress progress = progressRepository.findByUser_IdAndBookIdAndProgressDate(DEFAULT_USER_ID, book.id(), TODAY).orElseThrow();
         assertThat(eventRepository.countByBookId(book.id())).isEqualTo(2);
         assertThat(progress.getStartingManuscriptWordCount()).isEqualTo(10);
         assertThat(progress.getEndingManuscriptWordCount()).isEqualTo(20);
         assertThat(progress.getProductiveWordCountChange()).isEqualTo(2);
         assertThat(progress.getManuscriptAdjustmentWordCount()).isEqualTo(8);
+    }
+
+    @Test
+    void interleavedUserEventsKeepPersonalDeltasButSetExactGlobalEndingTotals() {
+        var book = createBook("ledger interleaved users");
+        var scene = createEmptyScene(book.id(), "Interleaved scene");
+        UUID userBId = createMember("ledger-user-b@iwrite.local");
+        entityManager.flush();
+
+        eventService.record(command(book.id(), scene, BookWordCountEventType.CONTENT_SAVE, 5, 5, UUID.randomUUID(), 15));
+
+        currentUserProvider.switchTo(userBId, DEFAULT_TENANT_ID, ZoneOffset.UTC);
+        eventService.record(command(book.id(), scene, BookWordCountEventType.CONTENT_SAVE, 3, 3, UUID.randomUUID(), 18));
+
+        currentUserProvider.reset();
+        eventService.record(command(book.id(), scene, BookWordCountEventType.CONTENT_SAVE, 2, 2, UUID.randomUUID(), 20));
+
+        DailyWritingProgress userAProgress = progressRepository.findByUser_IdAndBookIdAndProgressDate(DEFAULT_USER_ID, book.id(), TODAY)
+                .orElseThrow();
+        DailyWritingProgress userBProgress = progressRepository.findByUser_IdAndBookIdAndProgressDate(userBId, book.id(), TODAY)
+                .orElseThrow();
+        assertThat(userAProgress.getStartingManuscriptWordCount()).isEqualTo(10);
+        assertThat(userAProgress.getProductiveWordCountChange()).isEqualTo(7);
+        assertThat(userAProgress.getEndingManuscriptWordCount()).isEqualTo(20);
+        assertThat(userBProgress.getStartingManuscriptWordCount()).isEqualTo(15);
+        assertThat(userBProgress.getProductiveWordCountChange()).isEqualTo(3);
+        assertThat(userBProgress.getEndingManuscriptWordCount()).isEqualTo(18);
+
+        eventService.record(command(book.id(), scene, BookWordCountEventType.CONTENT_SAVE, -4, -4, UUID.randomUUID(), 16));
+
+        entityManager.flush();
+        entityManager.clear();
+        DailyWritingProgress userAAfterNegativeDelta = progressRepository.findByUser_IdAndBookIdAndProgressDate(DEFAULT_USER_ID, book.id(), TODAY)
+                .orElseThrow();
+        assertThat(userAAfterNegativeDelta.getProductiveWordCountChange()).isEqualTo(3);
+        assertThat(userAAfterNegativeDelta.getEndingManuscriptWordCount()).isEqualTo(16);
+        assertThat(eventRepository.countByBookId(book.id())).isEqualTo(4);
     }
 
     @Test
@@ -155,7 +213,7 @@ class WordCountEventServiceIntegrationTest extends PostgresIntegrationTest {
         WordCountEventRecordResult firstResult = eventService.record(command);
         WordCountEventRecordResult secondResult = eventService.record(command);
 
-        DailyWritingProgress progress = progressRepository.findByBookIdAndProgressDate(book.id(), TODAY).orElseThrow();
+        DailyWritingProgress progress = progressRepository.findByUser_IdAndBookIdAndProgressDate(DEFAULT_USER_ID, book.id(), TODAY).orElseThrow();
         assertThat(firstResult).isEqualTo(WordCountEventRecordResult.RECORDED);
         assertThat(secondResult).isEqualTo(WordCountEventRecordResult.ALREADY_RECORDED);
         assertThat(eventRepository.countByBookId(book.id())).isEqualTo(1);
@@ -208,7 +266,7 @@ class WordCountEventServiceIntegrationTest extends PostgresIntegrationTest {
                             1,
                             1,
                             UUID.randomUUID(),
-                            1
+                            eventCount
                     ));
                 }, executor));
             }
@@ -216,7 +274,7 @@ class WordCountEventServiceIntegrationTest extends PostgresIntegrationTest {
             start.countDown();
             futures.forEach(CompletableFuture::join);
 
-            DailyWritingProgress progress = progressRepository.findByBookIdAndProgressDate(book.id(), TODAY).orElseThrow();
+            DailyWritingProgress progress = progressRepository.findByUser_IdAndBookIdAndProgressDate(DEFAULT_USER_ID, book.id(), TODAY).orElseThrow();
             assertThat(eventRepository.countByBookId(book.id())).isEqualTo(eventCount);
             assertThat(progress.getEndingManuscriptWordCount()).isEqualTo(eventCount);
             assertThat(progress.getProductiveWordCountChange()).isEqualTo(eventCount);
@@ -267,6 +325,22 @@ class WordCountEventServiceIntegrationTest extends PostgresIntegrationTest {
         }
     }
 
+    private UUID createMember(String email) {
+        User user = new User();
+        user.setDisplayName(email);
+        user.setEmail(email);
+        user.setTimeZoneId("UTC");
+        entityManager.persist(user);
+
+        TenantMembership membership = new TenantMembership();
+        membership.setTenant(entityManager.getReference(Tenant.class, DEFAULT_TENANT_ID));
+        membership.setUser(user);
+        membership.setRole(TenantMembershipRole.OWNER);
+        entityManager.persist(membership);
+        entityManager.flush();
+        return user.getId();
+    }
+
     @TestConfiguration
     static class FixedWritingProgressClockConfig {
 
@@ -274,6 +348,16 @@ class WordCountEventServiceIntegrationTest extends PostgresIntegrationTest {
         @Primary
         Clock fixedWritingProgressClock() {
             return Clock.fixed(Instant.parse("2026-06-02T12:00:00Z"), ZoneOffset.UTC);
+        }
+    }
+
+    @TestConfiguration(proxyBeanMethods = false)
+    static class CurrentUserTestConfiguration {
+
+        @Bean
+        @Primary
+        SwitchableCurrentUserProvider switchableCurrentUserProvider() {
+            return new SwitchableCurrentUserProvider();
         }
     }
 }

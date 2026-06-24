@@ -1,6 +1,7 @@
 package com.iwrite.writingprogress.entity;
 
 import com.iwrite.book.entity.Book;
+import com.iwrite.user.entity.User;
 import jakarta.persistence.CollectionTable;
 import jakarta.persistence.Column;
 import jakarta.persistence.ElementCollection;
@@ -35,6 +36,10 @@ public class BookWritingSchedule {
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "book_id", nullable = false)
     private Book book;
+
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @JoinColumn(name = "user_id", nullable = false)
+    private User user;
 
     @Column(nullable = false)
     private LocalDate effectiveFrom;
@@ -78,6 +83,14 @@ public class BookWritingSchedule {
 
     public void setBook(Book book) {
         this.book = book;
+    }
+
+    public User getUser() {
+        return user;
+    }
+
+    public void setUser(User user) {
+        this.user = user;
     }
 
     public LocalDate getEffectiveFrom() {

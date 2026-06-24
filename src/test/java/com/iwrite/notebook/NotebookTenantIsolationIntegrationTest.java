@@ -8,6 +8,8 @@ import com.iwrite.notebook.repository.NotebookNoteRepository;
 import com.iwrite.support.PostgresIntegrationTest;
 import com.iwrite.support.SwitchableCurrentUserProvider;
 import com.iwrite.tenant.entity.Tenant;
+import com.iwrite.tenant.entity.TenantMembership;
+import com.iwrite.tenant.entity.TenantMembershipRole;
 import com.iwrite.tenant.repository.TenantRepository;
 import com.iwrite.user.entity.User;
 import jakarta.persistence.EntityManager;
@@ -191,6 +193,7 @@ class NotebookTenantIsolationIntegrationTest extends PostgresIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.title").value("Owner note moved"))
                 .andExpect(jsonPath("$.categoryId").value(categoryA1.toString()))
+                .andExpect(jsonPath("$.category.name").value("Notebook Category A1"))
                 .andExpect(jsonPath("$.status").value("RESOLVED"));
         mockMvc.perform(patch("/api/notebook/notes/{noteId}", created)
                         .contentType(MediaType.APPLICATION_JSON)
@@ -225,6 +228,99 @@ class NotebookTenantIsolationIntegrationTest extends PostgresIntegrationTest {
         mockMvc.perform(delete("/api/notebook/notes/{noteId}", created))
                 .andExpect(status().isNoContent());
         assertThat(noteRepository.findById(created)).isEmpty();
+    }
+
+    @Test
+    void legacyMismatchedNoteResponsesAreUncategorizedWithoutMutatingCategory() throws Exception {
+        UUID crossTenantNote = createNote(
+                bookA1.id(),
+                "Owned note with cross-tenant category",
+                "cross-tenant legacy content",
+                null
+        );
+        assignCategoryDirectly(crossTenantNote, categoryB);
+        assertLegacyMismatchedGetIsUncategorized(
+                crossTenantNote,
+                categoryB,
+                "Owned note with cross-tenant category",
+                "Notebook Category B",
+                bookB.id()
+        );
+
+        UUID sameTenantWrongBookNote = createNote(
+                bookA1.id(),
+                "Owned note with same-tenant wrong-book category",
+                "same-tenant legacy content",
+                null
+        );
+        assignCategoryDirectly(sameTenantWrongBookNote, categoryA2);
+        assertLegacyMismatchedGetIsUncategorized(
+                sameTenantWrongBookNote,
+                categoryA2,
+                "Owned note with same-tenant wrong-book category",
+                "Notebook Category A2",
+                bookA2.id()
+        );
+
+        String updateResponse = mockMvc.perform(patch("/api/notebook/notes/{noteId}", crossTenantNote)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of(
+                                "title", "Updated legacy cross-tenant note",
+                                "content", "Updated legacy content"
+                        ))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.title").value("Updated legacy cross-tenant note"))
+                .andExpect(jsonPath("$.content").value("Updated legacy content"))
+                .andExpect(jsonPath("$.categoryId").value(nullValue()))
+                .andExpect(jsonPath("$.category").value(nullValue()))
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        assertThat(updateResponse)
+                .doesNotContain(categoryB.toString())
+                .doesNotContain("Notebook Category B")
+                .doesNotContain(bookB.id().toString());
+        flushAndClear();
+        assertThat(persistedCategoryId(crossTenantNote)).isEqualTo(categoryB);
+        assertThat(noteRepository.findById(crossTenantNote)).hasValueSatisfying(note -> {
+            assertThat(note.getTitle()).isEqualTo("Updated legacy cross-tenant note");
+            assertThat(note.getContent()).isEqualTo("Updated legacy content");
+        });
+
+        String listResponse = mockMvc.perform(get("/api/books/{bookId}/notebook/notes", bookA1.id()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[?(@.id == '" + crossTenantNote + "')].categoryId", hasItem(nullValue())))
+                .andExpect(jsonPath("$[?(@.id == '" + sameTenantWrongBookNote + "')].categoryId", hasItem(nullValue())))
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        assertThat(listResponse)
+                .contains("Updated legacy cross-tenant note")
+                .contains("Owned note with same-tenant wrong-book category")
+                .doesNotContain(categoryB.toString())
+                .doesNotContain("Notebook Category B")
+                .doesNotContain(bookB.id().toString())
+                .doesNotContain(categoryA2.toString())
+                .doesNotContain("Notebook Category A2")
+                .doesNotContain(bookA2.id().toString());
+
+        mockMvc.perform(patch("/api/notebook/notes/{noteId}", sameTenantWrongBookNote)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of("categoryId", categoryA1))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.categoryId").value(categoryA1.toString()))
+                .andExpect(jsonPath("$.category.name").value("Notebook Category A1"));
+        flushAndClear();
+        assertThat(persistedCategoryId(sameTenantWrongBookNote)).isEqualTo(categoryA1);
+
+        mockMvc.perform(patch("/api/notebook/notes/{noteId}", crossTenantNote)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"categoryId\":null}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.categoryId").value(nullValue()))
+                .andExpect(jsonPath("$.category").value(nullValue()));
+        flushAndClear();
+        assertThat(persistedCategoryId(crossTenantNote)).isNull();
     }
 
     @Test
@@ -298,6 +394,12 @@ class NotebookTenantIsolationIntegrationTest extends PostgresIntegrationTest {
         user.setEmail(email);
         user.setTimeZoneId("UTC");
         entityManager.persist(user);
+
+        TenantMembership membership = new TenantMembership();
+        membership.setTenant(tenant);
+        membership.setUser(user);
+        membership.setRole(TenantMembershipRole.OWNER);
+        entityManager.persist(membership);
         return new Identity(user.getId(), tenantId);
     }
 
@@ -332,6 +434,45 @@ class NotebookTenantIsolationIntegrationTest extends PostgresIntegrationTest {
     private void assignCategoryDirectly(UUID noteId, UUID categoryId) {
         entityManager.flush();
         jdbcTemplate.update("update notebook_notes set category_id = ? where id = ?", categoryId, noteId);
+        entityManager.clear();
+    }
+
+    private void assertLegacyMismatchedGetIsUncategorized(
+            UUID noteId,
+            UUID categoryId,
+            String noteTitle,
+            String foreignCategoryName,
+            UUID foreignBookId
+    ) throws Exception {
+        String response = mockMvc.perform(get("/api/notebook/notes/{noteId}", noteId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(noteId.toString()))
+                .andExpect(jsonPath("$.title").value(noteTitle))
+                .andExpect(jsonPath("$.categoryId").value(nullValue()))
+                .andExpect(jsonPath("$.category").value(nullValue()))
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        assertThat(response)
+                .doesNotContain(categoryId.toString())
+                .doesNotContain(foreignCategoryName)
+                .doesNotContain(foreignBookId.toString());
+        flushAndClear();
+        assertThat(persistedCategoryId(noteId)).isEqualTo(categoryId);
+    }
+
+    private UUID persistedCategoryId(UUID noteId) {
+        String categoryId = jdbcTemplate.queryForObject(
+                "select category_id::text from notebook_notes where id = ?",
+                String.class,
+                noteId
+        );
+        return categoryId == null ? null : UUID.fromString(categoryId);
+    }
+
+    private void flushAndClear() {
+        entityManager.flush();
         entityManager.clear();
     }
 

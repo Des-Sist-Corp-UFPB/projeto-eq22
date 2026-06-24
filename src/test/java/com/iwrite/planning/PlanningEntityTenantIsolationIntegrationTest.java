@@ -25,6 +25,8 @@ import com.iwrite.section.dto.BookSectionResponse;
 import com.iwrite.support.PostgresIntegrationTest;
 import com.iwrite.support.SwitchableCurrentUserProvider;
 import com.iwrite.tenant.entity.Tenant;
+import com.iwrite.tenant.entity.TenantMembership;
+import com.iwrite.tenant.entity.TenantMembershipRole;
 import com.iwrite.tenant.repository.TenantRepository;
 import com.iwrite.user.entity.User;
 import jakarta.persistence.EntityManager;
@@ -545,6 +547,12 @@ class PlanningEntityTenantIsolationIntegrationTest extends PostgresIntegrationTe
         user.setEmail(email);
         user.setTimeZoneId("UTC");
         entityManager.persist(user);
+
+        TenantMembership membership = new TenantMembership();
+        membership.setTenant(tenant);
+        membership.setUser(user);
+        membership.setRole(TenantMembershipRole.OWNER);
+        entityManager.persist(membership);
         return new Identity(user.getId(), tenantId);
     }
 

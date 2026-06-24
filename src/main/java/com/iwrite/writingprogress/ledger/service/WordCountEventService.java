@@ -4,6 +4,7 @@ import com.iwrite.book.entity.Book;
 import com.iwrite.book.service.BookService;
 import com.iwrite.common.exception.BadRequestException;
 import com.iwrite.scene.entity.Scene;
+import com.iwrite.user.context.CurrentUserMembershipService;
 import com.iwrite.writingprogress.ledger.entity.BookWordCountEvent;
 import com.iwrite.writingprogress.ledger.repository.BookWordCountEventRepository;
 import com.iwrite.writingprogress.repository.DailyWritingProgressRepository;
@@ -22,17 +23,20 @@ public class WordCountEventService {
     private final BookService bookService;
     private final BookWordCountEventRepository eventRepository;
     private final DailyWritingProgressRepository progressRepository;
+    private final CurrentUserMembershipService currentUserMembershipService;
     private final Clock clock;
 
     public WordCountEventService(
             BookService bookService,
             BookWordCountEventRepository eventRepository,
             DailyWritingProgressRepository progressRepository,
+            CurrentUserMembershipService currentUserMembershipService,
             Clock clock
     ) {
         this.bookService = bookService;
         this.eventRepository = eventRepository;
         this.progressRepository = progressRepository;
+        this.currentUserMembershipService = currentUserMembershipService;
         this.clock = clock;
     }
 
@@ -41,11 +45,13 @@ public class WordCountEventService {
         validate(command);
 
         Book book = bookService.getBook(command.bookId());
+        UUID actorUserId = currentUserMembershipService.requireCurrentUserMemberId();
         OffsetDateTime eventTime = OffsetDateTime.now(clock);
         int inserted = eventRepository.insertIfAbsent(
                 UUID.randomUUID(),
                 command.bookId(),
                 command.sceneId(),
+                actorUserId,
                 command.originalSceneId(),
                 command.sceneTitleSnapshot(),
                 command.eventType().name(),
@@ -62,7 +68,7 @@ public class WordCountEventService {
             BookWordCountEvent existing = eventRepository
                     .findByBookIdAndIdempotencyKey(command.bookId(), command.idempotencyKey())
                     .orElseThrow(() -> new WordCountEventConflictException("Word-count event idempotency state is inconsistent."));
-            if (matches(existing, command)) {
+            if (matches(existing, command, actorUserId)) {
                 return WordCountEventRecordResult.ALREADY_RECORDED;
             }
             throw new WordCountEventConflictException("Idempotency key was already used for a different word-count event.");
@@ -71,6 +77,7 @@ public class WordCountEventService {
         if (shouldUpdateDailyRollup(command)) {
             progressRepository.upsertWordCountEventRollup(
                     UUID.randomUUID(),
+                    actorUserId,
                     command.bookId(),
                     LocalDate.now(clock),
                     book.getDailyTargetWordCount(),
@@ -98,8 +105,9 @@ public class WordCountEventService {
         }
     }
 
-    private boolean matches(BookWordCountEvent existing, WordCountEventCommand command) {
+    private boolean matches(BookWordCountEvent existing, WordCountEventCommand command, UUID actorUserId) {
         return Objects.equals(existing.getBook().getId(), command.bookId())
+                && Objects.equals(existing.getActorUser().getId(), actorUserId)
                 && Objects.equals(sceneId(existing), command.sceneId())
                 && Objects.equals(existing.getOriginalSceneId(), command.originalSceneId())
                 && Objects.equals(existing.getSceneTitleSnapshot(), command.sceneTitleSnapshot())

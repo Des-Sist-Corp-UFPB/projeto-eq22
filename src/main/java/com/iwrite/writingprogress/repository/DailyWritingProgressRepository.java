@@ -14,40 +14,45 @@ import java.util.UUID;
 
 public interface DailyWritingProgressRepository extends JpaRepository<DailyWritingProgress, UUID> {
 
-    Optional<DailyWritingProgress> findByBookIdAndProgressDate(UUID bookId, LocalDate progressDate);
+    Optional<DailyWritingProgress> findByUser_IdAndBookIdAndProgressDate(UUID userId, UUID bookId, LocalDate progressDate);
 
-    Optional<DailyWritingProgress> findFirstByBookIdOrderByProgressDateAsc(UUID bookId);
+    Optional<DailyWritingProgress> findFirstByUser_IdAndBookIdOrderByProgressDateAsc(UUID userId, UUID bookId);
 
-    List<DailyWritingProgress> findByBookIdAndProgressDateBetweenOrderByProgressDateDesc(
+    List<DailyWritingProgress> findByUser_IdAndBookIdAndProgressDateBetweenOrderByProgressDateDesc(
+            UUID userId,
             UUID bookId,
             LocalDate startDate,
             LocalDate endDate
     );
 
-    List<DailyWritingProgress> findByBookIdAndProgressDateBetweenOrderByProgressDateAsc(
+    List<DailyWritingProgress> findByUser_IdAndBookIdAndProgressDateBetweenOrderByProgressDateAsc(
+            UUID userId,
             UUID bookId,
             LocalDate startDate,
             LocalDate endDate
     );
 
-    List<DailyWritingProgress> findByBookIdAndProductiveWordCountChangeGreaterThanOrderByProgressDateAsc(
+    List<DailyWritingProgress> findByUser_IdAndBookIdAndProductiveWordCountChangeGreaterThanOrderByProgressDateAsc(
+            UUID userId,
             UUID bookId,
             int productiveWordCountChange
     );
 
-    long countByBookIdAndProgressDateBetweenAndProductiveWordCountChangeGreaterThan(
+    long countByUser_IdAndBookIdAndProgressDateBetweenAndProductiveWordCountChangeGreaterThan(
+            UUID userId,
             UUID bookId,
             LocalDate startDate,
             LocalDate endDate,
             int productiveWordCountChange
     );
 
-    long countByBookIdAndProgressDate(UUID bookId, LocalDate progressDate);
+    long countByUser_IdAndBookIdAndProgressDate(UUID userId, UUID bookId, LocalDate progressDate);
 
     @Modifying
     @Query(value = """
             insert into book_daily_writing_progress (
                 id,
+                user_id,
                 book_id,
                 progress_date,
                 daily_target_word_count,
@@ -60,6 +65,7 @@ public interface DailyWritingProgressRepository extends JpaRepository<DailyWriti
             )
             values (
                 :id,
+                :userId,
                 :bookId,
                 :progressDate,
                 :dailyTargetWordCount,
@@ -70,9 +76,9 @@ public interface DailyWritingProgressRepository extends JpaRepository<DailyWriti
                 :updatedAt,
                 :updatedAt
             )
-            on conflict (book_id, progress_date) do update set
+            on conflict (user_id, book_id, progress_date) do update set
                 ending_manuscript_word_count =
-                    book_daily_writing_progress.ending_manuscript_word_count + :manuscriptWordDelta,
+                    :knownManuscriptTotalAfterOperation,
                 productive_word_count_change =
                     book_daily_writing_progress.productive_word_count_change + :productiveWordDelta,
                 manuscript_adjustment_word_count =
@@ -82,6 +88,7 @@ public interface DailyWritingProgressRepository extends JpaRepository<DailyWriti
             """, nativeQuery = true)
     int upsertWordCountEventRollup(
             @Param("id") UUID id,
+            @Param("userId") UUID userId,
             @Param("bookId") UUID bookId,
             @Param("progressDate") LocalDate progressDate,
             @Param("dailyTargetWordCount") Integer dailyTargetWordCount,

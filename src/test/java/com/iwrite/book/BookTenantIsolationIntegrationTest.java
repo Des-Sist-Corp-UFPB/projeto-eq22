@@ -6,7 +6,13 @@ import com.iwrite.book.repository.BookRepository;
 import com.iwrite.support.PostgresIntegrationTest;
 import com.iwrite.support.SwitchableCurrentUserProvider;
 import com.iwrite.tenant.entity.Tenant;
+import com.iwrite.tenant.entity.TenantMembership;
+import com.iwrite.tenant.entity.TenantMembershipRole;
 import com.iwrite.tenant.repository.TenantRepository;
+import com.iwrite.user.entity.User;
+import com.iwrite.writingprogress.repository.BookWritingScheduleRepository;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -20,10 +26,14 @@ import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.time.ZoneId;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static com.iwrite.support.SwitchableCurrentUserProvider.DEFAULT_TENANT_ID;
+import static com.iwrite.support.SwitchableCurrentUserProvider.DEFAULT_USER_ID;
+import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.hasItem;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
@@ -36,8 +46,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @AutoConfigureMockMvc
 @Import(BookTenantIsolationIntegrationTest.CurrentUserTestConfiguration.class)
 class BookTenantIsolationIntegrationTest extends PostgresIntegrationTest {
-
-    private static final UUID TENANT_B_USER_ID = UUID.fromString("10000000-0000-0000-0000-000000000002");
 
     @Autowired
     private MockMvc mockMvc;
@@ -54,7 +62,14 @@ class BookTenantIsolationIntegrationTest extends PostgresIntegrationTest {
     @Autowired
     private BookRepository bookRepository;
 
+    @Autowired
+    private BookWritingScheduleRepository scheduleRepository;
+
+    @PersistenceContext
+    private EntityManager entityManager;
+
     private UUID tenantBId;
+    private UUID tenantBUserId;
 
     @BeforeEach
     void setUpCurrentTenant() {
@@ -62,7 +77,21 @@ class BookTenantIsolationIntegrationTest extends PostgresIntegrationTest {
         Tenant tenantB = new Tenant();
         tenantB.setName("Tenant B");
         tenantB.setDefaultTimeZoneId("UTC");
-        tenantBId = tenantRepository.save(tenantB).getId();
+        Tenant savedTenantB = tenantRepository.save(tenantB);
+        tenantBId = savedTenantB.getId();
+
+        User tenantBUser = new User();
+        tenantBUser.setDisplayName("Tenant B User");
+        tenantBUser.setEmail("book-tenant-b@iwrite.local");
+        tenantBUser.setTimeZoneId("UTC");
+        entityManager.persist(tenantBUser);
+        tenantBUserId = tenantBUser.getId();
+
+        TenantMembership membership = new TenantMembership();
+        membership.setTenant(savedTenantB);
+        membership.setUser(tenantBUser);
+        membership.setRole(TenantMembershipRole.OWNER);
+        entityManager.persist(membership);
     }
 
     @AfterEach
@@ -165,8 +194,81 @@ class BookTenantIsolationIntegrationTest extends PostgresIntegrationTest {
         assertThat(bookRepository.findById(bookA.id())).isEmpty();
     }
 
+    @Test
+    void sameTenantMemberLazilyReceivesIndependentDefaultScheduleForBookListReadAndPatch() throws Exception {
+        var book = createBook("Shared same-tenant book");
+        mockMvc.perform(patch("/api/books/{bookId}", book.id())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"plannedWritingDays":["MONDAY","WEDNESDAY"]}
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.plannedWritingDays", contains("MONDAY", "WEDNESDAY")));
+
+        UUID sameTenantUserId = createMember(DEFAULT_TENANT_ID, "same-tenant-reader@iwrite.local");
+        currentUserProvider.switchTo(sameTenantUserId, DEFAULT_TENANT_ID, ZoneId.of("UTC"));
+
+        mockMvc.perform(get("/api/books"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[?(@.id == '%s')].plannedWritingDays".formatted(book.id()), hasItem(List.of(
+                        "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY"
+                ))));
+        mockMvc.perform(get("/api/books/{bookId}", book.id()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.plannedWritingDays", contains(
+                        "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY"
+                )));
+        mockMvc.perform(get("/api/books/{bookId}", book.id()))
+                .andExpect(status().isOk());
+
+        assertThat(scheduleRepository.countByUser_IdAndBookIdAndEffectiveToIsNull(sameTenantUserId, book.id()))
+                .isEqualTo(1);
+
+        currentUserProvider.reset();
+        assertThat(scheduleRepository.findFirstByUser_IdAndBookIdAndEffectiveToIsNull(DEFAULT_USER_ID, book.id()))
+                .hasValueSatisfying(schedule -> assertThat(schedule.getPlannedDays())
+                        .containsExactlyInAnyOrder(java.time.DayOfWeek.MONDAY, java.time.DayOfWeek.WEDNESDAY));
+
+        UUID sameTenantPatchUserId = createMember(DEFAULT_TENANT_ID, "same-tenant-patcher@iwrite.local");
+        currentUserProvider.switchTo(sameTenantPatchUserId, DEFAULT_TENANT_ID, ZoneId.of("UTC"));
+        mockMvc.perform(patch("/api/books/{bookId}", book.id())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"plannedWritingDays":["FRIDAY"]}
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.plannedWritingDays", contains("FRIDAY")));
+
+        assertThat(scheduleRepository.countByUser_IdAndBookIdAndEffectiveToIsNull(sameTenantPatchUserId, book.id()))
+                .isEqualTo(1);
+        assertThat(scheduleRepository.findFirstByUser_IdAndBookIdAndEffectiveToIsNull(sameTenantPatchUserId, book.id()))
+                .hasValueSatisfying(schedule -> assertThat(schedule.getPlannedDays())
+                        .containsExactly(java.time.DayOfWeek.FRIDAY));
+
+        currentUserProvider.reset();
+        assertThat(scheduleRepository.findFirstByUser_IdAndBookIdAndEffectiveToIsNull(DEFAULT_USER_ID, book.id()))
+                .hasValueSatisfying(schedule -> assertThat(schedule.getPlannedDays())
+                        .containsExactlyInAnyOrder(java.time.DayOfWeek.MONDAY, java.time.DayOfWeek.WEDNESDAY));
+    }
+
     private void switchToTenantB() {
-        currentUserProvider.switchTo(TENANT_B_USER_ID, tenantBId, ZoneId.of("UTC"));
+        currentUserProvider.switchTo(tenantBUserId, tenantBId, ZoneId.of("UTC"));
+    }
+
+    private UUID createMember(UUID tenantId, String email) {
+        User user = new User();
+        user.setDisplayName(email);
+        user.setEmail(email);
+        user.setTimeZoneId("UTC");
+        entityManager.persist(user);
+
+        TenantMembership membership = new TenantMembership();
+        membership.setTenant(entityManager.getReference(Tenant.class, tenantId));
+        membership.setUser(user);
+        membership.setRole(TenantMembershipRole.OWNER);
+        entityManager.persist(membership);
+        entityManager.flush();
+        return user.getId();
     }
 
     private void assertBookNotFound(org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder request)

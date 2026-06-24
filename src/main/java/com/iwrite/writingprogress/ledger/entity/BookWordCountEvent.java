@@ -2,6 +2,7 @@ package com.iwrite.writingprogress.ledger.entity;
 
 import com.iwrite.book.entity.Book;
 import com.iwrite.scene.entity.Scene;
+import com.iwrite.user.entity.User;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -40,6 +41,10 @@ public class BookWordCountEvent {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "scene_id")
     private Scene scene;
+
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @JoinColumn(name = "actor_user_id", nullable = false)
+    private User actorUser;
 
     private UUID originalSceneId;
 
@@ -93,6 +98,14 @@ public class BookWordCountEvent {
 
     public void setScene(Scene scene) {
         this.scene = scene;
+    }
+
+    public User getActorUser() {
+        return actorUser;
+    }
+
+    public void setActorUser(User actorUser) {
+        this.actorUser = actorUser;
     }
 
     public UUID getOriginalSceneId() {

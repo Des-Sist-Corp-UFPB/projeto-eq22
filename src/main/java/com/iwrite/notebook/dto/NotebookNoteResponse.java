@@ -20,7 +20,7 @@ public record NotebookNoteResponse(
 ) {
 
     public static NotebookNoteResponse fromEntity(NotebookNote note) {
-        NotebookCategory category = note.getCategory();
+        NotebookCategory category = sameBookCategory(note);
         return new NotebookNoteResponse(
                 note.getId(),
                 note.getBook().getId(),
@@ -32,5 +32,16 @@ public record NotebookNoteResponse(
                 note.getCreatedAt(),
                 note.getUpdatedAt()
         );
+    }
+
+    private static NotebookCategory sameBookCategory(NotebookNote note) {
+        NotebookCategory category = note.getCategory();
+        if (category == null) {
+            return null;
+        }
+
+        UUID noteBookId = note.getBook().getId();
+        UUID categoryBookId = category.getBook().getId();
+        return noteBookId.equals(categoryBookId) ? category : null;
     }
 }
