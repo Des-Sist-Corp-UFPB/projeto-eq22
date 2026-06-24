@@ -8,12 +8,15 @@ import com.iwrite.user.context.CurrentUserMembershipService;
 import com.iwrite.writingprogress.ledger.entity.BookWordCountEvent;
 import com.iwrite.writingprogress.ledger.repository.BookWordCountEventRepository;
 import com.iwrite.writingprogress.repository.DailyWritingProgressRepository;
+import com.iwrite.writingprogress.service.WritingDayResolver;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.Objects;
 import java.util.UUID;
 
@@ -24,6 +27,7 @@ public class WordCountEventService {
     private final BookWordCountEventRepository eventRepository;
     private final DailyWritingProgressRepository progressRepository;
     private final CurrentUserMembershipService currentUserMembershipService;
+    private final WritingDayResolver writingDayResolver;
     private final Clock clock;
 
     public WordCountEventService(
@@ -31,12 +35,14 @@ public class WordCountEventService {
             BookWordCountEventRepository eventRepository,
             DailyWritingProgressRepository progressRepository,
             CurrentUserMembershipService currentUserMembershipService,
+            WritingDayResolver writingDayResolver,
             Clock clock
     ) {
         this.bookService = bookService;
         this.eventRepository = eventRepository;
         this.progressRepository = progressRepository;
         this.currentUserMembershipService = currentUserMembershipService;
+        this.writingDayResolver = writingDayResolver;
         this.clock = clock;
     }
 
@@ -46,7 +52,9 @@ public class WordCountEventService {
 
         Book book = bookService.getBook(command.bookId());
         UUID actorUserId = currentUserMembershipService.requireCurrentUserMemberId();
-        OffsetDateTime eventTime = OffsetDateTime.now(clock);
+        Instant eventInstant = clock.instant();
+        OffsetDateTime eventTime = eventInstant.atOffset(ZoneOffset.UTC);
+        LocalDate progressDate = writingDayResolver.writingDateFor(eventInstant);
         int inserted = eventRepository.insertIfAbsent(
                 UUID.randomUUID(),
                 command.bookId(),
@@ -79,7 +87,7 @@ public class WordCountEventService {
                     UUID.randomUUID(),
                     actorUserId,
                     command.bookId(),
-                    LocalDate.now(clock),
+                    progressDate,
                     book.getDailyTargetWordCount(),
                     command.knownManuscriptTotalAfterOperation(),
                     command.productiveWordDelta(),
