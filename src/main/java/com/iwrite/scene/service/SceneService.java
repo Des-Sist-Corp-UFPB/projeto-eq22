@@ -1,5 +1,7 @@
 package com.iwrite.scene.service;
 
+import com.iwrite.book.entity.Book;
+import com.iwrite.book.service.BookService;
 import com.iwrite.chapter.entity.Chapter;
 import com.iwrite.chapter.service.ChapterService;
 import com.iwrite.character.entity.Character;
@@ -31,7 +33,10 @@ import com.iwrite.writingprogress.ledger.entity.BookWordCountEvent;
 import com.iwrite.writingprogress.ledger.entity.BookWordCountEventType;
 import com.iwrite.writingprogress.ledger.repository.BookWordCountEventRepository;
 import com.iwrite.writingprogress.ledger.service.WordCountEventCommand;
+import com.iwrite.writingprogress.ledger.service.WordCountEventConflictException;
+import com.iwrite.writingprogress.ledger.service.WordCountEventRecordResult;
 import com.iwrite.writingprogress.ledger.service.WordCountEventService;
+import com.iwrite.writingprogress.ledger.service.WordCountRequestFingerprint;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -39,7 +44,6 @@ import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.Function;
@@ -59,6 +63,7 @@ public class SceneService {
     private final SceneDeletionLedgerService sceneDeletionLedgerService;
     private final WordCountEventService wordCountEventService;
     private final BookWordCountEventRepository wordCountEventRepository;
+    private final BookService bookService;
     private final CurrentUserProvider currentUserProvider;
 
     public SceneService(
@@ -73,6 +78,7 @@ public class SceneService {
             SceneDeletionLedgerService sceneDeletionLedgerService,
             WordCountEventService wordCountEventService,
             BookWordCountEventRepository wordCountEventRepository,
+            BookService bookService,
             CurrentUserProvider currentUserProvider
     ) {
         this.sceneRepository = sceneRepository;
@@ -86,6 +92,7 @@ public class SceneService {
         this.sceneDeletionLedgerService = sceneDeletionLedgerService;
         this.wordCountEventService = wordCountEventService;
         this.wordCountEventRepository = wordCountEventRepository;
+        this.bookService = bookService;
         this.currentUserProvider = currentUserProvider;
     }
 
@@ -98,11 +105,29 @@ public class SceneService {
     public SceneResponse create(UUID chapterId, SceneRequest request) {
         Chapter chapter = chapterService.getChapter(chapterId);
         UUID bookId = chapter.getBook().getId();
+        Book lockedBook = bookService.getBookForWordCountUpdate(bookId);
+        UUID operationId = request.operationId() == null ? UUID.randomUUID() : request.operationId();
+        String requestFingerprint = WordCountRequestFingerprint.sceneCreate(
+                currentUserProvider.userId(),
+                bookId,
+                chapterId,
+                request.title(),
+                request.summary(),
+                request.status(),
+                request.sortOrder(),
+                request.contentJson(),
+                request.contentText()
+        );
+        SceneResponse idempotentCreateResponse = idempotentCreateRetryResponse(bookId, operationId, requestFingerprint);
+        if (idempotentCreateResponse != null) {
+            return idempotentCreateResponse;
+        }
+
         int totalBefore = Math.toIntExact(sceneRepository.sumWordCountByBookId(bookId));
         int newWordCount = wordCountService.countWords(request.contentText());
 
         Scene scene = new Scene();
-        scene.setBook(chapter.getBook());
+        scene.setBook(lockedBook);
         scene.setChapter(chapter);
         scene.setTitle(request.title());
         scene.setSummary(request.summary());
@@ -111,14 +136,14 @@ public class SceneService {
         scene.setContentJson(request.contentJson());
         scene.setContentText(request.contentText());
         scene.setWordCount(newWordCount);
+        scene.setContentRevision(0L);
         if (scene.getStatus() == SceneStatus.PLANNED) {
             rejectIncompletePlanning(scene);
         }
 
         Scene savedScene = sceneRepository.save(scene);
-        if (newWordCount > 0) {
-            UUID operationId = UUID.randomUUID();
-            wordCountEventService.record(new WordCountEventCommand(
+        if (newWordCount > 0 || request.operationId() != null) {
+            recordFreshEvent(lockedBook, new WordCountEventCommand(
                     bookId,
                     savedScene.getId(),
                     savedScene.getId(),
@@ -130,6 +155,7 @@ public class SceneService {
                     operationId,
                     null,
                     savedScene.getContentRevision(),
+                    requestFingerprint,
                     totalBefore + newWordCount
             ));
         }
@@ -166,17 +192,43 @@ public class SceneService {
     public SceneResponse updateContent(UUID sceneId, SceneContentRequest request) {
         Scene scene = getSceneForUpdate(sceneId);
         rejectMissingOperationId(request.operationId());
-        SceneResponse idempotentRetryResponse = idempotentRetryResponse(scene, request);
+        Book lockedBook = bookService.getBookForWordCountUpdate(scene.getBook().getId());
+        SceneVersionSource source = contentSource(request.source());
+        String requestFingerprint = WordCountRequestFingerprint.contentSave(
+                currentUserProvider.userId(),
+                lockedBook.getId(),
+                scene.getId(),
+                request.expectedContentRevision(),
+                source,
+                request.contentJson(),
+                request.contentText()
+        );
+        SceneResponse idempotentRetryResponse = idempotentRetryResponse(scene, request.operationId(), requestFingerprint);
         if (idempotentRetryResponse != null) {
             return idempotentRetryResponse;
         }
         rejectStaleContentRevision(scene, request.expectedContentRevision());
         if (sameContent(scene, request.contentJson(), request.contentText())) {
+            long revision = scene.getContentRevision();
+            recordFreshEvent(lockedBook, new WordCountEventCommand(
+                    lockedBook.getId(),
+                    scene.getId(),
+                    scene.getId(),
+                    scene.getTitle(),
+                    BookWordCountEventType.CONTENT_SAVE,
+                    0,
+                    0,
+                    request.operationId(),
+                    request.operationId(),
+                    revision,
+                    revision,
+                    requestFingerprint,
+                    Math.toIntExact(sceneRepository.sumWordCountByBookId(lockedBook.getId()))
+            ));
             return SceneResponse.fromEntity(scene);
         }
 
-        SceneVersionSource source = contentSource(request.source());
-        UUID bookId = scene.getBook().getId();
+        UUID bookId = lockedBook.getId();
         int totalBefore = Math.toIntExact(sceneRepository.sumWordCountByBookId(bookId));
         int oldWordCount = wordCount(scene);
         int newWordCount = wordCountService.countWords(request.contentText());
@@ -191,7 +243,7 @@ public class SceneService {
         if (source == SceneVersionSource.MANUAL_SAVE) {
             sceneVersionService.checkpointAfterManualContentSave(scene);
         }
-        wordCountEventService.record(new WordCountEventCommand(
+        recordFreshEvent(lockedBook, new WordCountEventCommand(
                 bookId,
                 scene.getId(),
                 scene.getId(),
@@ -203,6 +255,7 @@ public class SceneService {
                 request.operationId(),
                 revisionBefore,
                 scene.getContentRevision(),
+                requestFingerprint,
                 totalBefore + wordCountDelta
         ));
 
@@ -213,8 +266,16 @@ public class SceneService {
     public SceneResponse restoreVersion(UUID sceneId, UUID versionId, SceneVersionRestoreRequest request) {
         Scene scene = getSceneForUpdate(sceneId);
         rejectMissingOperationId(request.operationId());
+        Book lockedBook = bookService.getBookForWordCountUpdate(scene.getBook().getId());
         SceneVersion version = sceneVersionService.getCurrentSceneVersion(sceneId, versionId);
-        SceneResponse idempotentRetryResponse = idempotentRestoreRetryResponse(scene, version, request);
+        String requestFingerprint = WordCountRequestFingerprint.versionRestore(
+                currentUserProvider.userId(),
+                lockedBook.getId(),
+                scene.getId(),
+                versionId,
+                request.expectedContentRevision()
+        );
+        SceneResponse idempotentRetryResponse = idempotentRestoreRetryResponse(scene, request.operationId(), requestFingerprint);
         if (idempotentRetryResponse != null) {
             return idempotentRetryResponse;
         }
@@ -224,7 +285,7 @@ public class SceneService {
             return SceneResponse.fromEntity(scene);
         }
 
-        UUID bookId = scene.getBook().getId();
+        UUID bookId = lockedBook.getId();
         int totalBefore = Math.toIntExact(sceneRepository.sumWordCountByBookId(bookId));
         int previousWordCount = wordCount(scene);
         int newWordCount = wordCountService.countWords(version.getContentText());
@@ -236,7 +297,7 @@ public class SceneService {
         scene.setContentText(version.getContentText());
         scene.setWordCount(newWordCount);
         scene.incrementContentRevision();
-        wordCountEventService.record(new WordCountEventCommand(
+        recordFreshEvent(lockedBook, new WordCountEventCommand(
                 bookId,
                 scene.getId(),
                 scene.getId(),
@@ -248,6 +309,7 @@ public class SceneService {
                 request.operationId(),
                 revisionBefore,
                 scene.getContentRevision(),
+                requestFingerprint,
                 totalBefore + manuscriptWordDelta
         ));
 
@@ -284,7 +346,8 @@ public class SceneService {
     @Transactional
     public void delete(UUID sceneId) {
         Scene scene = getSceneForUpdate(sceneId);
-        sceneDeletionLedgerService.prepareSceneDelete(scene);
+        Book lockedBook = bookService.getBookForWordCountUpdate(scene.getBook().getId());
+        sceneDeletionLedgerService.prepareSceneDelete(scene, lockedBook);
         sceneRepository.delete(scene);
     }
 
@@ -432,54 +495,72 @@ public class SceneService {
                 && normalized(scene.getContentText()).equals(normalized(contentText));
     }
 
-    private SceneResponse idempotentRetryResponse(Scene scene, SceneContentRequest request) {
-        if (request.expectedContentRevision() == null || request.expectedContentRevision().equals(scene.getContentRevision())) {
-            return null;
-        }
+    private SceneResponse idempotentCreateRetryResponse(UUID bookId, UUID idempotencyKey, String requestFingerprint) {
+        return wordCountEventRepository.findByBookIdAndIdempotencyKey(bookId, idempotencyKey)
+                .map(event -> {
+                    requireMatchingFingerprint(
+                            event,
+                            requestFingerprint,
+                            "Idempotency key was already used for a different scene creation."
+                    );
+                    if (event.getScene() == null) {
+                        throw new ResourceNotFoundException("Scene not found for idempotent create retry.");
+                    }
+                    return SceneResponse.fromEntity(event.getScene());
+                })
+                .orElse(null);
+    }
 
-        return wordCountEventRepository.findByBookIdAndIdempotencyKey(scene.getBook().getId(), request.operationId())
-                .filter(event -> isMatchingContentSaveRetry(event, scene, request))
-                .map(event -> SceneResponse.fromEntity(scene))
+    private SceneResponse idempotentRetryResponse(Scene scene, UUID idempotencyKey, String requestFingerprint) {
+        return wordCountEventRepository.findByBookIdAndIdempotencyKey(scene.getBook().getId(), idempotencyKey)
+                .map(event -> {
+                    requireMatchingFingerprint(
+                            event,
+                            requestFingerprint,
+                            "Idempotency key was already used for a different scene content update."
+                    );
+                    return SceneResponse.fromEntity(scene);
+                })
                 .orElse(null);
     }
 
     private SceneResponse idempotentRestoreRetryResponse(
             Scene scene,
-            SceneVersion version,
-            SceneVersionRestoreRequest request
+            UUID idempotencyKey,
+            String requestFingerprint
     ) {
-        if (request.expectedContentRevision() == null || request.expectedContentRevision().equals(scene.getContentRevision())) {
-            return null;
-        }
-
-        return wordCountEventRepository.findByBookIdAndIdempotencyKey(scene.getBook().getId(), request.operationId())
-                .filter(event -> isMatchingVersionRestoreRetry(event, scene, version, request))
-                .map(event -> SceneResponse.fromEntity(scene))
+        return wordCountEventRepository.findByBookIdAndIdempotencyKey(scene.getBook().getId(), idempotencyKey)
+                .map(event -> {
+                    requireMatchingFingerprint(
+                            event,
+                            requestFingerprint,
+                            "Idempotency key was already used for a different scene version restore."
+                    );
+                    return SceneResponse.fromEntity(scene);
+                })
                 .orElse(null);
     }
 
-    private boolean isMatchingContentSaveRetry(BookWordCountEvent event, Scene scene, SceneContentRequest request) {
-        return event.getEventType() == BookWordCountEventType.CONTENT_SAVE
-                && event.getScene() != null
-                && event.getScene().getId().equals(scene.getId())
-                && Objects.equals(event.getOperationId(), request.operationId())
-                && Objects.equals(event.getContentRevisionBefore(), request.expectedContentRevision())
-                && sameContent(scene, request.contentJson(), request.contentText());
+    private void requireMatchingFingerprint(
+            BookWordCountEvent event,
+            String requestFingerprint,
+            String conflictMessage
+    ) {
+        if (event.getRequestFingerprint() == null) {
+            throw new WordCountEventConflictException(
+                    "Legacy idempotency event cannot prove a matching retry. Please reload and retry with a new operation."
+            );
+        }
+        if (!event.getRequestFingerprint().equals(requestFingerprint)) {
+            throw new WordCountEventConflictException(conflictMessage);
+        }
     }
 
-    private boolean isMatchingVersionRestoreRetry(
-            BookWordCountEvent event,
-            Scene scene,
-            SceneVersion version,
-            SceneVersionRestoreRequest request
-    ) {
-        return event.getEventType() == BookWordCountEventType.VERSION_RESTORE
-                && event.getScene() != null
-                && event.getScene().getId().equals(scene.getId())
-                && Objects.equals(event.getOperationId(), request.operationId())
-                && Objects.equals(event.getContentRevisionBefore(), request.expectedContentRevision())
-                && Objects.equals(event.getContentRevisionAfter(), scene.getContentRevision())
-                && sameContent(scene, version.getContentJson(), version.getContentText());
+    private void recordFreshEvent(Book lockedBook, WordCountEventCommand command) {
+        WordCountEventRecordResult result = wordCountEventService.recordForLockedBook(lockedBook, command);
+        if (result == WordCountEventRecordResult.ALREADY_RECORDED) {
+            throw new WordCountEventConflictException("Idempotency key was already used for a different word-count event.");
+        }
     }
 
     private String normalized(String value) {

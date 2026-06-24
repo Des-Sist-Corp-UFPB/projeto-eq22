@@ -97,7 +97,11 @@ describe("SceneEditor restore orchestration", () => {
     await act(async () => {
       await Promise.resolve();
     });
-    expect(mocks.restoreSceneVersion).toHaveBeenCalledTimes(1);
+    expect(mocks.restoreSceneVersion).toHaveBeenCalledWith(sceneForPlanning.id, "version-1", {
+      expectedContentRevision: 3,
+      operationId: "save-operation",
+    });
+    expect(mocks.randomUUID).toHaveBeenCalledTimes(1);
 
     await act(async () => {
       vi.advanceTimersByTime(1200);

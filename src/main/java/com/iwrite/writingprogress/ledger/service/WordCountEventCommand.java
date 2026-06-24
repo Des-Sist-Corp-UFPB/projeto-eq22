@@ -16,6 +16,7 @@ public record WordCountEventCommand(
         UUID idempotencyKey,
         Long contentRevisionBefore,
         Long contentRevisionAfter,
+        String requestFingerprint,
         int knownManuscriptTotalAfterOperation
 ) {
 }

@@ -50,7 +50,16 @@ public class WordCountEventService {
     public WordCountEventRecordResult record(WordCountEventCommand command) {
         validate(command);
 
-        Book book = bookService.getBook(command.bookId());
+        Book book = bookService.getBookForWordCountUpdate(command.bookId());
+        return recordForLockedBook(book, command);
+    }
+
+    public WordCountEventRecordResult recordForLockedBook(Book book, WordCountEventCommand command) {
+        validate(command);
+        if (!book.getId().equals(command.bookId())) {
+            throw new BadRequestException("bookId must match the locked book");
+        }
+
         UUID actorUserId = currentUserMembershipService.requireCurrentUserMemberId();
         Instant eventInstant = clock.instant();
         OffsetDateTime eventTime = eventInstant.atOffset(ZoneOffset.UTC);
@@ -69,6 +78,7 @@ public class WordCountEventService {
                 command.idempotencyKey(),
                 command.contentRevisionBefore(),
                 command.contentRevisionAfter(),
+                command.requestFingerprint(),
                 eventTime
         );
 
@@ -111,10 +121,18 @@ public class WordCountEventService {
         if (command.idempotencyKey() == null) {
             throw new BadRequestException("idempotencyKey is required");
         }
+        if (command.requestFingerprint() == null || command.requestFingerprint().isBlank()) {
+            throw new BadRequestException("requestFingerprint is required");
+        }
     }
 
     private boolean matches(BookWordCountEvent existing, WordCountEventCommand command, UUID actorUserId) {
-        return Objects.equals(existing.getBook().getId(), command.bookId())
+        if (existing.getRequestFingerprint() == null) {
+            return false;
+        }
+
+        return Objects.equals(existing.getRequestFingerprint(), command.requestFingerprint())
+                && Objects.equals(existing.getBook().getId(), command.bookId())
                 && Objects.equals(existing.getActorUser().getId(), actorUserId)
                 && Objects.equals(sceneId(existing), command.sceneId())
                 && Objects.equals(existing.getOriginalSceneId(), command.originalSceneId())

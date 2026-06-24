@@ -16,6 +16,7 @@ import com.iwrite.writingprogress.ledger.service.WordCountEventCommand;
 import com.iwrite.writingprogress.ledger.service.WordCountEventConflictException;
 import com.iwrite.writingprogress.ledger.service.WordCountEventRecordResult;
 import com.iwrite.writingprogress.ledger.service.WordCountEventService;
+import com.iwrite.writingprogress.ledger.service.WordCountRequestFingerprint;
 import com.iwrite.writingprogress.repository.DailyWritingProgressRepository;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
@@ -426,6 +427,15 @@ class WordCountEventServiceIntegrationTest extends PostgresIntegrationTest {
             UUID idempotencyKey,
             int knownManuscriptTotalAfterOperation
     ) {
+        String requestFingerprint = WordCountRequestFingerprint.contentSave(
+                currentUserProvider.userId(),
+                bookId,
+                scene.id(),
+                0L,
+                null,
+                eventType.name(),
+                productiveWordDelta + ":" + manuscriptWordDelta
+        );
         return new WordCountEventCommand(
                 bookId,
                 scene.id(),
@@ -438,6 +448,7 @@ class WordCountEventServiceIntegrationTest extends PostgresIntegrationTest {
                 idempotencyKey,
                 0L,
                 1L,
+                requestFingerprint,
                 knownManuscriptTotalAfterOperation
         );
     }

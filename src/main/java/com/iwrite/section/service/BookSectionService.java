@@ -81,8 +81,10 @@ public class BookSectionService {
 
     @Transactional
     public void delete(UUID sectionId) {
-        getSection(sectionId);
-        sceneDeletionLedgerService.prepareSceneDeletes(sceneRepository.findBySectionIdForUpdate(sectionId), UUID.randomUUID());
+        BookSection section = getSection(sectionId);
+        var scenes = sceneRepository.findBySectionIdForUpdate(sectionId);
+        Book lockedBook = bookService.getBookForWordCountUpdate(section.getBook().getId());
+        sceneDeletionLedgerService.prepareSceneDeletes(scenes, lockedBook, UUID.randomUUID());
         sectionRepository.deleteById(sectionId);
     }
 
