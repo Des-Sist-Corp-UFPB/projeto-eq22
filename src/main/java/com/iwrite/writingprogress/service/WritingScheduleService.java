@@ -74,28 +74,35 @@ public class WritingScheduleService {
     public List<DayOfWeek> changeSchedule(Book book, List<DayOfWeek> plannedWritingDays) {
         Set<DayOfWeek> plannedDays = normalizePlannedDays(plannedWritingDays);
         ScheduleOperationTime operationTime = currentOperationTime();
-        LocalDate tomorrow = operationTime.date().plusDays(1);
-        BookWritingSchedule activeSchedule = getOrCreateActiveScheduleForCurrentUser(book, operationTime);
+        LocalDate targetDate = operationTime.date().plusDays(1);
+        UUID userId = currentUserMembershipService.requireCurrentUserMemberId();
+        BookWritingSchedule targetSchedule = getOrCreateScheduleCoveringDate(book, userId, targetDate, operationTime);
+        List<BookWritingSchedule> futureSchedules = scheduleRepository
+                .findByUserIdAndBookIdAndEffectiveFromAfterForUpdate(userId, book.getId(), targetDate);
 
-        if (sameDays(activeSchedule.getPlannedDays(), plannedDays)) {
-            return orderedDays(activeSchedule.getPlannedDays());
+        if (sameDays(targetSchedule.getPlannedDays(), plannedDays)) {
+            supersedeFutureSchedules(targetSchedule, futureSchedules, operationTime);
+            return orderedDays(targetSchedule.getPlannedDays());
         }
 
-        if (!activeSchedule.getEffectiveFrom().isBefore(tomorrow)) {
-            activeSchedule.setPlannedDays(plannedDays);
-            activeSchedule.setUpdatedAt(operationTime.timestamp());
+        deleteFutureSchedules(futureSchedules);
+
+        if (!targetSchedule.getEffectiveFrom().isBefore(targetDate)) {
+            targetSchedule.setPlannedDays(plannedDays);
+            targetSchedule.setEffectiveTo(null);
+            targetSchedule.setUpdatedAt(operationTime.timestamp());
             return orderedDays(plannedDays);
         }
 
-        activeSchedule.setEffectiveTo(tomorrow);
-        activeSchedule.setUpdatedAt(operationTime.timestamp());
-        scheduleRepository.saveAndFlush(activeSchedule);
+        targetSchedule.setEffectiveTo(targetDate);
+        targetSchedule.setUpdatedAt(operationTime.timestamp());
+        scheduleRepository.saveAndFlush(targetSchedule);
 
         BookWritingSchedule newSchedule = newSchedule(
                 book,
-                activeSchedule.getUser().getId(),
+                targetSchedule.getUser().getId(),
                 plannedDays,
-                tomorrow,
+                targetDate,
                 operationTime.timestamp()
         );
         scheduleRepository.save(newSchedule);
@@ -117,6 +124,22 @@ public class WritingScheduleService {
         UUID userId = currentUserMembershipService.requireCurrentUserMemberId();
         return scheduleRepository.findFirstByUser_IdAndBookIdAndEffectiveToIsNull(userId, book.getId())
                 .orElseGet(() -> createDefaultActiveScheduleWithConflictReload(book.getId(), userId, operationTime));
+    }
+
+    private BookWritingSchedule getOrCreateScheduleCoveringDate(
+            Book book,
+            UUID userId,
+            LocalDate date,
+            ScheduleOperationTime operationTime
+    ) {
+        return scheduleRepository.findByUserIdAndBookIdAndDateForUpdate(userId, book.getId(), date)
+                .orElseGet(() -> {
+                    getOrCreateActiveScheduleForCurrentUser(book, operationTime);
+                    return scheduleRepository.findByUserIdAndBookIdAndDateForUpdate(userId, book.getId(), date)
+                            .orElseThrow(() -> new ResourceNotFoundException(
+                                    "Writing schedule not found for book date: " + book.getId() + " " + date
+                            ));
+                });
     }
 
     @Transactional(readOnly = true)
@@ -253,6 +276,27 @@ public class WritingScheduleService {
 
         return scheduleRepository.findFirstByUser_IdAndBookIdAndEffectiveToIsNull(userId, bookId)
                 .orElseThrow(() -> new ResourceNotFoundException("Active writing schedule not found for book: " + bookId));
+    }
+
+    private void supersedeFutureSchedules(
+            BookWritingSchedule targetSchedule,
+            List<BookWritingSchedule> futureSchedules,
+            ScheduleOperationTime operationTime
+    ) {
+        if (futureSchedules.isEmpty()) {
+            return;
+        }
+
+        deleteFutureSchedules(futureSchedules);
+        targetSchedule.setEffectiveTo(null);
+        targetSchedule.setUpdatedAt(operationTime.timestamp());
+    }
+
+    private void deleteFutureSchedules(List<BookWritingSchedule> futureSchedules) {
+        if (!futureSchedules.isEmpty()) {
+            scheduleRepository.deleteAll(futureSchedules);
+            scheduleRepository.flush();
+        }
     }
 
     private BookWritingSchedule newSchedule(

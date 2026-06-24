@@ -10,13 +10,27 @@ import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Import;
+import org.springframework.context.annotation.Primary;
 
+import java.time.Clock;
+import java.time.Instant;
 import java.time.LocalDate;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
+import java.util.TimeZone;
 
 import static com.iwrite.support.SwitchableCurrentUserProvider.DEFAULT_USER_ID;
 import static org.assertj.core.api.Assertions.assertThat;
 
+@Import(BookDashboardWritingProgressPeriodIntegrationTest.FixedWritingProgressClockConfig.class)
 class BookDashboardWritingProgressPeriodIntegrationTest extends PostgresIntegrationTest {
+
+    private static final Instant FIXED_INSTANT = Instant.parse("2026-06-24T01:30:00Z");
+    private static final ZoneId USER_ZONE = ZoneId.of("America/Sao_Paulo");
+    private static final LocalDate TODAY = LocalDate.ofInstant(FIXED_INSTANT, USER_ZONE);
 
     @Autowired
     private BookDashboardService dashboardService;
@@ -30,7 +44,7 @@ class BookDashboardWritingProgressPeriodIntegrationTest extends PostgresIntegrat
     @Test
     void defaultDashboardReturnsSevenDaysOfRecentProgressNewestFirst() {
         var book = createBook("default recent progress");
-        LocalDate today = LocalDate.now();
+        LocalDate today = TODAY;
         saveProgress(bookService.getBook(book.id()), today, 0);
         saveProgress(bookService.getBook(book.id()), today.minusDays(1), 1);
         saveProgress(bookService.getBook(book.id()), today.minusDays(6), 6);
@@ -46,7 +60,7 @@ class BookDashboardWritingProgressPeriodIntegrationTest extends PostgresIntegrat
     @Test
     void dashboardProgressPeriodThirtyDaysReturnsUpToThirtyDays() {
         var book = createBook("thirty day progress");
-        LocalDate today = LocalDate.now();
+        LocalDate today = TODAY;
         Book persistedBook = bookService.getBook(book.id());
         for (int daysAgo = 0; daysAgo <= 30; daysAgo++) {
             saveProgress(persistedBook, today.minusDays(daysAgo), daysAgo);
@@ -64,7 +78,7 @@ class BookDashboardWritingProgressPeriodIntegrationTest extends PostgresIntegrat
     @Test
     void dashboardProgressPeriodThreeMonthsReturnsExpectedRange() {
         var book = createBook("three month progress");
-        LocalDate today = LocalDate.now();
+        LocalDate today = TODAY;
         LocalDate firstDayOfRange = today.withDayOfMonth(1).minusMonths(2);
         Book persistedBook = bookService.getBook(book.id());
         saveProgress(persistedBook, today, 0);
@@ -81,7 +95,7 @@ class BookDashboardWritingProgressPeriodIntegrationTest extends PostgresIntegrat
     @Test
     void dashboardProgressPeriodTwelveMonthsReturnsCurrentMonthAndPreviousElevenMonthsNewestFirst() {
         var book = createBook("twelve month progress");
-        LocalDate today = LocalDate.now();
+        LocalDate today = TODAY;
         LocalDate firstDayOfRange = today.minusMonths(11).withDayOfMonth(1);
         Book persistedBook = bookService.getBook(book.id());
         saveProgress(persistedBook, today, 0);
@@ -95,6 +109,30 @@ class BookDashboardWritingProgressPeriodIntegrationTest extends PostgresIntegrat
                 .containsExactly(today, firstDayOfRange);
     }
 
+    @Test
+    void dashboardProgressPeriodUsesUserZoneWhenJvmDefaultDateDiffers() {
+        TimeZone originalDefault = TimeZone.getDefault();
+        try {
+            ZoneId jvmZone = ZoneId.of("Pacific/Kiritimati");
+            TimeZone.setDefault(TimeZone.getTimeZone(jvmZone));
+            var book = createBook("jvm default ignored progress period");
+            LocalDate userToday = LocalDate.ofInstant(FIXED_INSTANT, USER_ZONE);
+            LocalDate jvmDefaultDate = LocalDate.ofInstant(FIXED_INSTANT, jvmZone);
+            Book persistedBook = bookService.getBook(book.id());
+            saveProgress(persistedBook, userToday, 0);
+            saveProgress(persistedBook, userToday.minusDays(7), 7);
+
+            var dashboard = dashboardService.getDashboard(book.id());
+
+            assertThat(jvmDefaultDate).isNotEqualTo(userToday);
+            assertThat(dashboard.writingProgress().recentDays())
+                    .extracting(day -> day.date())
+                    .containsExactly(userToday);
+        } finally {
+            TimeZone.setDefault(originalDefault);
+        }
+    }
+
     private void saveProgress(Book book, LocalDate progressDate, int wordCount) {
         DailyWritingProgress progress = new DailyWritingProgress();
         progress.setBook(book);
@@ -106,5 +144,15 @@ class BookDashboardWritingProgressPeriodIntegrationTest extends PostgresIntegrat
         progress.setProductiveWordCountChange(wordCount);
         progress.setManuscriptAdjustmentWordCount(0);
         progressRepository.save(progress);
+    }
+
+    @TestConfiguration
+    static class FixedWritingProgressClockConfig {
+
+        @Bean
+        @Primary
+        Clock fixedWritingProgressClock() {
+            return Clock.fixed(FIXED_INSTANT, ZoneOffset.UTC);
+        }
     }
 }

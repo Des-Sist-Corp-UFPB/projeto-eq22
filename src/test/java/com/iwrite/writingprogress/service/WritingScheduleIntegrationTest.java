@@ -5,8 +5,14 @@ import com.iwrite.book.dto.BookUpdateRequest;
 import com.iwrite.common.exception.BadRequestException;
 import com.iwrite.support.PostgresIntegrationTest;
 import com.iwrite.support.SwitchableCurrentUserProvider;
+import com.iwrite.tenant.entity.Tenant;
+import com.iwrite.tenant.entity.TenantMembership;
+import com.iwrite.tenant.entity.TenantMembershipRole;
+import com.iwrite.user.entity.User;
 import com.iwrite.writingprogress.entity.BookWritingSchedule;
 import com.iwrite.writingprogress.repository.BookWritingScheduleRepository;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -25,6 +31,7 @@ import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.UUID;
 
 import static com.iwrite.support.SwitchableCurrentUserProvider.DEFAULT_TENANT_ID;
 import static com.iwrite.support.SwitchableCurrentUserProvider.DEFAULT_USER_ID;
@@ -45,6 +52,9 @@ class WritingScheduleIntegrationTest extends PostgresIntegrationTest {
 
     @Autowired
     private MutableClock writingScheduleClock;
+
+    @PersistenceContext
+    private EntityManager entityManager;
 
     @AfterEach
     void resetCurrentUserAndClock() {
@@ -199,6 +209,119 @@ class WritingScheduleIntegrationTest extends PostgresIntegrationTest {
     }
 
     @Test
+    void timezoneRollbackSupersedesLaterPendingScheduleAtNewLocalTargetDate() {
+        ZoneId tokyo = ZoneId.of("Asia/Tokyo");
+        ZoneId losAngeles = ZoneId.of("America/Los_Angeles");
+        Instant creationInstant = Instant.parse("2026-05-31T12:00:00Z");
+        Instant changeInstant = Instant.parse("2026-06-01T06:30:00Z");
+        LocalDate historicalDate = LocalDate.of(2026, 5, 31);
+        LocalDate rollbackTargetDate = LocalDate.of(2026, 6, 1);
+        LocalDate oldPendingDate = LocalDate.of(2026, 6, 2);
+
+        switchUser(DEFAULT_USER_ID, tokyo);
+        writingScheduleClock.setInstant(creationInstant);
+        var book = createBook("timezone rollback pending schedule");
+
+        UUID otherUserId = createMember("schedule-rollback-other@iwrite.local");
+        switchUser(otherUserId, tokyo);
+        writingScheduleClock.setInstant(creationInstant);
+        bookService.findById(book.id());
+
+        switchUser(DEFAULT_USER_ID, tokyo);
+        writingScheduleClock.setInstant(changeInstant);
+        BookUpdateRequest firstRequest = new BookUpdateRequest();
+        firstRequest.setPlannedWritingDays(List.of(DayOfWeek.MONDAY));
+        bookService.update(book.id(), firstRequest);
+        assertThat(writingScheduleClock.readCount()).isEqualTo(1);
+
+        switchUser(DEFAULT_USER_ID, losAngeles);
+        writingScheduleClock.setInstant(changeInstant);
+        BookUpdateRequest rollbackRequest = new BookUpdateRequest();
+        rollbackRequest.setPlannedWritingDays(List.of(DayOfWeek.TUESDAY));
+        var updatedBook = bookService.update(book.id(), rollbackRequest);
+
+        assertThat(writingScheduleClock.readCount()).isEqualTo(1);
+        assertThat(updatedBook.plannedWritingDays()).containsExactly(DayOfWeek.TUESDAY);
+        var schedules = scheduleRepository.findByUserIdAndBookIdOverlappingPeriod(
+                DEFAULT_USER_ID,
+                book.id(),
+                historicalDate,
+                oldPendingDate.plusDays(2)
+        );
+        assertThat(schedules).hasSize(2);
+        assertThat(schedules.get(0).getEffectiveFrom()).isEqualTo(historicalDate);
+        assertThat(schedules.get(0).getEffectiveTo()).isEqualTo(rollbackTargetDate);
+        assertThat(schedules.get(0).getPlannedDays()).containsExactlyInAnyOrder(DayOfWeek.values());
+        assertThat(schedules.get(1).getEffectiveFrom()).isEqualTo(rollbackTargetDate);
+        assertThat(schedules.get(1).getEffectiveTo()).isNull();
+        assertThat(schedules.get(1).getPlannedDays()).containsExactly(DayOfWeek.TUESDAY);
+        assertScheduleTimestamps(schedules.get(1), changeInstant);
+        assertThat(scheduleRepository.countByUser_IdAndBookIdAndEffectiveToIsNull(DEFAULT_USER_ID, book.id())).isEqualTo(1);
+
+        assertThat(scheduleForDate(DEFAULT_USER_ID, book.id(), historicalDate).getPlannedDays())
+                .containsExactlyInAnyOrder(DayOfWeek.values());
+        assertThat(scheduleForDate(DEFAULT_USER_ID, book.id(), rollbackTargetDate).getPlannedDays())
+                .containsExactly(DayOfWeek.TUESDAY);
+        assertThat(scheduleForDate(DEFAULT_USER_ID, book.id(), oldPendingDate).getPlannedDays())
+                .containsExactly(DayOfWeek.TUESDAY);
+
+        var otherUserSchedules = scheduleRepository.findByUserIdAndBookIdOverlappingPeriod(
+                otherUserId,
+                book.id(),
+                historicalDate,
+                oldPendingDate.plusDays(2)
+        );
+        assertThat(otherUserSchedules).hasSize(1);
+        assertThat(otherUserSchedules.get(0).getEffectiveFrom()).isEqualTo(historicalDate);
+        assertThat(otherUserSchedules.get(0).getEffectiveTo()).isNull();
+        assertThat(otherUserSchedules.get(0).getPlannedDays()).containsExactlyInAnyOrder(DayOfWeek.values());
+    }
+
+    @Test
+    void timezoneMoveEastStillSplitsScheduleAtNewLocalTargetDate() {
+        ZoneId losAngeles = ZoneId.of("America/Los_Angeles");
+        ZoneId tokyo = ZoneId.of("Asia/Tokyo");
+        Instant creationInstant = Instant.parse("2026-05-31T12:00:00Z");
+        Instant changeInstant = Instant.parse("2026-06-01T06:30:00Z");
+        LocalDate historicalDate = LocalDate.of(2026, 5, 31);
+        LocalDate firstTargetDate = LocalDate.of(2026, 6, 1);
+        LocalDate eastTargetDate = LocalDate.of(2026, 6, 2);
+
+        switchUser(DEFAULT_USER_ID, losAngeles);
+        writingScheduleClock.setInstant(creationInstant);
+        var book = createBook("timezone east pending schedule");
+
+        writingScheduleClock.setInstant(changeInstant);
+        BookUpdateRequest firstRequest = new BookUpdateRequest();
+        firstRequest.setPlannedWritingDays(List.of(DayOfWeek.MONDAY));
+        bookService.update(book.id(), firstRequest);
+
+        switchUser(DEFAULT_USER_ID, tokyo);
+        writingScheduleClock.setInstant(changeInstant);
+        BookUpdateRequest eastRequest = new BookUpdateRequest();
+        eastRequest.setPlannedWritingDays(List.of(DayOfWeek.WEDNESDAY));
+        bookService.update(book.id(), eastRequest);
+
+        var schedules = scheduleRepository.findByUserIdAndBookIdOverlappingPeriod(
+                DEFAULT_USER_ID,
+                book.id(),
+                historicalDate,
+                eastTargetDate.plusDays(2)
+        );
+        assertThat(schedules).hasSize(3);
+        assertThat(schedules.get(0).getEffectiveFrom()).isEqualTo(historicalDate);
+        assertThat(schedules.get(0).getEffectiveTo()).isEqualTo(firstTargetDate);
+        assertThat(schedules.get(0).getPlannedDays()).containsExactlyInAnyOrder(DayOfWeek.values());
+        assertThat(schedules.get(1).getEffectiveFrom()).isEqualTo(firstTargetDate);
+        assertThat(schedules.get(1).getEffectiveTo()).isEqualTo(eastTargetDate);
+        assertThat(schedules.get(1).getPlannedDays()).containsExactly(DayOfWeek.MONDAY);
+        assertThat(schedules.get(2).getEffectiveFrom()).isEqualTo(eastTargetDate);
+        assertThat(schedules.get(2).getEffectiveTo()).isNull();
+        assertThat(schedules.get(2).getPlannedDays()).containsExactly(DayOfWeek.WEDNESDAY);
+        assertThat(scheduleRepository.countByUser_IdAndBookIdAndEffectiveToIsNull(DEFAULT_USER_ID, book.id())).isEqualTo(1);
+    }
+
+    @Test
     void initialScheduleUsesOneInstantForTimestampAndUserLocalEffectiveDate() {
         Instant beforeLocalMidnight = Instant.parse("2026-05-30T02:30:00Z");
         Instant afterLocalMidnight = Instant.parse("2026-05-30T03:30:00Z");
@@ -263,6 +386,35 @@ class WritingScheduleIntegrationTest extends PostgresIntegrationTest {
         assertThat(schedule.getUpdatedAt()).isEqualTo(expectedTimestamp);
         assertThat(schedule.getCreatedAt().getOffset()).isEqualTo(ZoneOffset.UTC);
         assertThat(schedule.getUpdatedAt().getOffset()).isEqualTo(ZoneOffset.UTC);
+    }
+
+    private BookWritingSchedule scheduleForDate(UUID userId, UUID bookId, LocalDate date) {
+        return scheduleRepository.findByUserIdAndBookIdAndDate(userId, bookId, date).orElseThrow();
+    }
+
+    private void switchUser(UUID userId, ZoneId zoneId) {
+        currentUserProvider.switchTo(userId, DEFAULT_TENANT_ID, zoneId);
+        User user = entityManager.find(User.class, userId);
+        if (user != null) {
+            user.setTimeZoneId(zoneId.getId());
+        }
+        entityManager.flush();
+    }
+
+    private UUID createMember(String email) {
+        User user = new User();
+        user.setDisplayName(email);
+        user.setEmail(email);
+        user.setTimeZoneId("UTC");
+        entityManager.persist(user);
+
+        TenantMembership membership = new TenantMembership();
+        membership.setTenant(entityManager.getReference(Tenant.class, DEFAULT_TENANT_ID));
+        membership.setUser(user);
+        membership.setRole(TenantMembershipRole.OWNER);
+        entityManager.persist(membership);
+        entityManager.flush();
+        return user.getId();
     }
 
     @TestConfiguration
