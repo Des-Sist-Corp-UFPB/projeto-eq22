@@ -209,6 +209,22 @@ public class SceneService {
         }
         rejectStaleContentRevision(scene, request.expectedContentRevision());
         if (sameContent(scene, request.contentJson(), request.contentText())) {
+            long revision = scene.getContentRevision();
+            recordFreshEvent(lockedBook, new WordCountEventCommand(
+                    lockedBook.getId(),
+                    scene.getId(),
+                    scene.getId(),
+                    scene.getTitle(),
+                    BookWordCountEventType.CONTENT_SAVE,
+                    0,
+                    0,
+                    request.operationId(),
+                    request.operationId(),
+                    revision,
+                    revision,
+                    requestFingerprint,
+                    Math.toIntExact(sceneRepository.sumWordCountByBookId(lockedBook.getId()))
+            ));
             return SceneResponse.fromEntity(scene);
         }
 

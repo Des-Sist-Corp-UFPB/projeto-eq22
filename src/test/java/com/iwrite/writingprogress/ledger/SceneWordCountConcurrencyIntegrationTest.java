@@ -110,6 +110,44 @@ class SceneWordCountConcurrencyIntegrationTest extends PostgresIntegrationTest {
 
     @Test
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    void concurrentIdenticalNoOpReservesOperationOnceWithoutProgress() {
+        var book = createBook("b7c concurrent noop");
+        var section = createSection(book, "Part");
+        var chapter = createChapter(section, "Chapter");
+        SceneResponse scene = createScene(chapter, "Noop scene", SceneStatus.DRAFT, 0, "");
+        UUID operationId = UUID.randomUUID();
+        SceneContentRequest request = new SceneContentRequest(
+                scene.contentJson(),
+                scene.contentText(),
+                SceneVersionSource.AUTO_SAVE,
+                scene.contentRevision(),
+                operationId
+        );
+
+        List<SceneResponse> responses = runConcurrently(
+                () -> sceneService.updateContent(scene.id(), request),
+                () -> sceneService.updateContent(scene.id(), request)
+        );
+
+        assertThat(responses)
+                .extracting(SceneResponse::contentRevision)
+                .containsOnly(scene.contentRevision());
+        assertThat(sceneService.findById(scene.id()).wordCount()).isZero();
+        assertThat(eventsForKey(book.id(), operationId))
+                .singleElement()
+                .satisfies(event -> {
+                    assertThat(event.getEventType()).isEqualTo(BookWordCountEventType.CONTENT_SAVE);
+                    assertThat(event.getProductiveWordDelta()).isZero();
+                    assertThat(event.getManuscriptWordDelta()).isZero();
+                    assertThat(event.getContentRevisionBefore()).isEqualTo(scene.contentRevision());
+                    assertThat(event.getContentRevisionAfter()).isEqualTo(scene.contentRevision());
+                    assertThat(event.getRequestFingerprint()).matches("[0-9a-f]{64}");
+                });
+        assertThat(progressRowsFor(book.id(), DEFAULT_USER_ID)).isEmpty();
+    }
+
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     void sameKeyDifferentPayloadConflictsBeforeMutation() {
         var world = createStoryWorld("b7c same key conflict");
         UUID operationId = UUID.randomUUID();
@@ -126,6 +164,33 @@ class SceneWordCountConcurrencyIntegrationTest extends PostgresIntegrationTest {
         SceneResponse reloaded = sceneService.findById(world.scene().id());
         assertThat(reloaded.contentText()).isEqualTo("one two three");
         assertThat(reloaded.contentRevision()).isEqualTo(first.contentRevision());
+        assertThat(eventsForKey(world.book().id(), operationId)).hasSize(1);
+    }
+
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    void noOpKeyDifferentPayloadConflictsBeforeMutation() {
+        var world = createStoryWorld("b7c noop key conflict");
+        UUID operationId = UUID.randomUUID();
+        sceneService.updateContent(
+                world.scene().id(),
+                new SceneContentRequest(
+                        world.scene().contentJson(),
+                        world.scene().contentText(),
+                        SceneVersionSource.AUTO_SAVE,
+                        world.scene().contentRevision(),
+                        operationId
+                )
+        );
+
+        assertThatThrownBy(() -> sceneService.updateContent(
+                world.scene().id(),
+                new SceneContentRequest("{}", "different payload", null, world.scene().contentRevision(), operationId)
+        )).isInstanceOf(ConflictException.class);
+
+        SceneResponse reloaded = sceneService.findById(world.scene().id());
+        assertThat(reloaded.contentText()).isEqualTo(world.scene().contentText());
+        assertThat(reloaded.contentRevision()).isEqualTo(world.scene().contentRevision());
         assertThat(eventsForKey(world.book().id(), operationId)).hasSize(1);
     }
 
@@ -388,6 +453,34 @@ class SceneWordCountConcurrencyIntegrationTest extends PostgresIntegrationTest {
 
     @Test
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    void noOpContentRetryUsesImmutableFingerprintAfterLaterEdits() {
+        var world = createStoryWorld("b7c noop immutable retry");
+        UUID firstOperationId = UUID.randomUUID();
+        SceneContentRequest firstRequest = new SceneContentRequest(
+                world.scene().contentJson(),
+                world.scene().contentText(),
+                SceneVersionSource.AUTO_SAVE,
+                world.scene().contentRevision(),
+                firstOperationId
+        );
+        SceneResponse first = sceneService.updateContent(world.scene().id(), firstRequest);
+        SceneResponse later = sceneService.updateContent(
+                world.scene().id(),
+                new SceneContentRequest("{}", "content B now", null, first.contentRevision(), UUID.randomUUID())
+        );
+        long eventsBeforeRetry = eventsForBook(world.book().id()).size();
+
+        SceneResponse retry = sceneService.updateContent(world.scene().id(), firstRequest);
+
+        assertThat(retry.contentText()).isEqualTo("content B now");
+        assertThat(retry.contentRevision()).isEqualTo(later.contentRevision());
+        assertThat(sceneService.findById(world.scene().id()).contentText()).isEqualTo("content B now");
+        assertThat(eventsForBook(world.book().id())).hasSize((int) eventsBeforeRetry);
+        assertThat(eventsForKey(world.book().id(), firstOperationId)).hasSize(1);
+    }
+
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     void restoreRetryUsesImmutableFingerprintAfterLaterEditsAndDifferentVersionConflicts() {
         var world = createStoryWorld("b7c restore immutable retry");
         SceneResponse updated = sceneService.updateContent(
@@ -542,6 +635,21 @@ class SceneWordCountConcurrencyIntegrationTest extends PostgresIntegrationTest {
                 .setParameter("userId", userId)
                 .setParameter("bookId", bookId)
                 .getSingleResult());
+    }
+
+    private List<DailyWritingProgress> progressRowsFor(UUID bookId, UUID userId) {
+        return inNewTransaction(() -> entityManager.createQuery(
+                        """
+                                select progress
+                                from DailyWritingProgress progress
+                                where progress.user.id = :userId
+                                  and progress.book.id = :bookId
+                                """,
+                        DailyWritingProgress.class
+                )
+                .setParameter("userId", userId)
+                .setParameter("bookId", bookId)
+                .getResultList());
     }
 
     private UUID createMember(String email) {

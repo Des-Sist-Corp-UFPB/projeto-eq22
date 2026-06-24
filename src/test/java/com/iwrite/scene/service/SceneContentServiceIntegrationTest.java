@@ -13,6 +13,7 @@ import com.iwrite.support.PostgresIntegrationTest;
 import com.iwrite.writingprogress.ledger.entity.BookWordCountEvent;
 import com.iwrite.writingprogress.ledger.entity.BookWordCountEventType;
 import com.iwrite.writingprogress.ledger.repository.BookWordCountEventRepository;
+import com.iwrite.writingprogress.ledger.service.WordCountRequestFingerprint;
 import com.iwrite.writingprogress.repository.DailyWritingProgressRepository;
 import com.iwrite.writingprogress.service.DailyWritingProgressService;
 import jakarta.persistence.EntityManager;
@@ -164,16 +165,107 @@ class SceneContentServiceIntegrationTest extends PostgresIntegrationTest {
     @Test
     void unchangedContentDoesNotCreateSnapshotOrIncrementRevision() {
         StoryWorld world = createStoryWorld("version unchanged");
+        UUID operationId = UUID.randomUUID();
         long eventsBefore = wordCountEventRepository.countByBookId(world.book().id());
+        var progressBefore = progressRepository.findByUser_IdAndBookIdAndProgressDate(DEFAULT_USER_ID, world.book().id(), dailyWritingProgressService.today())
+                .orElseThrow();
 
         SceneResponse updated = sceneService.updateContent(
                 world.scene().id(),
-                new SceneContentRequest(world.scene().contentJson(), world.scene().contentText(), SceneVersionSource.MANUAL_SAVE, world.scene().contentRevision())
+                new SceneContentRequest(
+                        world.scene().contentJson(),
+                        world.scene().contentText(),
+                        SceneVersionSource.MANUAL_SAVE,
+                        world.scene().contentRevision(),
+                        operationId
+                )
         );
 
         assertThat(updated.contentRevision()).isEqualTo(world.scene().contentRevision());
         assertThat(sceneVersionRepository.countByOriginalSceneId(world.scene().id())).isZero();
-        assertThat(wordCountEventRepository.countByBookId(world.book().id())).isEqualTo(eventsBefore);
+        assertThat(wordCountEventRepository.countByBookId(world.book().id())).isEqualTo(eventsBefore + 1);
+        assertThat(wordCountEventRepository.findByBookIdAndIdempotencyKey(world.book().id(), operationId))
+                .hasValueSatisfying(event -> {
+                    assertThat(event.getEventType()).isEqualTo(BookWordCountEventType.CONTENT_SAVE);
+                    assertThat(event.getScene().getId()).isEqualTo(world.scene().id());
+                    assertThat(event.getOriginalSceneId()).isEqualTo(world.scene().id());
+                    assertThat(event.getProductiveWordDelta()).isZero();
+                    assertThat(event.getManuscriptWordDelta()).isZero();
+                    assertThat(event.getOperationId()).isEqualTo(operationId);
+                    assertThat(event.getContentRevisionBefore()).isEqualTo(world.scene().contentRevision());
+                    assertThat(event.getContentRevisionAfter()).isEqualTo(world.scene().contentRevision());
+                    assertThat(event.getRequestFingerprint()).isEqualTo(WordCountRequestFingerprint.contentSave(
+                            DEFAULT_USER_ID,
+                            world.book().id(),
+                            world.scene().id(),
+                            world.scene().contentRevision(),
+                            SceneVersionSource.MANUAL_SAVE,
+                            world.scene().contentJson(),
+                            world.scene().contentText()
+                    ));
+                });
+        entityManager.flush();
+        entityManager.clear();
+        assertThat(progressRepository.findByUser_IdAndBookIdAndProgressDate(DEFAULT_USER_ID, world.book().id(), dailyWritingProgressService.today()))
+                .hasValueSatisfying(progress -> {
+                    assertThat(progress.getEndingManuscriptWordCount()).isEqualTo(progressBefore.getEndingManuscriptWordCount());
+                    assertThat(progress.getProductiveWordCountChange()).isEqualTo(progressBefore.getProductiveWordCountChange());
+                    assertThat(progress.getManuscriptAdjustmentWordCount()).isEqualTo(progressBefore.getManuscriptAdjustmentWordCount());
+                });
+    }
+
+    @Test
+    void unchangedContentOnEmptyBookReservesOperationWithoutCreatingProgressRow() {
+        var book = createBook("version unchanged empty book");
+        var section = createSection(book, "Part");
+        var chapter = createChapter(section, "Chapter");
+        SceneResponse scene = createScene(chapter, "Empty Scene", com.iwrite.scene.entity.SceneStatus.DRAFT, 0, "");
+        UUID operationId = UUID.randomUUID();
+
+        SceneResponse updated = sceneService.updateContent(
+                scene.id(),
+                new SceneContentRequest(scene.contentJson(), scene.contentText(), SceneVersionSource.AUTO_SAVE, scene.contentRevision(), operationId)
+        );
+
+        assertThat(updated.contentRevision()).isEqualTo(scene.contentRevision());
+        assertThat(updated.wordCount()).isZero();
+        assertThat(sceneVersionRepository.countByOriginalSceneId(scene.id())).isZero();
+        assertThat(wordCountEventRepository.findByBookIdAndIdempotencyKey(book.id(), operationId))
+                .hasValueSatisfying(event -> {
+                    assertThat(event.getEventType()).isEqualTo(BookWordCountEventType.CONTENT_SAVE);
+                    assertThat(event.getProductiveWordDelta()).isZero();
+                    assertThat(event.getManuscriptWordDelta()).isZero();
+                    assertThat(event.getContentRevisionBefore()).isEqualTo(scene.contentRevision());
+                    assertThat(event.getContentRevisionAfter()).isEqualTo(scene.contentRevision());
+                    assertThat(event.getRequestFingerprint()).matches("[0-9a-f]{64}");
+                });
+        entityManager.flush();
+        entityManager.clear();
+        assertThat(progressRepository.findByUser_IdAndBookIdAndProgressDate(DEFAULT_USER_ID, book.id(), dailyWritingProgressService.today()))
+                .isEmpty();
+    }
+
+    @Test
+    void unchangedContentRetryDoesNotDuplicateReservationOrMutateScene() {
+        StoryWorld world = createStoryWorld("version unchanged retry");
+        UUID operationId = UUID.randomUUID();
+        SceneContentRequest request = new SceneContentRequest(
+                world.scene().contentJson(),
+                world.scene().contentText(),
+                SceneVersionSource.AUTO_SAVE,
+                world.scene().contentRevision(),
+                operationId
+        );
+        long eventsBefore = wordCountEventRepository.countByBookId(world.book().id());
+
+        SceneResponse first = sceneService.updateContent(world.scene().id(), request);
+        SceneResponse retry = sceneService.updateContent(world.scene().id(), request);
+
+        assertThat(retry.contentRevision()).isEqualTo(first.contentRevision());
+        assertThat(retry.contentText()).isEqualTo(first.contentText());
+        assertThat(sceneVersionRepository.countByOriginalSceneId(world.scene().id())).isZero();
+        assertThat(wordCountEventRepository.countByBookId(world.book().id())).isEqualTo(eventsBefore + 1);
+        assertThat(wordCountEventRepository.findByBookIdAndIdempotencyKey(world.book().id(), operationId)).isPresent();
     }
 
     @Test
