@@ -3,6 +3,7 @@ package com.iwrite.writingprogress.ledger;
 import com.iwrite.book.entity.Book;
 import com.iwrite.scene.entity.Scene;
 import com.iwrite.support.PostgresIntegrationTest;
+import com.iwrite.user.entity.User;
 import com.iwrite.writingprogress.ledger.entity.BookWordCountEvent;
 import com.iwrite.writingprogress.ledger.entity.BookWordCountEventType;
 import com.iwrite.writingprogress.ledger.repository.BookWordCountEventRepository;
@@ -17,6 +18,7 @@ import java.sql.Date;
 import java.time.LocalDate;
 import java.util.UUID;
 
+import static com.iwrite.support.SwitchableCurrentUserProvider.DEFAULT_USER_ID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -41,6 +43,7 @@ class BookWordCountEventIntegrationTest extends PostgresIntegrationTest {
                 """
                         insert into book_daily_writing_progress (
                             id,
+                            user_id,
                             book_id,
                             progress_date,
                             daily_target_word_count,
@@ -50,9 +53,10 @@ class BookWordCountEventIntegrationTest extends PostgresIntegrationTest {
                             created_at,
                             updated_at
                         )
-                        values (?, ?, ?, ?, ?, ?, ?, now(), now())
+                        values (?, ?, ?, ?, ?, ?, ?, ?, now(), now())
                         """,
                 progressId,
+                DEFAULT_USER_ID,
                 book.id(),
                 Date.valueOf(LocalDate.of(2026, 6, 1)),
                 500,
@@ -102,6 +106,7 @@ class BookWordCountEventIntegrationTest extends PostgresIntegrationTest {
         BookWordCountEvent event = new BookWordCountEvent();
         event.setBook(book);
         event.setScene(scene);
+        event.setActorUser(entityManager.getReference(User.class, DEFAULT_USER_ID));
         event.setOriginalSceneId(scene.getId());
         event.setSceneTitleSnapshot(scene.getTitle());
         event.setEventType(BookWordCountEventType.CONTENT_SAVE);
@@ -118,6 +123,7 @@ class BookWordCountEventIntegrationTest extends PostgresIntegrationTest {
         BookWordCountEvent loaded = eventRepository.findById(saved.getId()).orElseThrow();
         assertThat(loaded.getBook().getId()).isEqualTo(book.getId());
         assertThat(loaded.getScene().getId()).isEqualTo(scene.getId());
+        assertThat(loaded.getActorUser().getId()).isEqualTo(DEFAULT_USER_ID);
         assertThat(loaded.getOriginalSceneId()).isEqualTo(scene.getId());
         assertThat(loaded.getSceneTitleSnapshot()).isEqualTo(scene.getTitle());
         assertThat(loaded.getEventType()).isEqualTo(BookWordCountEventType.CONTENT_SAVE);
@@ -145,6 +151,7 @@ class BookWordCountEventIntegrationTest extends PostgresIntegrationTest {
     private BookWordCountEvent event(Book book, UUID idempotencyKey, int delta) {
         BookWordCountEvent event = new BookWordCountEvent();
         event.setBook(book);
+        event.setActorUser(entityManager.getReference(User.class, DEFAULT_USER_ID));
         event.setOriginalSceneId(UUID.randomUUID());
         event.setEventType(BookWordCountEventType.CONTENT_SAVE);
         event.setProductiveWordDelta(delta);

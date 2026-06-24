@@ -20,6 +20,7 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static com.iwrite.support.SwitchableCurrentUserProvider.DEFAULT_USER_ID;
 
 class WritingScheduleIntegrationTest extends PostgresIntegrationTest {
 
@@ -33,11 +34,11 @@ class WritingScheduleIntegrationTest extends PostgresIntegrationTest {
         var book = createBook("default schedule");
 
         assertThat(book.plannedWritingDays()).containsExactly(DayOfWeek.values());
-        var activeSchedule = scheduleRepository.findFirstByBookIdAndEffectiveToIsNull(book.id()).orElseThrow();
+        var activeSchedule = scheduleRepository.findFirstByUser_IdAndBookIdAndEffectiveToIsNull(DEFAULT_USER_ID, book.id()).orElseThrow();
         assertThat(activeSchedule.getEffectiveFrom()).isEqualTo(TODAY);
         assertThat(activeSchedule.getEffectiveTo()).isNull();
         assertThat(activeSchedule.getPlannedDays()).containsExactlyInAnyOrder(DayOfWeek.values());
-        assertThat(scheduleRepository.countByBookIdAndEffectiveToIsNull(book.id())).isEqualTo(1);
+        assertThat(scheduleRepository.countByUser_IdAndBookIdAndEffectiveToIsNull(DEFAULT_USER_ID, book.id())).isEqualTo(1);
     }
 
     @Test
@@ -53,7 +54,7 @@ class WritingScheduleIntegrationTest extends PostgresIntegrationTest {
         ));
 
         assertThat(book.plannedWritingDays()).containsExactly(DayOfWeek.MONDAY, DayOfWeek.WEDNESDAY);
-        var activeSchedule = scheduleRepository.findFirstByBookIdAndEffectiveToIsNull(book.id()).orElseThrow();
+        var activeSchedule = scheduleRepository.findFirstByUser_IdAndBookIdAndEffectiveToIsNull(DEFAULT_USER_ID, book.id()).orElseThrow();
         assertThat(activeSchedule.getPlannedDays()).containsExactlyInAnyOrder(DayOfWeek.MONDAY, DayOfWeek.WEDNESDAY);
     }
 
@@ -81,13 +82,13 @@ class WritingScheduleIntegrationTest extends PostgresIntegrationTest {
 
         assertThat(updatedBook.plannedWritingDays())
                 .containsExactly(DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, DayOfWeek.THURSDAY, DayOfWeek.FRIDAY);
-        var schedules = scheduleRepository.findByBookIdOverlappingPeriod(book.id(), TODAY.minusDays(1), TODAY.plusDays(2));
+        var schedules = scheduleRepository.findByUserIdAndBookIdOverlappingPeriod(DEFAULT_USER_ID, book.id(), TODAY.minusDays(1), TODAY.plusDays(2));
         assertThat(schedules).hasSize(2);
         assertThat(schedules.get(0).getEffectiveFrom()).isEqualTo(TODAY);
         assertThat(schedules.get(0).getEffectiveTo()).isEqualTo(TODAY.plusDays(1));
         assertThat(schedules.get(1).getEffectiveFrom()).isEqualTo(TODAY.plusDays(1));
         assertThat(schedules.get(1).getEffectiveTo()).isNull();
-        assertThat(scheduleRepository.countByBookIdAndEffectiveToIsNull(book.id())).isEqualTo(1);
+        assertThat(scheduleRepository.countByUser_IdAndBookIdAndEffectiveToIsNull(DEFAULT_USER_ID, book.id())).isEqualTo(1);
     }
 
     @Test
@@ -101,11 +102,11 @@ class WritingScheduleIntegrationTest extends PostgresIntegrationTest {
         mondayRequest.setPlannedWritingDays(List.of(DayOfWeek.MONDAY));
         bookService.update(book.id(), mondayRequest);
 
-        var schedules = scheduleRepository.findByBookIdOverlappingPeriod(book.id(), TODAY.minusDays(1), TODAY.plusDays(2));
+        var schedules = scheduleRepository.findByUserIdAndBookIdOverlappingPeriod(DEFAULT_USER_ID, book.id(), TODAY.minusDays(1), TODAY.plusDays(2));
         assertThat(schedules).hasSize(2);
         assertThat(schedules.get(1).getEffectiveFrom()).isEqualTo(TODAY.plusDays(1));
         assertThat(schedules.get(1).getPlannedDays()).containsExactly(DayOfWeek.MONDAY);
-        assertThat(scheduleRepository.countByBookIdAndEffectiveToIsNull(book.id())).isEqualTo(1);
+        assertThat(scheduleRepository.countByUser_IdAndBookIdAndEffectiveToIsNull(DEFAULT_USER_ID, book.id())).isEqualTo(1);
     }
 
     @Test
@@ -116,9 +117,9 @@ class WritingScheduleIntegrationTest extends PostgresIntegrationTest {
 
         bookService.update(book.id(), request);
 
-        var schedules = scheduleRepository.findByBookIdOverlappingPeriod(book.id(), TODAY.minusDays(1), TODAY.plusDays(2));
+        var schedules = scheduleRepository.findByUserIdAndBookIdOverlappingPeriod(DEFAULT_USER_ID, book.id(), TODAY.minusDays(1), TODAY.plusDays(2));
         assertThat(schedules).hasSize(1);
-        assertThat(scheduleRepository.countByBookIdAndEffectiveToIsNull(book.id())).isEqualTo(1);
+        assertThat(scheduleRepository.countByUser_IdAndBookIdAndEffectiveToIsNull(DEFAULT_USER_ID, book.id())).isEqualTo(1);
     }
 
     @TestConfiguration

@@ -14,6 +14,8 @@ import com.iwrite.section.dto.BookSectionResponse;
 import com.iwrite.support.PostgresIntegrationTest;
 import com.iwrite.support.SwitchableCurrentUserProvider;
 import com.iwrite.tenant.entity.Tenant;
+import com.iwrite.tenant.entity.TenantMembership;
+import com.iwrite.tenant.entity.TenantMembershipRole;
 import com.iwrite.tenant.repository.TenantRepository;
 import com.iwrite.user.entity.User;
 import com.iwrite.writingprogress.entity.DailyWritingProgress;
@@ -273,7 +275,7 @@ class SceneVersionTenantIsolationIntegrationTest extends PostgresIntegrationTest
                 .findFirst()
                 .orElseThrow();
 
-        return new VersionWorld(book, current, otherScene, oldVersion);
+        return new VersionWorld(currentUserProvider.userId(), book, current, otherScene, oldVersion);
     }
 
     private Identity createIdentity(String name, String email) {
@@ -287,6 +289,12 @@ class SceneVersionTenantIsolationIntegrationTest extends PostgresIntegrationTest
         user.setEmail(email);
         user.setTimeZoneId("UTC");
         entityManager.persist(user);
+
+        TenantMembership membership = new TenantMembership();
+        membership.setTenant(tenant);
+        membership.setUser(user);
+        membership.setRole(TenantMembershipRole.OWNER);
+        entityManager.persist(membership);
 
         return new Identity(user.getId(), tenantId);
     }
@@ -307,7 +315,7 @@ class SceneVersionTenantIsolationIntegrationTest extends PostgresIntegrationTest
                 scene.getContentRevision(),
                 versionRepository.countByOriginalSceneId(world.scene().id()),
                 eventRepository.countByBookId(world.book().id()),
-                progressRepository.findFirstByBookIdOrderByProgressDateAsc(world.book().id())
+                progressRepository.findFirstByUser_IdAndBookIdOrderByProgressDateAsc(world.ownerUserId(), world.book().id())
                         .map(ProgressState::from)
                         .orElse(null)
         );
@@ -354,6 +362,7 @@ class SceneVersionTenantIsolationIntegrationTest extends PostgresIntegrationTest
     }
 
     private record VersionWorld(
+            UUID ownerUserId,
             BookResponse book,
             SceneResponse scene,
             SceneResponse otherScene,

@@ -2,14 +2,18 @@ package com.iwrite.dashboard.service;
 
 import com.iwrite.book.entity.Book;
 import com.iwrite.support.PostgresIntegrationTest;
+import com.iwrite.user.entity.User;
 import com.iwrite.writingprogress.entity.DailyWritingProgress;
 import com.iwrite.writingprogress.repository.DailyWritingProgressRepository;
 import com.iwrite.writingprogress.service.WritingProgressPeriod;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 
 import java.time.LocalDate;
 
+import static com.iwrite.support.SwitchableCurrentUserProvider.DEFAULT_USER_ID;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class BookDashboardWritingProgressPeriodIntegrationTest extends PostgresIntegrationTest {
@@ -19,6 +23,9 @@ class BookDashboardWritingProgressPeriodIntegrationTest extends PostgresIntegrat
 
     @Autowired
     private DailyWritingProgressRepository progressRepository;
+
+    @PersistenceContext
+    private EntityManager entityManager;
 
     @Test
     void defaultDashboardReturnsSevenDaysOfRecentProgressNewestFirst() {
@@ -91,6 +98,7 @@ class BookDashboardWritingProgressPeriodIntegrationTest extends PostgresIntegrat
     private void saveProgress(Book book, LocalDate progressDate, int wordCount) {
         DailyWritingProgress progress = new DailyWritingProgress();
         progress.setBook(book);
+        progress.setUser(entityManager.getReference(User.class, DEFAULT_USER_ID));
         progress.setProgressDate(progressDate);
         progress.setDailyTargetWordCount(book.getDailyTargetWordCount());
         progress.setStartingManuscriptWordCount(0);

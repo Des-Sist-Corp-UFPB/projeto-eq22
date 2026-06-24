@@ -3,6 +3,8 @@ package com.iwrite.writingprogress.service;
 import com.iwrite.book.entity.Book;
 import com.iwrite.book.service.BookService;
 import com.iwrite.dashboard.dto.WritingConsistencyResponse;
+import com.iwrite.user.context.CurrentUserMembershipService;
+import com.iwrite.user.repository.UserRepository;
 import com.iwrite.writingprogress.entity.BookWritingSchedule;
 import com.iwrite.writingprogress.entity.DailyWritingProgress;
 import com.iwrite.writingprogress.repository.DailyWritingProgressRepository;
@@ -24,17 +26,23 @@ public class DailyWritingProgressService {
     private final BookService bookService;
     private final DailyWritingProgressRepository progressRepository;
     private final WritingScheduleService writingScheduleService;
+    private final CurrentUserMembershipService currentUserMembershipService;
+    private final UserRepository userRepository;
     private final Clock clock;
 
     public DailyWritingProgressService(
             BookService bookService,
             DailyWritingProgressRepository progressRepository,
             WritingScheduleService writingScheduleService,
+            CurrentUserMembershipService currentUserMembershipService,
+            UserRepository userRepository,
             Clock clock
     ) {
         this.bookService = bookService;
         this.progressRepository = progressRepository;
         this.writingScheduleService = writingScheduleService;
+        this.currentUserMembershipService = currentUserMembershipService;
+        this.userRepository = userRepository;
         this.clock = clock;
     }
 
@@ -45,10 +53,11 @@ public class DailyWritingProgressService {
         }
 
         Book book = bookService.getBook(bookId);
+        UUID userId = currentUserMembershipService.requireCurrentUserMemberId();
         LocalDate progressDate = today();
 
-        DailyWritingProgress progress = progressRepository.findByBookIdAndProgressDate(bookId, progressDate)
-                .orElseGet(() -> createProgress(book, progressDate, totalBefore));
+        DailyWritingProgress progress = progressRepository.findByUser_IdAndBookIdAndProgressDate(userId, bookId, progressDate)
+                .orElseGet(() -> createProgress(book, userId, progressDate, totalBefore));
 
         progress.setEndingManuscriptWordCount(totalAfter);
         progress.setProductiveWordCountChange(totalAfter - progress.getStartingManuscriptWordCount());
@@ -57,9 +66,11 @@ public class DailyWritingProgressService {
 
     @Transactional(readOnly = true)
     public DailyWritingProgress getTodayProgressOrEmpty(UUID bookId, int currentTotalWordCount) {
+        Book book = bookService.getBook(bookId);
+        UUID userId = currentUserMembershipService.requireCurrentUserMemberId();
         LocalDate progressDate = today();
-        return progressRepository.findByBookIdAndProgressDate(bookId, progressDate)
-                .orElseGet(() -> emptyTodayProgress(bookId, progressDate, currentTotalWordCount));
+        return progressRepository.findByUser_IdAndBookIdAndProgressDate(userId, bookId, progressDate)
+                .orElseGet(() -> emptyTodayProgress(book, userId, progressDate, currentTotalWordCount));
     }
 
     @Transactional(readOnly = true)
@@ -69,9 +80,11 @@ public class DailyWritingProgressService {
 
     @Transactional(readOnly = true)
     public List<DailyWritingProgress> getRecentProgress(UUID bookId, WritingProgressPeriod period) {
+        bookService.getBook(bookId);
+        UUID userId = currentUserMembershipService.requireCurrentUserMemberId();
         LocalDate endDate = today();
         LocalDate startDate = period.startDateInclusive(endDate);
-        return progressRepository.findByBookIdAndProgressDateBetweenOrderByProgressDateDesc(bookId, startDate, endDate);
+        return progressRepository.findByUser_IdAndBookIdAndProgressDateBetweenOrderByProgressDateDesc(userId, bookId, startDate, endDate);
     }
 
     @Transactional(readOnly = true)
@@ -81,15 +94,17 @@ public class DailyWritingProgressService {
 
     @Transactional(readOnly = true)
     public WritingConsistencyResponse getWritingConsistency(UUID bookId, WritingProgressPeriod period) {
+        bookService.getBook(bookId);
+        UUID userId = currentUserMembershipService.requireCurrentUserMemberId();
         LocalDate today = today();
         LocalDate earliestScheduleDate = writingScheduleService.getEarliestEffectiveFrom(bookId);
-        LocalDate calculationStartDate = progressRepository.findFirstByBookIdOrderByProgressDateAsc(bookId)
+        LocalDate calculationStartDate = progressRepository.findFirstByUser_IdAndBookIdOrderByProgressDateAsc(userId, bookId)
                 .map(DailyWritingProgress::getProgressDate)
                 .filter(progressDate -> progressDate.isBefore(earliestScheduleDate))
                 .orElse(earliestScheduleDate);
         LocalDate recentStartDate = period.startDateInclusive(today);
         List<DailyWritingProgress> progressHistory = progressRepository
-                .findByBookIdAndProgressDateBetweenOrderByProgressDateAsc(bookId, calculationStartDate, today);
+                .findByUser_IdAndBookIdAndProgressDateBetweenOrderByProgressDateAsc(userId, bookId, calculationStartDate, today);
         Map<LocalDate, DailyWritingProgress> progressByDate = progressHistory.stream()
                 .collect(Collectors.toMap(DailyWritingProgress::getProgressDate, Function.identity()));
         List<BookWritingSchedule> fullScheduleHistory =
@@ -97,7 +112,7 @@ public class DailyWritingProgressService {
         List<BookWritingSchedule> recentScheduleHistory =
                 writingScheduleService.getSchedulesForRange(bookId, recentStartDate, today);
 
-        int recentWritingDays = countPositiveProgressBetween(bookId, recentStartDate, today);
+        int recentWritingDays = countPositiveProgressBetween(userId, bookId, recentStartDate, today);
         int recentWindowDays = Math.toIntExact(java.time.temporal.ChronoUnit.DAYS.between(recentStartDate, today) + 1);
         int recentPlannedWritingDays = countPlannedDays(recentStartDate, today, recentScheduleHistory);
         int recentSuccessfulPlannedWritingDays = countSuccessfulPlannedDays(recentStartDate, today, progressByDate, recentScheduleHistory);
@@ -105,7 +120,7 @@ public class DailyWritingProgressService {
         return new WritingConsistencyResponse(
                 currentStreakDays(calculationStartDate, today, progressByDate, fullScheduleHistory),
                 bestStreakDays(calculationStartDate, today, progressByDate, fullScheduleHistory),
-                countPositiveProgressBetween(bookId, today.withDayOfMonth(1), today),
+                countPositiveProgressBetween(userId, bookId, today.withDayOfMonth(1), today),
                 recentWindowDays,
                 recentWritingDays,
                 recentWindowDays == 0 ? 0.0 : (recentWritingDays * 100.0) / recentWindowDays,
@@ -212,8 +227,9 @@ public class DailyWritingProgressService {
         return successfulPlannedDays;
     }
 
-    private int countPositiveProgressBetween(UUID bookId, LocalDate startDate, LocalDate endDate) {
-        return Math.toIntExact(progressRepository.countByBookIdAndProgressDateBetweenAndProductiveWordCountChangeGreaterThan(
+    private int countPositiveProgressBetween(UUID userId, UUID bookId, LocalDate startDate, LocalDate endDate) {
+        return Math.toIntExact(progressRepository.countByUser_IdAndBookIdAndProgressDateBetweenAndProductiveWordCountChangeGreaterThan(
+                userId,
                 bookId,
                 startDate,
                 endDate,
@@ -225,9 +241,10 @@ public class DailyWritingProgressService {
         return progress != null && progress.getProductiveWordCountChange() > WRITING_DAY_THRESHOLD;
     }
 
-    private DailyWritingProgress createProgress(Book book, LocalDate progressDate, int totalBefore) {
+    private DailyWritingProgress createProgress(Book book, UUID userId, LocalDate progressDate, int totalBefore) {
         DailyWritingProgress progress = new DailyWritingProgress();
         progress.setBook(book);
+        progress.setUser(userRepository.getReferenceById(userId));
         progress.setProgressDate(progressDate);
         progress.setDailyTargetWordCount(book.getDailyTargetWordCount());
         progress.setStartingManuscriptWordCount(totalBefore);
@@ -237,11 +254,10 @@ public class DailyWritingProgressService {
         return progress;
     }
 
-    private DailyWritingProgress emptyTodayProgress(UUID bookId, LocalDate progressDate, int currentTotalWordCount) {
-        Book book = bookService.getBook(bookId);
-
+    private DailyWritingProgress emptyTodayProgress(Book book, UUID userId, LocalDate progressDate, int currentTotalWordCount) {
         DailyWritingProgress progress = new DailyWritingProgress();
         progress.setBook(book);
+        progress.setUser(userRepository.getReferenceById(userId));
         progress.setProgressDate(progressDate);
         progress.setDailyTargetWordCount(book.getDailyTargetWordCount());
         progress.setStartingManuscriptWordCount(currentTotalWordCount);

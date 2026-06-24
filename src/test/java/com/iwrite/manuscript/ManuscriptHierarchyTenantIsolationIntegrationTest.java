@@ -19,6 +19,8 @@ import com.iwrite.section.repository.BookSectionRepository;
 import com.iwrite.support.PostgresIntegrationTest;
 import com.iwrite.support.SwitchableCurrentUserProvider;
 import com.iwrite.tenant.entity.Tenant;
+import com.iwrite.tenant.entity.TenantMembership;
+import com.iwrite.tenant.entity.TenantMembershipRole;
 import com.iwrite.tenant.repository.TenantRepository;
 import com.iwrite.user.entity.User;
 import jakarta.persistence.EntityManager;
@@ -111,6 +113,12 @@ class ManuscriptHierarchyTenantIsolationIntegrationTest extends PostgresIntegrat
         userB.setTimeZoneId("UTC");
         entityManager.persist(userB);
         userBId = userB.getId();
+
+        TenantMembership membership = new TenantMembership();
+        membership.setTenant(tenantB);
+        membership.setUser(userB);
+        membership.setRole(TenantMembershipRole.OWNER);
+        entityManager.persist(membership);
 
         switchToTenantB();
         bookB = createBook("Book B");

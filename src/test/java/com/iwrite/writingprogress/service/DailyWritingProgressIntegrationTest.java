@@ -8,6 +8,7 @@ import com.iwrite.scene.dto.SceneContentRequest;
 import com.iwrite.scene.dto.SceneResponse;
 import com.iwrite.scene.entity.SceneStatus;
 import com.iwrite.support.PostgresIntegrationTest;
+import com.iwrite.user.entity.User;
 import com.iwrite.writingprogress.entity.DailyWritingProgress;
 import com.iwrite.writingprogress.repository.DailyWritingProgressRepository;
 import jakarta.persistence.EntityManager;
@@ -25,6 +26,7 @@ import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.util.List;
 
+import static com.iwrite.support.SwitchableCurrentUserProvider.DEFAULT_USER_ID;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class DailyWritingProgressIntegrationTest extends PostgresIntegrationTest {
@@ -49,7 +51,7 @@ class DailyWritingProgressIntegrationTest extends PostgresIntegrationTest {
 
         sceneService.updateContent(scene.id(), new SceneContentRequest("{}", wordText(5)));
 
-        DailyWritingProgress progress = progressRepository.findByBookIdAndProgressDate(book.id(), TODAY)
+        DailyWritingProgress progress = progressRepository.findByUser_IdAndBookIdAndProgressDate(DEFAULT_USER_ID, book.id(), TODAY)
                 .orElseThrow();
         assertThat(progress.getStartingManuscriptWordCount()).isZero();
         assertThat(progress.getEndingManuscriptWordCount()).isEqualTo(5);
@@ -66,8 +68,8 @@ class DailyWritingProgressIntegrationTest extends PostgresIntegrationTest {
         SceneResponse firstSave = sceneService.updateContent(scene.id(), new SceneContentRequest("{}", wordText(2)));
         sceneService.updateContent(scene.id(), new SceneContentRequest("{}", wordText(5), null, firstSave.contentRevision()));
 
-        assertThat(progressRepository.countByBookIdAndProgressDate(book.id(), TODAY)).isEqualTo(1);
-        DailyWritingProgress progress = progressRepository.findByBookIdAndProgressDate(book.id(), TODAY)
+        assertThat(progressRepository.countByUser_IdAndBookIdAndProgressDate(DEFAULT_USER_ID, book.id(), TODAY)).isEqualTo(1);
+        DailyWritingProgress progress = progressRepository.findByUser_IdAndBookIdAndProgressDate(DEFAULT_USER_ID, book.id(), TODAY)
                 .orElseThrow();
         assertThat(progress.getStartingManuscriptWordCount()).isZero();
         assertThat(progress.getEndingManuscriptWordCount()).isEqualTo(5);
@@ -83,7 +85,7 @@ class DailyWritingProgressIntegrationTest extends PostgresIntegrationTest {
 
         sceneService.delete(scene.id());
 
-        DailyWritingProgress progress = progressRepository.findByBookIdAndProgressDate(book.id(), TODAY)
+        DailyWritingProgress progress = progressRepository.findByUser_IdAndBookIdAndProgressDate(DEFAULT_USER_ID, book.id(), TODAY)
                 .orElseThrow();
         assertThat(progress.getStartingManuscriptWordCount()).isZero();
         assertThat(progress.getEndingManuscriptWordCount()).isZero();
@@ -98,7 +100,7 @@ class DailyWritingProgressIntegrationTest extends PostgresIntegrationTest {
         var section = createSection(book, "Part");
         var chapter = createChapter(section, "Chapter");
         createScene(chapter, "Existing Scene", SceneStatus.DRAFT, 0, wordText(100));
-        DailyWritingProgress adjustedProgress = progressRepository.findByBookIdAndProgressDate(book.id(), TODAY)
+        DailyWritingProgress adjustedProgress = progressRepository.findByUser_IdAndBookIdAndProgressDate(DEFAULT_USER_ID, book.id(), TODAY)
                 .orElseThrow();
         adjustedProgress.setProductiveWordCountChange(0);
         adjustedProgress.setManuscriptAdjustmentWordCount(100);
@@ -109,7 +111,7 @@ class DailyWritingProgressIntegrationTest extends PostgresIntegrationTest {
         entityManager.flush();
         entityManager.clear();
 
-        DailyWritingProgress progress = progressRepository.findByBookIdAndProgressDate(book.id(), TODAY)
+        DailyWritingProgress progress = progressRepository.findByUser_IdAndBookIdAndProgressDate(DEFAULT_USER_ID, book.id(), TODAY)
                 .orElseThrow();
         assertThat(progress.getStartingManuscriptWordCount()).isZero();
         assertThat(progress.getEndingManuscriptWordCount()).isEqualTo(105);
@@ -202,7 +204,7 @@ class DailyWritingProgressIntegrationTest extends PostgresIntegrationTest {
         var section = createSection(book, "Part");
         var chapter = createChapter(section, "Chapter");
         createScene(chapter, "Scene", SceneStatus.DRAFT, 0, wordText(3));
-        DailyWritingProgress progress = progressRepository.findByBookIdAndProgressDate(book.id(), TODAY)
+        DailyWritingProgress progress = progressRepository.findByUser_IdAndBookIdAndProgressDate(DEFAULT_USER_ID, book.id(), TODAY)
                 .orElseThrow();
         progress.setEndingManuscriptWordCount(999);
         progress.setProductiveWordCountChange(1);
@@ -449,6 +451,7 @@ class DailyWritingProgressIntegrationTest extends PostgresIntegrationTest {
     ) {
         DailyWritingProgress progress = new DailyWritingProgress();
         progress.setBook(book);
+        progress.setUser(entityManager.getReference(User.class, DEFAULT_USER_ID));
         progress.setProgressDate(progressDate);
         progress.setDailyTargetWordCount(book.getDailyTargetWordCount());
         progress.setStartingManuscriptWordCount(startingManuscriptWordCount);

@@ -6,7 +6,12 @@ import com.iwrite.book.repository.BookRepository;
 import com.iwrite.support.PostgresIntegrationTest;
 import com.iwrite.support.SwitchableCurrentUserProvider;
 import com.iwrite.tenant.entity.Tenant;
+import com.iwrite.tenant.entity.TenantMembership;
+import com.iwrite.tenant.entity.TenantMembershipRole;
 import com.iwrite.tenant.repository.TenantRepository;
+import com.iwrite.user.entity.User;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -37,8 +42,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @Import(BookTenantIsolationIntegrationTest.CurrentUserTestConfiguration.class)
 class BookTenantIsolationIntegrationTest extends PostgresIntegrationTest {
 
-    private static final UUID TENANT_B_USER_ID = UUID.fromString("10000000-0000-0000-0000-000000000002");
-
     @Autowired
     private MockMvc mockMvc;
 
@@ -54,7 +57,11 @@ class BookTenantIsolationIntegrationTest extends PostgresIntegrationTest {
     @Autowired
     private BookRepository bookRepository;
 
+    @PersistenceContext
+    private EntityManager entityManager;
+
     private UUID tenantBId;
+    private UUID tenantBUserId;
 
     @BeforeEach
     void setUpCurrentTenant() {
@@ -62,7 +69,21 @@ class BookTenantIsolationIntegrationTest extends PostgresIntegrationTest {
         Tenant tenantB = new Tenant();
         tenantB.setName("Tenant B");
         tenantB.setDefaultTimeZoneId("UTC");
-        tenantBId = tenantRepository.save(tenantB).getId();
+        Tenant savedTenantB = tenantRepository.save(tenantB);
+        tenantBId = savedTenantB.getId();
+
+        User tenantBUser = new User();
+        tenantBUser.setDisplayName("Tenant B User");
+        tenantBUser.setEmail("book-tenant-b@iwrite.local");
+        tenantBUser.setTimeZoneId("UTC");
+        entityManager.persist(tenantBUser);
+        tenantBUserId = tenantBUser.getId();
+
+        TenantMembership membership = new TenantMembership();
+        membership.setTenant(savedTenantB);
+        membership.setUser(tenantBUser);
+        membership.setRole(TenantMembershipRole.OWNER);
+        entityManager.persist(membership);
     }
 
     @AfterEach
@@ -166,7 +187,7 @@ class BookTenantIsolationIntegrationTest extends PostgresIntegrationTest {
     }
 
     private void switchToTenantB() {
-        currentUserProvider.switchTo(TENANT_B_USER_ID, tenantBId, ZoneId.of("UTC"));
+        currentUserProvider.switchTo(tenantBUserId, tenantBId, ZoneId.of("UTC"));
     }
 
     private void assertBookNotFound(org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder request)

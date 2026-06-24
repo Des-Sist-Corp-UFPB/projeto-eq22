@@ -1,6 +1,7 @@
 package com.iwrite.writingprogress.entity;
 
 import com.iwrite.book.entity.Book;
+import com.iwrite.user.entity.User;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.FetchType;
@@ -21,7 +22,10 @@ import java.util.UUID;
 @Entity
 @Table(
         name = "book_daily_writing_progress",
-        uniqueConstraints = @UniqueConstraint(name = "uk_book_daily_writing_progress_book_date", columnNames = {"book_id", "progress_date"})
+        uniqueConstraints = @UniqueConstraint(
+                name = "uk_book_daily_writing_progress_user_book_date",
+                columnNames = {"user_id", "book_id", "progress_date"}
+        )
 )
 public class DailyWritingProgress {
 
@@ -32,6 +36,10 @@ public class DailyWritingProgress {
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "book_id", nullable = false)
     private Book book;
+
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @JoinColumn(name = "user_id", nullable = false)
+    private User user;
 
     @Column(nullable = false)
     private LocalDate progressDate;
@@ -81,6 +89,14 @@ public class DailyWritingProgress {
 
     public void setBook(Book book) {
         this.book = book;
+    }
+
+    public User getUser() {
+        return user;
+    }
+
+    public void setUser(User user) {
+        this.user = user;
     }
 
     public LocalDate getProgressDate() {

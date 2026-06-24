@@ -16,44 +16,55 @@ import java.util.UUID;
 public interface BookWritingScheduleRepository extends JpaRepository<BookWritingSchedule, UUID> {
 
     @EntityGraph(attributePaths = "plannedDays")
-    Optional<BookWritingSchedule> findFirstByBookIdAndEffectiveToIsNull(UUID bookId);
+    Optional<BookWritingSchedule> findFirstByUser_IdAndBookIdAndEffectiveToIsNull(UUID userId, UUID bookId);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @EntityGraph(attributePaths = "plannedDays")
     @Query("""
             select schedule
             from BookWritingSchedule schedule
-            where schedule.book.id = :bookId
+            where schedule.user.id = :userId
+              and schedule.book.id = :bookId
               and schedule.effectiveTo is null
             """)
-    Optional<BookWritingSchedule> findActiveByBookIdForUpdate(@Param("bookId") UUID bookId);
+    Optional<BookWritingSchedule> findActiveByUserIdAndBookIdForUpdate(
+            @Param("userId") UUID userId,
+            @Param("bookId") UUID bookId
+    );
 
     @EntityGraph(attributePaths = "plannedDays")
     @Query("""
             select schedule
             from BookWritingSchedule schedule
-            where schedule.book.id = :bookId
+            where schedule.user.id = :userId
+              and schedule.book.id = :bookId
               and schedule.effectiveFrom <= :date
               and (schedule.effectiveTo is null or schedule.effectiveTo > :date)
             """)
-    Optional<BookWritingSchedule> findByBookIdAndDate(@Param("bookId") UUID bookId, @Param("date") LocalDate date);
+    Optional<BookWritingSchedule> findByUserIdAndBookIdAndDate(
+            @Param("userId") UUID userId,
+            @Param("bookId") UUID bookId,
+            @Param("date") LocalDate date
+    );
 
     @EntityGraph(attributePaths = "plannedDays")
     @Query("""
             select schedule
             from BookWritingSchedule schedule
-            where schedule.book.id = :bookId
+            where schedule.user.id = :userId
+              and schedule.book.id = :bookId
               and schedule.effectiveFrom < :endExclusive
               and (schedule.effectiveTo is null or schedule.effectiveTo > :startInclusive)
             order by schedule.effectiveFrom asc
             """)
-    List<BookWritingSchedule> findByBookIdOverlappingPeriod(
+    List<BookWritingSchedule> findByUserIdAndBookIdOverlappingPeriod(
+            @Param("userId") UUID userId,
             @Param("bookId") UUID bookId,
             @Param("startInclusive") LocalDate startInclusive,
             @Param("endExclusive") LocalDate endExclusive
     );
 
-    Optional<BookWritingSchedule> findFirstByBookIdOrderByEffectiveFromAsc(UUID bookId);
+    Optional<BookWritingSchedule> findFirstByUser_IdAndBookIdOrderByEffectiveFromAsc(UUID userId, UUID bookId);
 
-    long countByBookIdAndEffectiveToIsNull(UUID bookId);
+    long countByUser_IdAndBookIdAndEffectiveToIsNull(UUID userId, UUID bookId);
 }

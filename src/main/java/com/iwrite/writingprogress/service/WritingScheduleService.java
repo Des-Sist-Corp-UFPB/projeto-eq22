@@ -3,6 +3,8 @@ package com.iwrite.writingprogress.service;
 import com.iwrite.book.entity.Book;
 import com.iwrite.common.exception.BadRequestException;
 import com.iwrite.common.exception.ResourceNotFoundException;
+import com.iwrite.user.context.CurrentUserMembershipService;
+import com.iwrite.user.repository.UserRepository;
 import com.iwrite.writingprogress.entity.BookWritingSchedule;
 import com.iwrite.writingprogress.repository.BookWritingScheduleRepository;
 import org.springframework.stereotype.Service;
@@ -31,18 +33,29 @@ public class WritingScheduleService {
     );
 
     private final BookWritingScheduleRepository scheduleRepository;
+    private final CurrentUserMembershipService currentUserMembershipService;
+    private final UserRepository userRepository;
     private final Clock clock;
 
-    public WritingScheduleService(BookWritingScheduleRepository scheduleRepository, Clock clock) {
+    public WritingScheduleService(
+            BookWritingScheduleRepository scheduleRepository,
+            CurrentUserMembershipService currentUserMembershipService,
+            UserRepository userRepository,
+            Clock clock
+    ) {
         this.scheduleRepository = scheduleRepository;
+        this.currentUserMembershipService = currentUserMembershipService;
+        this.userRepository = userRepository;
         this.clock = clock;
     }
 
     @Transactional
     public List<DayOfWeek> createInitialSchedule(Book book, List<DayOfWeek> plannedWritingDays) {
+        UUID userId = currentUserMembershipService.requireCurrentUserMemberId();
         Set<DayOfWeek> plannedDays = normalizePlannedDaysOrDefault(plannedWritingDays);
         BookWritingSchedule schedule = new BookWritingSchedule();
         schedule.setBook(book);
+        schedule.setUser(userRepository.getReferenceById(userId));
         schedule.setEffectiveFrom(today());
         schedule.setPlannedDays(plannedDays);
         scheduleRepository.save(schedule);
@@ -51,9 +64,10 @@ public class WritingScheduleService {
 
     @Transactional
     public List<DayOfWeek> changeSchedule(Book book, List<DayOfWeek> plannedWritingDays) {
+        UUID userId = currentUserMembershipService.requireCurrentUserMemberId();
         Set<DayOfWeek> plannedDays = normalizePlannedDays(plannedWritingDays);
         LocalDate tomorrow = today().plusDays(1);
-        BookWritingSchedule activeSchedule = scheduleRepository.findActiveByBookIdForUpdate(book.getId())
+        BookWritingSchedule activeSchedule = scheduleRepository.findActiveByUserIdAndBookIdForUpdate(userId, book.getId())
                 .orElseThrow(() -> new ResourceNotFoundException("Active writing schedule not found for book: " + book.getId()));
 
         if (sameDays(activeSchedule.getPlannedDays(), plannedDays)) {
@@ -70,6 +84,7 @@ public class WritingScheduleService {
 
         BookWritingSchedule newSchedule = new BookWritingSchedule();
         newSchedule.setBook(book);
+        newSchedule.setUser(userRepository.getReferenceById(userId));
         newSchedule.setEffectiveFrom(tomorrow);
         newSchedule.setPlannedDays(plannedDays);
         scheduleRepository.save(newSchedule);
@@ -84,24 +99,28 @@ public class WritingScheduleService {
 
     @Transactional(readOnly = true)
     public BookWritingSchedule getActiveSchedule(UUID bookId) {
-        return scheduleRepository.findFirstByBookIdAndEffectiveToIsNull(bookId)
+        UUID userId = currentUserMembershipService.requireCurrentUserMemberId();
+        return scheduleRepository.findFirstByUser_IdAndBookIdAndEffectiveToIsNull(userId, bookId)
                 .orElseThrow(() -> new ResourceNotFoundException("Active writing schedule not found for book: " + bookId));
     }
 
     @Transactional(readOnly = true)
     public BookWritingSchedule getScheduleForDate(UUID bookId, LocalDate date) {
-        return scheduleRepository.findByBookIdAndDate(bookId, date)
+        UUID userId = currentUserMembershipService.requireCurrentUserMemberId();
+        return scheduleRepository.findByUserIdAndBookIdAndDate(userId, bookId, date)
                 .orElseThrow(() -> new ResourceNotFoundException("Writing schedule not found for book date: " + bookId + " " + date));
     }
 
     @Transactional(readOnly = true)
     public List<BookWritingSchedule> getSchedulesForRange(UUID bookId, LocalDate startInclusive, LocalDate endInclusive) {
-        return scheduleRepository.findByBookIdOverlappingPeriod(bookId, startInclusive, endInclusive.plusDays(1));
+        UUID userId = currentUserMembershipService.requireCurrentUserMemberId();
+        return scheduleRepository.findByUserIdAndBookIdOverlappingPeriod(userId, bookId, startInclusive, endInclusive.plusDays(1));
     }
 
     @Transactional(readOnly = true)
     public LocalDate getEarliestEffectiveFrom(UUID bookId) {
-        return scheduleRepository.findFirstByBookIdOrderByEffectiveFromAsc(bookId)
+        UUID userId = currentUserMembershipService.requireCurrentUserMemberId();
+        return scheduleRepository.findFirstByUser_IdAndBookIdOrderByEffectiveFromAsc(userId, bookId)
                 .map(BookWritingSchedule::getEffectiveFrom)
                 .orElseThrow(() -> new ResourceNotFoundException("Writing schedule not found for book: " + bookId));
     }
