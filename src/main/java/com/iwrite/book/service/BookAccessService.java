@@ -50,8 +50,11 @@ public class BookAccessService {
     public Book requireBookEditAccessForUpdate(UUID bookId) {
         UUID userId = currentUserMembershipService.requireCurrentUserMemberId();
         UUID tenantId = currentUserProvider.tenantId();
-        return bookRepository.findAccessibleByIdAndTenantIdAndUserIdForUpdate(bookId, tenantId, userId)
+        Book lockedBook = bookRepository.findByIdAndTenantIdForUpdate(bookId, tenantId)
                 .orElseThrow(() -> bookNotFound(bookId));
+        bookRepository.findAccessibleByIdAndTenantIdAndUserId(bookId, tenantId, userId)
+                .orElseThrow(() -> bookNotFound(bookId));
+        return lockedBook;
     }
 
     @Transactional

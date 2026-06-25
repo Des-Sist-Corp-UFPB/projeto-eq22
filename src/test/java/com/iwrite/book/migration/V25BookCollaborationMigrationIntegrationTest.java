@@ -7,8 +7,11 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 
 import javax.sql.DataSource;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.sql.Connection;
 import java.sql.SQLException;
+import java.util.HexFormat;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -50,16 +53,34 @@ class V25BookCollaborationMigrationIntegrationTest extends PostgresIntegrationTe
                 assertEquals(USER_B_LOW.toString(), scalar(connection, schema, "select owner_user_id::text from books where id = '" + BOOK_B + "'"));
                 assertEquals("0", scalar(connection, schema, "select count(*)::text from books where owner_user_id is null"));
                 assertEquals("Legacy A,PLANNING", scalar(connection, schema, "select title || ',' || status from books where id = '" + BOOK_A + "'"));
+                assertEquals("3", scalar(connection, schema, "select count(*)::text from book_collaborators where book_id = '" + BOOK_A + "'"));
+                assertEquals(
+                        USER_A_LATE + "," + USER_A_TIE_LOW + "," + USER_A_TIE_HIGH,
+                        scalar(connection, schema, "select string_agg(user_id::text, ',' order by user_id::text) from book_collaborators where book_id = '" + BOOK_A + "'")
+                );
+                assertEquals("1", scalar(connection, schema, "select count(*)::text from book_collaborators where book_id = '" + BOOK_B + "' and user_id = '" + USER_B_HIGH + "'"));
+                assertEquals("0", scalar(connection, schema, "select count(*)::text from book_collaborators where book_id = '" + BOOK_A + "' and user_id = '" + USER_A_EARLY + "'"));
+                assertEquals("0", scalar(connection, schema, "select count(*)::text from book_collaborators where book_id = '" + BOOK_A + "' and user_id in ('" + USER_B_LOW + "', '" + USER_B_HIGH + "')"));
+                assertEquals("0", scalar(connection, schema, "select count(*)::text from book_collaborators where book_id = '" + BOOK_B + "' and user_id in ('" + USER_A_EARLY + "', '" + USER_A_LATE + "', '" + USER_A_TIE_LOW + "', '" + USER_A_TIE_HIGH + "')"));
+                assertEquals("1", scalar(connection, schema, "select count(*)::text from book_collaborators where book_id = '" + BOOK_A + "' and created_by_user_id = '" + USER_A_EARLY + "' and user_id = '" + USER_A_LATE + "'"));
+                assertEquals(deterministicCollaboratorId(BOOK_A, USER_A_LATE).toString(), scalar(connection, schema, "select id::text from book_collaborators where book_id = '" + BOOK_A + "' and user_id = '" + USER_A_LATE + "'"));
+
+                assertHasAccess(connection, schema, BOOK_A, TENANT_A, USER_A_EARLY);
+                assertHasAccess(connection, schema, BOOK_A, TENANT_A, USER_A_LATE);
+                assertHasAccess(connection, schema, BOOK_A, TENANT_A, USER_A_TIE_LOW);
+                assertHasAccess(connection, schema, BOOK_A, TENANT_A, USER_A_TIE_HIGH);
+                assertNoAccess(connection, schema, BOOK_A, TENANT_A, USER_B_LOW);
+                assertHasAccess(connection, schema, BOOK_B, TENANT_B, USER_B_LOW);
+                assertHasAccess(connection, schema, BOOK_B, TENANT_B, USER_B_HIGH);
+                assertNoAccess(connection, schema, BOOK_B, TENANT_B, USER_A_EARLY);
 
                 assertSqlFails(connection, schema, "update books set owner_user_id = '" + USER_B_LOW + "' where id = '" + BOOK_A + "'");
                 assertSqlFails(connection, schema, "delete from tenant_memberships where tenant_id = '" + TENANT_A + "' and user_id = '" + USER_A_EARLY + "'");
                 assertSqlFails(connection, schema, collaboratorInsert(UUID.randomUUID(), TENANT_A, BOOK_B, USER_A_LATE, USER_A_EARLY));
                 assertSqlFails(connection, schema, collaboratorInsert(UUID.randomUUID(), TENANT_A, BOOK_A, USER_B_LOW, USER_A_EARLY));
-
-                UUID collaboratorId = UUID.fromString("25000000-0000-0000-0000-000000000201");
-                executeUpdate(connection, schema, collaboratorInsert(collaboratorId, TENANT_A, BOOK_A, USER_A_LATE, USER_A_EARLY));
                 assertSqlFails(connection, schema, collaboratorInsert(UUID.randomUUID(), TENANT_A, BOOK_A, USER_A_LATE, USER_A_EARLY));
 
+                UUID collaboratorId = deterministicCollaboratorId(BOOK_A, USER_A_LATE);
                 executeUpdate(connection, schema, "delete from tenant_memberships where tenant_id = '" + TENANT_A + "' and user_id = '" + USER_A_LATE + "'");
                 assertEquals("0", scalar(connection, schema, "select count(*)::text from book_collaborators where id = '" + collaboratorId + "'"));
             }
@@ -98,6 +119,43 @@ class V25BookCollaborationMigrationIntegrationTest extends PostgresIntegrationTe
     private String collaboratorInsert(UUID id, UUID tenantId, UUID bookId, UUID userId, UUID createdByUserId) {
         return "insert into book_collaborators (id, tenant_id, book_id, user_id, created_at, created_by_user_id) values ('"
                 + id + "', '" + tenantId + "', '" + bookId + "', '" + userId + "', current_timestamp, '" + createdByUserId + "')";
+    }
+
+    private void assertHasAccess(Connection connection, String schema, UUID bookId, UUID tenantId, UUID userId) throws SQLException {
+        assertEquals("1", accessCount(connection, schema, bookId, tenantId, userId));
+    }
+
+    private void assertNoAccess(Connection connection, String schema, UUID bookId, UUID tenantId, UUID userId) throws SQLException {
+        assertEquals("0", accessCount(connection, schema, bookId, tenantId, userId));
+    }
+
+    private String accessCount(Connection connection, String schema, UUID bookId, UUID tenantId, UUID userId) throws SQLException {
+        return scalar(connection, schema, """
+                select count(*)::text
+                from books book
+                where book.id = '%s'
+                  and book.tenant_id = '%s'
+                  and (
+                        book.owner_user_id = '%s'
+                        or exists (
+                            select 1
+                            from book_collaborators collaborator
+                            where collaborator.book_id = book.id
+                              and collaborator.tenant_id = '%s'
+                              and collaborator.user_id = '%s'
+                        )
+                  )
+                """.formatted(bookId, tenantId, userId, tenantId, userId));
+    }
+
+    private UUID deterministicCollaboratorId(UUID bookId, UUID userId) throws Exception {
+        MessageDigest digest = MessageDigest.getInstance("MD5");
+        String hash = HexFormat.of().formatHex(digest.digest((bookId + ":" + userId).getBytes(StandardCharsets.UTF_8)));
+        return UUID.fromString(hash.substring(0, 8)
+                + "-" + hash.substring(8, 12)
+                + "-" + hash.substring(12, 16)
+                + "-" + hash.substring(16, 20)
+                + "-" + hash.substring(20, 32));
     }
 
     private void assertSqlFails(Connection connection, String schema, String sql) {

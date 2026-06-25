@@ -87,6 +87,18 @@ public interface BookRepository extends JpaRepository<Book, UUID> {
             @Param("userId") UUID userId
     );
 
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("""
+            select book
+            from Book book
+            where book.id = :bookId
+              and book.tenant.id = :tenantId
+            """)
+    Optional<Book> findByIdAndTenantIdForUpdate(
+            @Param("bookId") UUID bookId,
+            @Param("tenantId") UUID tenantId
+    );
+
     @Query("""
             select case
                 when book.owner.id = :userId then com.iwrite.book.entity.BookAccessLevel.OWNER
@@ -112,26 +124,4 @@ public interface BookRepository extends JpaRepository<Book, UUID> {
             @Param("userId") UUID userId
     );
 
-    @Lock(LockModeType.PESSIMISTIC_WRITE)
-    @Query("""
-            select book
-            from Book book
-            where book.id = :bookId
-              and book.tenant.id = :tenantId
-              and (
-                    book.owner.id = :userId
-                    or exists (
-                        select 1
-                        from BookCollaborator collaborator
-                        where collaborator.book = book
-                          and collaborator.tenant.id = :tenantId
-                          and collaborator.user.id = :userId
-                    )
-              )
-            """)
-    Optional<Book> findAccessibleByIdAndTenantIdAndUserIdForUpdate(
-            @Param("bookId") UUID bookId,
-            @Param("tenantId") UUID tenantId,
-            @Param("userId") UUID userId
-    );
 }
