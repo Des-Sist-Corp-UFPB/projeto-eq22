@@ -48,6 +48,77 @@ public interface DailyWritingProgressRepository extends JpaRepository<DailyWriti
 
     long countByUser_IdAndBookIdAndProgressDate(UUID userId, UUID bookId, LocalDate progressDate);
 
+    @Query("""
+            select progress
+            from DailyWritingProgress progress
+            join fetch progress.book book
+            where progress.user.id = :userId
+              and book.tenant.id = :tenantId
+              and progress.progressDate between :startDate and :endDate
+            order by progress.progressDate asc, book.title asc, book.id asc
+            """)
+    List<DailyWritingProgress> findCurrentUserTenantProgressBetween(
+            @Param("userId") UUID userId,
+            @Param("tenantId") UUID tenantId,
+            @Param("startDate") LocalDate startDate,
+            @Param("endDate") LocalDate endDate
+    );
+
+    @Query("""
+            select distinct progress.progressDate
+            from DailyWritingProgress progress
+            join progress.book book
+            where progress.user.id = :userId
+              and book.tenant.id = :tenantId
+              and progress.productiveWordCountChange > 0
+              and progress.progressDate <= :endDate
+            order by progress.progressDate asc
+            """)
+    List<LocalDate> findPositiveProgressDatesForUserTenantThroughDate(
+            @Param("userId") UUID userId,
+            @Param("tenantId") UUID tenantId,
+            @Param("endDate") LocalDate endDate
+    );
+
+    @Query("""
+            select progress
+            from DailyWritingProgress progress
+            join fetch progress.user
+            where progress.book.id = :bookId
+              and progress.progressDate between :startDate and :endDate
+            order by progress.progressDate asc, progress.user.displayName asc, progress.user.id asc
+            """)
+    List<DailyWritingProgress> findBookProgressBetweenWithUsers(
+            @Param("bookId") UUID bookId,
+            @Param("startDate") LocalDate startDate,
+            @Param("endDate") LocalDate endDate
+    );
+
+    @Query("""
+            select progress
+            from DailyWritingProgress progress
+            join fetch progress.user
+            where progress.book.id = :bookId
+              and progress.user.id = :userId
+              and progress.progressDate between :startDate and :endDate
+            order by progress.progressDate asc
+            """)
+    List<DailyWritingProgress> findBookContributorProgressBetweenWithUsers(
+            @Param("bookId") UUID bookId,
+            @Param("userId") UUID userId,
+            @Param("startDate") LocalDate startDate,
+            @Param("endDate") LocalDate endDate
+    );
+
+    @Query("""
+            select distinct progress.user
+            from DailyWritingProgress progress
+            where progress.book.id = :bookId
+              and (progress.productiveWordCountChange <> 0
+                   or progress.manuscriptAdjustmentWordCount <> 0)
+            """)
+    List<com.iwrite.user.entity.User> findRecordedContributorsForBook(@Param("bookId") UUID bookId);
+
     @Modifying
     @Query(value = """
             insert into book_daily_writing_progress (

@@ -6,6 +6,7 @@ import com.iwrite.chapter.entity.Chapter;
 import com.iwrite.chapter.repository.ChapterRepository;
 import com.iwrite.character.entity.Character;
 import com.iwrite.dashboard.dto.BookDashboardResponse;
+import com.iwrite.dashboard.dto.BookMyWritingResponse;
 import com.iwrite.dashboard.dto.DashboardSceneSummaryResponse;
 import com.iwrite.dashboard.dto.DailyWritingProgressResponse;
 import com.iwrite.dashboard.dto.EntityUsageResponse;
@@ -98,8 +99,10 @@ public class BookDashboardService {
                 sectionRepository.countByBookId(bookId),
                 chapterRepository.countByBookId(bookId),
                 totalScenes,
-                buildWritingProgress(bookId, totalWordCount, progressPeriod),
-                buildWritingSchedule(book),
+                new BookMyWritingResponse(
+                        buildWritingProgress(bookId, totalWordCount, progressPeriod),
+                        buildWritingSchedule(book)
+                ),
                 new PlanningProgressResponse(plannedScenesCount, totalScenes, plannedScenesPercent(plannedScenesCount, totalScenes)),
                 buildStatusCounts(scenes),
                 buildPovStats(scenes),

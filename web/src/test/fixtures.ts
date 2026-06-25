@@ -121,7 +121,7 @@ export const dashboardWithScenes: BookDashboardResponse = {
   totalSections: 1,
   totalChapters: 1,
   totalScenes: 2,
-  writingProgress: {
+  myWriting: { progress: {
     today: {
       date: "2026-05-14",
       dailyTargetWordCount: 500,
@@ -163,12 +163,13 @@ export const dashboardWithScenes: BookDashboardResponse = {
       recentPlannedWritingDaysPercent: (2 * 100) / 7,
     },
   },
-  writingSchedule: {
+  schedule: {
     plannedWritingDays: ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY"],
     plannedWritingDaysPerWeek: 7,
     restDays: [],
     todayPlannedWritingDay: true,
     currentScheduleEffectiveFrom: "2026-05-14",
+  },
   },
   planningProgress: {
     plannedScenesCount: 1,
@@ -221,7 +222,7 @@ export const emptyDashboard: BookDashboardResponse = {
     totalScenes: 0,
     plannedScenesPercent: 0,
   },
-  writingProgress: {
+  myWriting: { progress: {
     today: {
       date: "2026-05-14",
       dailyTargetWordCount: null,
@@ -243,6 +244,8 @@ export const emptyDashboard: BookDashboardResponse = {
       recentSuccessfulPlannedWritingDays: 0,
       recentPlannedWritingDaysPercent: 0,
     },
+  },
+  schedule: dashboardWithScenes.myWriting.schedule,
   },
   scenesByStatus: dashboardWithScenes.scenesByStatus.map((status) => ({
     ...status,

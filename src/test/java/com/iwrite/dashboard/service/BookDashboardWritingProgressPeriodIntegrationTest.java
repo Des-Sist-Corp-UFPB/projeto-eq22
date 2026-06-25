@@ -52,7 +52,7 @@ class BookDashboardWritingProgressPeriodIntegrationTest extends PostgresIntegrat
 
         var dashboard = dashboardService.getDashboard(book.id());
 
-        assertThat(dashboard.writingProgress().recentDays())
+        assertThat(dashboard.myWriting().progress().recentDays())
                 .extracting(day -> day.date())
                 .containsExactly(today, today.minusDays(1), today.minusDays(6));
     }
@@ -68,8 +68,8 @@ class BookDashboardWritingProgressPeriodIntegrationTest extends PostgresIntegrat
 
         var dashboard = dashboardService.getDashboard(book.id(), WritingProgressPeriod.THIRTY_DAYS);
 
-        assertThat(dashboard.writingProgress().recentDays()).hasSize(30);
-        assertThat(dashboard.writingProgress().recentDays())
+        assertThat(dashboard.myWriting().progress().recentDays()).hasSize(30);
+        assertThat(dashboard.myWriting().progress().recentDays())
                 .extracting(day -> day.date())
                 .contains(today, today.minusDays(29))
                 .doesNotContain(today.minusDays(30));
@@ -87,7 +87,7 @@ class BookDashboardWritingProgressPeriodIntegrationTest extends PostgresIntegrat
 
         var dashboard = dashboardService.getDashboard(book.id(), WritingProgressPeriod.THREE_MONTHS);
 
-        assertThat(dashboard.writingProgress().recentDays())
+        assertThat(dashboard.myWriting().progress().recentDays())
                 .extracting(day -> day.date())
                 .containsExactly(today, firstDayOfRange);
     }
@@ -104,7 +104,7 @@ class BookDashboardWritingProgressPeriodIntegrationTest extends PostgresIntegrat
 
         var dashboard = dashboardService.getDashboard(book.id(), WritingProgressPeriod.TWELVE_MONTHS);
 
-        assertThat(dashboard.writingProgress().recentDays())
+        assertThat(dashboard.myWriting().progress().recentDays())
                 .extracting(day -> day.date())
                 .containsExactly(today, firstDayOfRange);
     }
@@ -125,7 +125,7 @@ class BookDashboardWritingProgressPeriodIntegrationTest extends PostgresIntegrat
             var dashboard = dashboardService.getDashboard(book.id());
 
             assertThat(jvmDefaultDate).isNotEqualTo(userToday);
-            assertThat(dashboard.writingProgress().recentDays())
+            assertThat(dashboard.myWriting().progress().recentDays())
                     .extracting(day -> day.date())
                     .containsExactly(userToday);
         } finally {
