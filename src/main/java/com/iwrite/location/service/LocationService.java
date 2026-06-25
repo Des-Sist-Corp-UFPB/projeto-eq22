@@ -1,7 +1,7 @@
 package com.iwrite.location.service;
 
 import com.iwrite.book.entity.Book;
-import com.iwrite.book.service.BookService;
+import com.iwrite.book.service.BookAccessService;
 import com.iwrite.common.exception.ConflictException;
 import com.iwrite.common.exception.ResourceNotFoundException;
 import com.iwrite.common.validation.RequestValidation;
@@ -23,25 +23,25 @@ import java.util.UUID;
 public class LocationService {
 
     private final LocationRepository locationRepository;
-    private final BookService bookService;
+    private final BookAccessService bookAccessService;
     private final CurrentUserProvider currentUserProvider;
     private final SceneRepository sceneRepository;
 
     public LocationService(
             LocationRepository locationRepository,
-            BookService bookService,
+            BookAccessService bookAccessService,
             CurrentUserProvider currentUserProvider,
             SceneRepository sceneRepository
     ) {
         this.locationRepository = locationRepository;
-        this.bookService = bookService;
+        this.bookAccessService = bookAccessService;
         this.currentUserProvider = currentUserProvider;
         this.sceneRepository = sceneRepository;
     }
 
     @Transactional(readOnly = true)
     public List<LocationResponse> findByBook(UUID bookId) {
-        bookService.getBook(bookId);
+        bookAccessService.requireBookReadAccess(bookId);
         return locationRepository.findByBook_IdAndBook_Tenant_IdOrderByNameAscIdAsc(
                         bookId,
                         currentUserProvider.tenantId()
@@ -58,7 +58,7 @@ public class LocationService {
 
     @Transactional
     public LocationResponse create(UUID bookId, LocationRequest request) {
-        Book book = bookService.getBook(bookId);
+        Book book = bookAccessService.requireBookEditAccess(bookId);
 
         Location location = new Location();
         location.setBook(book);
@@ -117,13 +117,33 @@ public class LocationService {
 
     @Transactional(readOnly = true)
     public Location getLocation(UUID locationId) {
-        return locationRepository.findByIdAndBook_Tenant_Id(locationId, currentUserProvider.tenantId())
-                .orElseThrow(() -> new ResourceNotFoundException("Location not found: " + locationId));
+        Location location = locationRepository.findByIdAndBook_Tenant_Id(locationId, currentUserProvider.tenantId())
+                .orElseThrow(() -> locationNotFound(locationId));
+        requireLocationBookAccess(location, locationId, false);
+        return location;
     }
 
     private Location getLocationForUpdate(UUID locationId, UUID tenantId) {
-        return locationRepository.findByIdAndBookTenantIdForUpdate(locationId, tenantId)
-                .orElseThrow(() -> new ResourceNotFoundException("Location not found: " + locationId));
+        Location location = locationRepository.findByIdAndBookTenantIdForUpdate(locationId, tenantId)
+                .orElseThrow(() -> locationNotFound(locationId));
+        requireLocationBookAccess(location, locationId, true);
+        return location;
+    }
+
+    private void requireLocationBookAccess(Location location, UUID locationId, boolean edit) {
+        try {
+            if (edit) {
+                bookAccessService.requireBookEditAccess(location.getBook().getId());
+            } else {
+                bookAccessService.requireBookReadAccess(location.getBook().getId());
+            }
+        } catch (ResourceNotFoundException exception) {
+            throw locationNotFound(locationId);
+        }
+    }
+
+    private ResourceNotFoundException locationNotFound(UUID locationId) {
+        return new ResourceNotFoundException("Location not found: " + locationId);
     }
 
     private ConflictException locationReferencedConflict() {

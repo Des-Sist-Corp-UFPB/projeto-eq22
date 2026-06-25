@@ -1,7 +1,7 @@
 package com.iwrite.character.service;
 
 import com.iwrite.book.entity.Book;
-import com.iwrite.book.service.BookService;
+import com.iwrite.book.service.BookAccessService;
 import com.iwrite.character.dto.CharacterRequest;
 import com.iwrite.character.dto.CharacterResponse;
 import com.iwrite.character.dto.CharacterUpdateRequest;
@@ -24,20 +24,20 @@ import java.util.UUID;
 public class CharacterService {
 
     private final CharacterRepository characterRepository;
-    private final BookService bookService;
+    private final BookAccessService bookAccessService;
     private final CurrentUserProvider currentUserProvider;
     private final SceneRepository sceneRepository;
     private final ItemRepository itemRepository;
 
     public CharacterService(
             CharacterRepository characterRepository,
-            BookService bookService,
+            BookAccessService bookAccessService,
             CurrentUserProvider currentUserProvider,
             SceneRepository sceneRepository,
             ItemRepository itemRepository
     ) {
         this.characterRepository = characterRepository;
-        this.bookService = bookService;
+        this.bookAccessService = bookAccessService;
         this.currentUserProvider = currentUserProvider;
         this.sceneRepository = sceneRepository;
         this.itemRepository = itemRepository;
@@ -45,7 +45,7 @@ public class CharacterService {
 
     @Transactional(readOnly = true)
     public List<CharacterResponse> findByBook(UUID bookId) {
-        bookService.getBook(bookId);
+        bookAccessService.requireBookReadAccess(bookId);
         return characterRepository.findByBook_IdAndBook_Tenant_IdOrderByNameAscIdAsc(
                         bookId,
                         currentUserProvider.tenantId()
@@ -62,7 +62,7 @@ public class CharacterService {
 
     @Transactional
     public CharacterResponse create(UUID bookId, CharacterRequest request) {
-        Book book = bookService.getBook(bookId);
+        Book book = bookAccessService.requireBookEditAccess(bookId);
 
         Character character = new Character();
         character.setBook(book);
@@ -147,13 +147,33 @@ public class CharacterService {
 
     @Transactional(readOnly = true)
     public Character getCharacter(UUID characterId) {
-        return characterRepository.findByIdAndBook_Tenant_Id(characterId, currentUserProvider.tenantId())
-                .orElseThrow(() -> new ResourceNotFoundException("Character not found: " + characterId));
+        Character character = characterRepository.findByIdAndBook_Tenant_Id(characterId, currentUserProvider.tenantId())
+                .orElseThrow(() -> characterNotFound(characterId));
+        requireCharacterBookAccess(character, characterId, false);
+        return character;
     }
 
     private Character getCharacterForUpdate(UUID characterId, UUID tenantId) {
-        return characterRepository.findByIdAndBookTenantIdForUpdate(characterId, tenantId)
-                .orElseThrow(() -> new ResourceNotFoundException("Character not found: " + characterId));
+        Character character = characterRepository.findByIdAndBookTenantIdForUpdate(characterId, tenantId)
+                .orElseThrow(() -> characterNotFound(characterId));
+        requireCharacterBookAccess(character, characterId, true);
+        return character;
+    }
+
+    private void requireCharacterBookAccess(Character character, UUID characterId, boolean edit) {
+        try {
+            if (edit) {
+                bookAccessService.requireBookEditAccess(character.getBook().getId());
+            } else {
+                bookAccessService.requireBookReadAccess(character.getBook().getId());
+            }
+        } catch (ResourceNotFoundException exception) {
+            throw characterNotFound(characterId);
+        }
+    }
+
+    private ResourceNotFoundException characterNotFound(UUID characterId) {
+        return new ResourceNotFoundException("Character not found: " + characterId);
     }
 
     private ConflictException characterReferencedConflict() {

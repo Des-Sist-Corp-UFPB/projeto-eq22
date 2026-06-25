@@ -1,7 +1,7 @@
 package com.iwrite.section.service;
 
 import com.iwrite.book.entity.Book;
-import com.iwrite.book.service.BookService;
+import com.iwrite.book.service.BookAccessService;
 import com.iwrite.common.dto.ReorderRequest;
 import com.iwrite.common.exception.BadRequestException;
 import com.iwrite.common.exception.ResourceNotFoundException;
@@ -29,20 +29,20 @@ import java.util.stream.Collectors;
 public class BookSectionService {
 
     private final BookSectionRepository sectionRepository;
-    private final BookService bookService;
+    private final BookAccessService bookAccessService;
     private final SceneRepository sceneRepository;
     private final SceneDeletionLedgerService sceneDeletionLedgerService;
     private final CurrentUserProvider currentUserProvider;
 
     public BookSectionService(
             BookSectionRepository sectionRepository,
-            BookService bookService,
+            BookAccessService bookAccessService,
             SceneRepository sceneRepository,
             SceneDeletionLedgerService sceneDeletionLedgerService,
             CurrentUserProvider currentUserProvider
     ) {
         this.sectionRepository = sectionRepository;
-        this.bookService = bookService;
+        this.bookAccessService = bookAccessService;
         this.sceneRepository = sceneRepository;
         this.sceneDeletionLedgerService = sceneDeletionLedgerService;
         this.currentUserProvider = currentUserProvider;
@@ -50,7 +50,7 @@ public class BookSectionService {
 
     @Transactional
     public BookSectionResponse create(UUID bookId, BookSectionRequest request) {
-        Book book = bookService.getBook(bookId);
+        Book book = bookAccessService.requireBookEditAccess(bookId);
 
         BookSection section = new BookSection();
         section.setBook(book);
@@ -83,22 +83,36 @@ public class BookSectionService {
     public void delete(UUID sectionId) {
         BookSection section = getSection(sectionId);
         var scenes = sceneRepository.findBySectionIdForUpdate(sectionId);
-        Book lockedBook = bookService.getBookForWordCountUpdate(section.getBook().getId());
+        Book lockedBook = bookAccessService.requireBookEditAccessForUpdate(section.getBook().getId());
         sceneDeletionLedgerService.prepareSceneDeletes(scenes, lockedBook, UUID.randomUUID());
         sectionRepository.deleteById(sectionId);
     }
 
     @Transactional
     public void reorder(UUID bookId, ReorderRequest request) {
-        bookService.getBook(bookId);
+        bookAccessService.requireBookEditAccess(bookId);
         List<BookSection> sections = sectionRepository.findByBookIdOrderBySortOrderAsc(bookId);
         applyReorder(sections, request.orderedIds(), BookSection::getId, BookSection::setSortOrder, "sections");
     }
 
     @Transactional(readOnly = true)
     public BookSection getSection(UUID sectionId) {
-        return sectionRepository.findByIdAndBook_Tenant_Id(sectionId, currentUserProvider.tenantId())
-                .orElseThrow(() -> new ResourceNotFoundException("Section not found: " + sectionId));
+        BookSection section = sectionRepository.findByIdAndBook_Tenant_Id(sectionId, currentUserProvider.tenantId())
+                .orElseThrow(() -> sectionNotFound(sectionId));
+        requireSectionBookEditAccess(section, sectionId);
+        return section;
+    }
+
+    private void requireSectionBookEditAccess(BookSection section, UUID sectionId) {
+        try {
+            bookAccessService.requireBookEditAccess(section.getBook().getId());
+        } catch (ResourceNotFoundException exception) {
+            throw sectionNotFound(sectionId);
+        }
+    }
+
+    private ResourceNotFoundException sectionNotFound(UUID sectionId) {
+        return new ResourceNotFoundException("Section not found: " + sectionId);
     }
 
     private <T> void applyReorder(

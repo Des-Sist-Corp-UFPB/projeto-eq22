@@ -3,6 +3,9 @@ package com.iwrite.writingprogress.ledger;
 import com.iwrite.common.exception.ConflictException;
 import com.iwrite.common.exception.ResourceNotFoundException;
 import com.iwrite.book.entity.Book;
+import com.iwrite.book.repository.BookCollaboratorRepository;
+import com.iwrite.book.service.BookAccessService;
+import com.iwrite.book.service.BookCollaboratorService;
 import com.iwrite.scene.dto.SceneContentRequest;
 import com.iwrite.scene.dto.SceneRequest;
 import com.iwrite.scene.dto.SceneResponse;
@@ -36,6 +39,8 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import javax.sql.DataSource;
+import java.sql.SQLException;
 import java.time.ZoneId;
 import java.util.Comparator;
 import java.util.List;
@@ -67,6 +72,18 @@ class SceneWordCountConcurrencyIntegrationTest extends PostgresIntegrationTest {
 
     @Autowired
     private ThreadLocalCurrentUserProvider currentUserProvider;
+
+    @Autowired
+    private BookCollaboratorService collaboratorService;
+
+    @Autowired
+    private BookAccessService bookAccessService;
+
+    @Autowired
+    private BookCollaboratorRepository collaboratorRepository;
+
+    @Autowired
+    private DataSource dataSource;
 
     @Autowired
     private PlatformTransactionManager transactionManager;
@@ -220,6 +237,7 @@ class SceneWordCountConcurrencyIntegrationTest extends PostgresIntegrationTest {
     void sameKeyDifferentActorConflictsAtBookScope() {
         var world = createStoryWorld("b7c same key different actor");
         UUID otherUserId = createMember("b7c-other-actor@iwrite.local");
+        collaboratorService.grantInternal(world.book().id(), otherUserId, DEFAULT_USER_ID);
         UUID operationId = UUID.randomUUID();
 
         sceneService.updateContent(
@@ -269,6 +287,7 @@ class SceneWordCountConcurrencyIntegrationTest extends PostgresIntegrationTest {
         SceneResponse firstScene = createScene(chapter, "First concurrent", SceneStatus.DRAFT, 0, "");
         SceneResponse secondScene = createScene(chapter, "Second concurrent", SceneStatus.DRAFT, 1, "");
         UUID otherUserId = createMember("b7c-concurrent-user@iwrite.local");
+        collaboratorService.grantInternal(book.id(), otherUserId, DEFAULT_USER_ID);
         UUID firstOperationId = UUID.randomUUID();
         UUID secondOperationId = UUID.randomUUID();
 
@@ -303,6 +322,123 @@ class SceneWordCountConcurrencyIntegrationTest extends PostgresIntegrationTest {
         assertThat(finalAggregate).isEqualTo(3);
         assertProductiveProgress(book.id(), DEFAULT_USER_ID, 1);
         assertProductiveProgress(book.id(), otherUserId, 2);
+    }
+
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    void collaboratorEditWaitingOnBookLockIsDeniedAfterOwnerRevokesAccess() throws Exception {
+        var world = createStoryWorld("c1 revoked collaborator waits");
+        UUID collaboratorId = createMember("c1-revoked-waiting@iwrite.local");
+        collaboratorService.grantInternal(world.book().id(), collaboratorId, DEFAULT_USER_ID);
+        UUID operationId = UUID.randomUUID();
+        SceneContentRequest request = new SceneContentRequest(
+                "{}",
+                "collaborator should not persist",
+                null,
+                world.scene().contentRevision(),
+                operationId
+        );
+        CountDownLatch ownerRemovedAndHoldingLock = new CountDownLatch(1);
+        CountDownLatch allowOwnerCommit = new CountDownLatch(1);
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+
+        try {
+            CompletableFuture<Void> ownerFuture = CompletableFuture.runAsync(() -> inNewTransaction(() -> {
+                Book lockedBook = bookAccessService.requireBookOwnerAccessForUpdate(world.book().id());
+                var collaborator = collaboratorRepository.findByBook_IdAndTenant_IdAndUser_Id(
+                                lockedBook.getId(),
+                                DEFAULT_TENANT_ID,
+                                collaboratorId
+                        )
+                        .orElseThrow();
+                collaboratorRepository.delete(collaborator);
+                collaboratorRepository.flush();
+                ownerRemovedAndHoldingLock.countDown();
+                await(allowOwnerCommit);
+                return null;
+            }), executor);
+
+            await(ownerRemovedAndHoldingLock);
+            CompletableFuture<SceneResponse> collaboratorFuture = CompletableFuture.supplyAsync(
+                    () -> call(asUser(collaboratorId, () -> sceneService.updateContent(world.scene().id(), request))),
+                    executor
+            );
+
+            waitForBlockedDatabaseLock();
+            assertThat(collaboratorFuture).isNotDone();
+
+            allowOwnerCommit.countDown();
+            ownerFuture.orTimeout(10, TimeUnit.SECONDS).join();
+            assertThatThrownBy(() -> collaboratorFuture.orTimeout(10, TimeUnit.SECONDS).join())
+                    .hasRootCauseInstanceOf(ResourceNotFoundException.class);
+        } finally {
+            allowOwnerCommit.countDown();
+            executor.shutdownNow();
+        }
+
+        SceneResponse reloaded = sceneService.findById(world.scene().id());
+        assertThat(reloaded.contentText()).isEqualTo(world.scene().contentText());
+        assertThat(reloaded.contentRevision()).isEqualTo(world.scene().contentRevision());
+        assertThat(reloaded.wordCount()).isEqualTo(world.scene().wordCount());
+        assertThat(eventsForKey(world.book().id(), operationId)).isEmpty();
+        assertThat(progressRowsFor(world.book().id(), collaboratorId)).isEmpty();
+    }
+
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    void collaboratorEditWithBookLockFirstCompletesBeforeOwnerRemovalRevokesFutureAccess() throws Exception {
+        var world = createStoryWorld("c1 collaborator first then revoke");
+        UUID collaboratorId = createMember("c1-collaborator-first@iwrite.local");
+        collaboratorService.grantInternal(world.book().id(), collaboratorId, DEFAULT_USER_ID);
+        UUID operationId = UUID.randomUUID();
+        SceneContentRequest request = new SceneContentRequest(
+                "{}",
+                "collaborator edit persisted",
+                null,
+                world.scene().contentRevision(),
+                operationId
+        );
+        CountDownLatch collaboratorHoldingLock = new CountDownLatch(1);
+        CountDownLatch allowCollaboratorEdit = new CountDownLatch(1);
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+
+        try {
+            CompletableFuture<SceneResponse> collaboratorFuture = CompletableFuture.supplyAsync(
+                    () -> call(asUser(collaboratorId, () -> inNewTransaction(() -> {
+                        bookAccessService.requireBookEditAccessForUpdate(world.book().id());
+                        collaboratorHoldingLock.countDown();
+                        await(allowCollaboratorEdit);
+                        return sceneService.updateContent(world.scene().id(), request);
+                    }))),
+                    executor
+            );
+
+            await(collaboratorHoldingLock);
+            CompletableFuture<Void> ownerRemovalFuture = CompletableFuture.runAsync(
+                    () -> collaboratorService.remove(world.book().id(), collaboratorId),
+                    executor
+            );
+            waitForBlockedDatabaseLock();
+            assertThat(ownerRemovalFuture).isNotDone();
+
+            allowCollaboratorEdit.countDown();
+            SceneResponse edited = collaboratorFuture.orTimeout(10, TimeUnit.SECONDS).join();
+            ownerRemovalFuture.orTimeout(10, TimeUnit.SECONDS).join();
+
+            assertThat(edited.contentText()).isEqualTo("collaborator edit persisted");
+            assertThat(eventsForKey(world.book().id(), operationId)).hasSize(1);
+            assertProductiveProgress(world.book().id(), collaboratorId, 1);
+        } finally {
+            allowCollaboratorEdit.countDown();
+            executor.shutdownNow();
+        }
+
+        currentUserProvider.switchTo(collaboratorId, DEFAULT_TENANT_ID, ZoneId.of("UTC"));
+        assertThatThrownBy(() -> sceneService.updateContent(
+                world.scene().id(),
+                new SceneContentRequest("{}", "second edit denied", null, world.scene().contentRevision() + 1, UUID.randomUUID())
+        )).isInstanceOf(ResourceNotFoundException.class);
+        currentUserProvider.reset();
     }
 
     @Test
@@ -580,6 +716,14 @@ class SceneWordCountConcurrencyIntegrationTest extends PostgresIntegrationTest {
         };
     }
 
+    private <T> T call(Callable<T> callable) {
+        try {
+            return callable.call();
+        } catch (Exception exception) {
+            throw new IllegalStateException(exception);
+        }
+    }
+
     private <T> T callAfter(CountDownLatch start, Callable<T> callable) {
         try {
             if (!start.await(10, TimeUnit.SECONDS)) {
@@ -588,6 +732,54 @@ class SceneWordCountConcurrencyIntegrationTest extends PostgresIntegrationTest {
             return callable.call();
         } catch (Exception exception) {
             throw new IllegalStateException(exception);
+        }
+    }
+
+    private void await(CountDownLatch latch) {
+        try {
+            if (!latch.await(10, TimeUnit.SECONDS)) {
+                throw new IllegalStateException("Timed out waiting for concurrent test coordination");
+            }
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException(exception);
+        }
+    }
+
+    private void waitForBlockedDatabaseLock() throws Exception {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while (System.nanoTime() < deadline) {
+            if (blockedDatabaseLockCount() > 0) {
+                return;
+            }
+            TimeUnit.MILLISECONDS.sleep(25);
+        }
+        throw new AssertionError("Timed out waiting for a PostgreSQL lock wait");
+    }
+
+    private long blockedDatabaseLockCount() throws SQLException {
+        try (var connection = dataSource.getConnection();
+             var statement = connection.createStatement();
+             var resultSet = statement.executeQuery("""
+                     select count(*)
+                     from pg_locks waiting
+                     join pg_locks blocker
+                       on waiting.locktype = blocker.locktype
+                      and waiting.database is not distinct from blocker.database
+                      and waiting.relation is not distinct from blocker.relation
+                      and waiting.page is not distinct from blocker.page
+                      and waiting.tuple is not distinct from blocker.tuple
+                      and waiting.virtualxid is not distinct from blocker.virtualxid
+                      and waiting.transactionid is not distinct from blocker.transactionid
+                      and waiting.classid is not distinct from blocker.classid
+                      and waiting.objid is not distinct from blocker.objid
+                      and waiting.objsubid is not distinct from blocker.objsubid
+                     where waiting.granted = false
+                       and blocker.granted = true
+                       and waiting.pid <> blocker.pid
+                     """)) {
+            resultSet.next();
+            return resultSet.getLong(1);
         }
     }
 

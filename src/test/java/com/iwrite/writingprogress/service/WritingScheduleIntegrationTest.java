@@ -2,6 +2,7 @@ package com.iwrite.writingprogress.service;
 
 import com.iwrite.book.dto.BookRequest;
 import com.iwrite.book.dto.BookUpdateRequest;
+import com.iwrite.book.service.BookCollaboratorService;
 import com.iwrite.common.exception.BadRequestException;
 import com.iwrite.support.PostgresIntegrationTest;
 import com.iwrite.support.SwitchableCurrentUserProvider;
@@ -52,6 +53,9 @@ class WritingScheduleIntegrationTest extends PostgresIntegrationTest {
 
     @Autowired
     private MutableClock writingScheduleClock;
+
+    @Autowired
+    private BookCollaboratorService collaboratorService;
 
     @PersistenceContext
     private EntityManager entityManager;
@@ -223,6 +227,7 @@ class WritingScheduleIntegrationTest extends PostgresIntegrationTest {
         var book = createBook("timezone rollback pending schedule");
 
         UUID otherUserId = createMember("schedule-rollback-other@iwrite.local");
+        collaboratorService.grantInternal(book.id(), otherUserId, DEFAULT_USER_ID);
         switchUser(otherUserId, tokyo);
         writingScheduleClock.setInstant(creationInstant);
         bookService.findById(book.id());

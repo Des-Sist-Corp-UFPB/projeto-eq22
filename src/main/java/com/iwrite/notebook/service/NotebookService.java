@@ -1,7 +1,7 @@
 package com.iwrite.notebook.service;
 
 import com.iwrite.book.entity.Book;
-import com.iwrite.book.service.BookService;
+import com.iwrite.book.service.BookAccessService;
 import com.iwrite.common.exception.BadRequestException;
 import com.iwrite.common.exception.ConflictException;
 import com.iwrite.common.exception.ResourceNotFoundException;
@@ -44,26 +44,26 @@ public class NotebookService {
     private final NotebookCategoryRepository categoryRepository;
     private final NotebookNoteRepository noteRepository;
     private final BookNotebookSettingsRepository settingsRepository;
-    private final BookService bookService;
+    private final BookAccessService bookAccessService;
     private final CurrentUserProvider currentUserProvider;
 
     public NotebookService(
             NotebookCategoryRepository categoryRepository,
             NotebookNoteRepository noteRepository,
             BookNotebookSettingsRepository settingsRepository,
-            BookService bookService,
+            BookAccessService bookAccessService,
             CurrentUserProvider currentUserProvider
     ) {
         this.categoryRepository = categoryRepository;
         this.noteRepository = noteRepository;
         this.settingsRepository = settingsRepository;
-        this.bookService = bookService;
+        this.bookAccessService = bookAccessService;
         this.currentUserProvider = currentUserProvider;
     }
 
     @Transactional
     public List<NotebookCategoryResponse> findCategoriesByBook(UUID bookId) {
-        Book book = bookService.getBook(bookId);
+        Book book = bookAccessService.requireBookReadAccess(bookId);
         initializeStarterCategories(book);
         return orderedCategories(bookId, currentUserProvider.tenantId())
                 .stream()
@@ -73,7 +73,7 @@ public class NotebookService {
 
     @Transactional
     public NotebookCategoryResponse createCategory(UUID bookId, NotebookCategoryRequest request) {
-        Book book = bookService.getBook(bookId);
+        Book book = bookAccessService.requireBookEditAccess(bookId);
         initializeStarterCategories(book);
         UUID tenantId = currentUserProvider.tenantId();
         rejectDuplicateCategoryName(bookId, tenantId, request.name());
@@ -89,6 +89,7 @@ public class NotebookService {
     @Transactional
     public NotebookCategoryResponse updateCategory(UUID categoryId, NotebookCategoryUpdateRequest request) {
         NotebookCategory category = getCategory(categoryId);
+        requireCategoryBookAccess(category, categoryId, true);
         RequestValidation.rejectBlankWhenPresent("name", request.name());
 
         if (request.name() != null && !category.getName().equals(request.name())) {
@@ -128,7 +129,7 @@ public class NotebookService {
 
     @Transactional(readOnly = true)
     public List<NotebookNoteResponse> findNotesByBook(UUID bookId, UUID categoryId) {
-        bookService.getBook(bookId);
+        bookAccessService.requireBookReadAccess(bookId);
         UUID tenantId = currentUserProvider.tenantId();
 
         if (categoryId != null) {
@@ -154,7 +155,7 @@ public class NotebookService {
 
     @Transactional
     public NotebookNoteResponse createNote(UUID bookId, NotebookNoteRequest request) {
-        Book book = bookService.getBook(bookId);
+        Book book = bookAccessService.requireBookEditAccess(bookId);
         NotebookCategory category = findCategoryForBook(bookId, request.categoryId());
 
         NotebookNote note = new NotebookNote();
@@ -175,6 +176,7 @@ public class NotebookService {
     @Transactional
     public NotebookNoteResponse updateNote(UUID noteId, NotebookNoteUpdateRequest request) {
         NotebookNote note = getNote(noteId);
+        requireNoteBookAccess(note, noteId, true);
         RequestValidation.rejectBlankWhenPresent("title", request.title());
         NotebookCategory category = request.isCategoryIdPresent()
                 ? findCategoryForBook(note.getBook().getId(), request.categoryId())
@@ -199,19 +201,24 @@ public class NotebookService {
     @Transactional
     public void deleteNote(UUID noteId) {
         NotebookNote note = getNote(noteId);
+        requireNoteBookAccess(note, noteId, true);
         noteRepository.delete(note);
     }
 
     @Transactional(readOnly = true)
     public NotebookCategory getCategory(UUID categoryId) {
-        return categoryRepository.findByIdAndBook_Tenant_Id(categoryId, currentUserProvider.tenantId())
-                .orElseThrow(() -> new ResourceNotFoundException("Notebook category not found: " + categoryId));
+        NotebookCategory category = categoryRepository.findByIdAndBook_Tenant_Id(categoryId, currentUserProvider.tenantId())
+                .orElseThrow(() -> categoryNotFound(categoryId));
+        requireCategoryBookAccess(category, categoryId, false);
+        return category;
     }
 
     @Transactional(readOnly = true)
     public NotebookNote getNote(UUID noteId) {
-        return noteRepository.findByIdAndBook_Tenant_Id(noteId, currentUserProvider.tenantId())
-                .orElseThrow(() -> new ResourceNotFoundException("Notebook note not found: " + noteId));
+        NotebookNote note = noteRepository.findByIdAndBook_Tenant_Id(noteId, currentUserProvider.tenantId())
+                .orElseThrow(() -> noteNotFound(noteId));
+        requireNoteBookAccess(note, noteId, false);
+        return note;
     }
 
     private void initializeStarterCategories(Book book) {
@@ -242,8 +249,10 @@ public class NotebookService {
     }
 
     private NotebookCategory getCategoryForUpdate(UUID categoryId) {
-        return categoryRepository.findByIdAndBookTenantIdForUpdate(categoryId, currentUserProvider.tenantId())
-                .orElseThrow(() -> new ResourceNotFoundException("Notebook category not found: " + categoryId));
+        NotebookCategory category = categoryRepository.findByIdAndBookTenantIdForUpdate(categoryId, currentUserProvider.tenantId())
+                .orElseThrow(() -> categoryNotFound(categoryId));
+        requireCategoryBookAccess(category, categoryId, true);
+        return category;
     }
 
     private int nextSortOrder(UUID bookId, UUID tenantId) {
@@ -268,5 +277,37 @@ public class NotebookService {
 
     private ConflictException notebookCategoryReferencedConflict() {
         return new ConflictException("Notebook category cannot be deleted while it is referenced.");
+    }
+
+    private void requireCategoryBookAccess(NotebookCategory category, UUID categoryId, boolean edit) {
+        try {
+            if (edit) {
+                bookAccessService.requireBookEditAccess(category.getBook().getId());
+            } else {
+                bookAccessService.requireBookReadAccess(category.getBook().getId());
+            }
+        } catch (ResourceNotFoundException exception) {
+            throw categoryNotFound(categoryId);
+        }
+    }
+
+    private void requireNoteBookAccess(NotebookNote note, UUID noteId, boolean edit) {
+        try {
+            if (edit) {
+                bookAccessService.requireBookEditAccess(note.getBook().getId());
+            } else {
+                bookAccessService.requireBookReadAccess(note.getBook().getId());
+            }
+        } catch (ResourceNotFoundException exception) {
+            throw noteNotFound(noteId);
+        }
+    }
+
+    private ResourceNotFoundException categoryNotFound(UUID categoryId) {
+        return new ResourceNotFoundException("Notebook category not found: " + categoryId);
+    }
+
+    private ResourceNotFoundException noteNotFound(UUID noteId) {
+        return new ResourceNotFoundException("Notebook note not found: " + noteId);
     }
 }

@@ -208,8 +208,16 @@ class BookDashboardControllerIntegrationTest extends PostgresIntegrationTest {
 
     private Book createForeignTenantBook(String title) {
         Tenant tenant = createForeignTenant("HTTP foreign book tenant");
+        User owner = createUser("HTTP Foreign Book Owner", "http.foreign.book.owner@iwrite.local");
+        TenantMembership membership = new TenantMembership();
+        membership.setTenant(tenant);
+        membership.setUser(owner);
+        membership.setRole(TenantMembershipRole.OWNER);
+        entityManager.persist(membership);
+
         Book book = new Book();
         book.setTenant(tenant);
+        book.setOwner(owner);
         book.setTitle(title);
         entityManager.persist(book);
         return book;

@@ -1,7 +1,7 @@
 package com.iwrite.export.service;
 
 import com.iwrite.book.entity.Book;
-import com.iwrite.book.service.BookService;
+import com.iwrite.book.service.BookAccessService;
 import com.iwrite.chapter.entity.Chapter;
 import com.iwrite.chapter.repository.ChapterRepository;
 import com.iwrite.export.ExportFile;
@@ -41,7 +41,7 @@ public class BookExportService {
     private static final String NOTEBOOK_TITLE_PREFIX = "Caderno \u2014 ";
     private static final String UNCATEGORIZED_CATEGORY_NAME = "Sem categoria";
 
-    private final BookService bookService;
+    private final BookAccessService bookAccessService;
     private final BookSectionRepository sectionRepository;
     private final ChapterRepository chapterRepository;
     private final SceneRepository sceneRepository;
@@ -53,7 +53,7 @@ public class BookExportService {
     private final ExportFileNameService exportFileNameService;
 
     public BookExportService(
-            BookService bookService,
+            BookAccessService bookAccessService,
             BookSectionRepository sectionRepository,
             ChapterRepository chapterRepository,
             SceneRepository sceneRepository,
@@ -64,7 +64,7 @@ public class BookExportService {
             TipTapPlainTextRenderer tipTapPlainTextRenderer,
             ExportFileNameService exportFileNameService
     ) {
-        this.bookService = bookService;
+        this.bookAccessService = bookAccessService;
         this.sectionRepository = sectionRepository;
         this.chapterRepository = chapterRepository;
         this.sceneRepository = sceneRepository;
@@ -145,12 +145,12 @@ public class BookExportService {
     }
 
     public String getMarkdownFileName(UUID bookId) {
-        Book book = bookService.getBook(bookId);
+        Book book = bookAccessService.requireBookReadAccess(bookId);
         return manuscriptFileName(book, ExportFormat.MD);
     }
 
     public String getDocxFileName(UUID bookId) {
-        Book book = bookService.getBook(bookId);
+        Book book = bookAccessService.requireBookReadAccess(bookId);
         return manuscriptFileName(book, ExportFormat.DOCX);
     }
 
@@ -214,7 +214,7 @@ public class BookExportService {
     }
 
     private ManuscriptExport getManuscriptExport(UUID bookId) {
-        Book book = bookService.getBook(bookId);
+        Book book = bookAccessService.requireBookReadAccess(bookId);
         List<BookSection> sections = sectionRepository.findByBookIdOrderBySortOrderAsc(bookId);
         List<Chapter> chapters = chapterRepository.findByBookIdOrderBySortOrderAsc(bookId);
         List<Scene> scenes = sceneRepository.findByBookIdOrderBySortOrderAsc(bookId);
@@ -232,7 +232,7 @@ public class BookExportService {
             throw new BadRequestException("At least one notebook note status must be included");
         }
 
-        Book book = bookService.getBook(bookId);
+        Book book = bookAccessService.requireBookReadAccess(bookId);
         List<NotebookNote> notes = notebookNoteRepository.findByBookIdOrderByUpdatedAtDescIdAsc(bookId)
                 .stream()
                 .filter(note -> shouldIncludeNotebookStatus(note.getStatus(), includeOpen, includeResolved))

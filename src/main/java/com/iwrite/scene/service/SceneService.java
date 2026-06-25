@@ -1,7 +1,7 @@
 package com.iwrite.scene.service;
 
 import com.iwrite.book.entity.Book;
-import com.iwrite.book.service.BookService;
+import com.iwrite.book.service.BookAccessService;
 import com.iwrite.chapter.entity.Chapter;
 import com.iwrite.chapter.service.ChapterService;
 import com.iwrite.character.entity.Character;
@@ -63,7 +63,7 @@ public class SceneService {
     private final SceneDeletionLedgerService sceneDeletionLedgerService;
     private final WordCountEventService wordCountEventService;
     private final BookWordCountEventRepository wordCountEventRepository;
-    private final BookService bookService;
+    private final BookAccessService bookAccessService;
     private final CurrentUserProvider currentUserProvider;
 
     public SceneService(
@@ -78,7 +78,7 @@ public class SceneService {
             SceneDeletionLedgerService sceneDeletionLedgerService,
             WordCountEventService wordCountEventService,
             BookWordCountEventRepository wordCountEventRepository,
-            BookService bookService,
+            BookAccessService bookAccessService,
             CurrentUserProvider currentUserProvider
     ) {
         this.sceneRepository = sceneRepository;
@@ -92,7 +92,7 @@ public class SceneService {
         this.sceneDeletionLedgerService = sceneDeletionLedgerService;
         this.wordCountEventService = wordCountEventService;
         this.wordCountEventRepository = wordCountEventRepository;
-        this.bookService = bookService;
+        this.bookAccessService = bookAccessService;
         this.currentUserProvider = currentUserProvider;
     }
 
@@ -105,7 +105,7 @@ public class SceneService {
     public SceneResponse create(UUID chapterId, SceneRequest request) {
         Chapter chapter = chapterService.getChapter(chapterId);
         UUID bookId = chapter.getBook().getId();
-        Book lockedBook = bookService.getBookForWordCountUpdate(bookId);
+        Book lockedBook = bookAccessService.requireBookEditAccessForUpdate(bookId);
         UUID operationId = request.operationId() == null ? UUID.randomUUID() : request.operationId();
         String requestFingerprint = WordCountRequestFingerprint.sceneCreate(
                 currentUserProvider.userId(),
@@ -165,7 +165,7 @@ public class SceneService {
 
     @Transactional
     public SceneResponse update(UUID sceneId, SceneUpdateRequest request) {
-        Scene scene = getScene(sceneId);
+        Scene scene = getSceneForEdit(sceneId);
         RequestValidation.rejectBlankWhenPresent("title", request.title());
 
         if (request.title() != null) {
@@ -192,7 +192,7 @@ public class SceneService {
     public SceneResponse updateContent(UUID sceneId, SceneContentRequest request) {
         Scene scene = getSceneForUpdate(sceneId);
         rejectMissingOperationId(request.operationId());
-        Book lockedBook = bookService.getBookForWordCountUpdate(scene.getBook().getId());
+        Book lockedBook = bookAccessService.requireBookEditAccessForUpdate(scene.getBook().getId());
         SceneVersionSource source = contentSource(request.source());
         String requestFingerprint = WordCountRequestFingerprint.contentSave(
                 currentUserProvider.userId(),
@@ -266,7 +266,7 @@ public class SceneService {
     public SceneResponse restoreVersion(UUID sceneId, UUID versionId, SceneVersionRestoreRequest request) {
         Scene scene = getSceneForUpdate(sceneId);
         rejectMissingOperationId(request.operationId());
-        Book lockedBook = bookService.getBookForWordCountUpdate(scene.getBook().getId());
+        Book lockedBook = bookAccessService.requireBookEditAccessForUpdate(scene.getBook().getId());
         SceneVersion version = sceneVersionService.getCurrentSceneVersion(sceneId, versionId);
         String requestFingerprint = WordCountRequestFingerprint.versionRestore(
                 currentUserProvider.userId(),
@@ -318,7 +318,7 @@ public class SceneService {
 
     @Transactional
     public SceneResponse updatePlanning(UUID sceneId, ScenePlanningRequest request) {
-        Scene scene = getScene(sceneId);
+        Scene scene = getSceneForEdit(sceneId);
         UUID bookId = scene.getBook().getId();
         List<String> gapsBefore = scene.getStatus() == SceneStatus.PLANNED
                 ? planningCompletenessService.planningGaps(scene)
@@ -346,7 +346,7 @@ public class SceneService {
     @Transactional
     public void delete(UUID sceneId) {
         Scene scene = getSceneForUpdate(sceneId);
-        Book lockedBook = bookService.getBookForWordCountUpdate(scene.getBook().getId());
+        Book lockedBook = bookAccessService.requireBookEditAccessForUpdate(scene.getBook().getId());
         sceneDeletionLedgerService.prepareSceneDelete(scene, lockedBook);
         sceneRepository.delete(scene);
     }
@@ -360,13 +360,40 @@ public class SceneService {
 
     @Transactional(readOnly = true)
     public Scene getScene(UUID sceneId) {
-        return sceneRepository.findByIdAndTenantId(sceneId, currentUserProvider.tenantId())
-                .orElseThrow(() -> new ResourceNotFoundException("Scene not found: " + sceneId));
+        Scene scene = sceneRepository.findByIdAndTenantId(sceneId, currentUserProvider.tenantId())
+                .orElseThrow(() -> sceneNotFound(sceneId));
+        requireSceneBookAccess(scene, sceneId, false);
+        return scene;
     }
 
     private Scene getSceneForUpdate(UUID sceneId) {
-        return sceneRepository.findByIdAndTenantIdForUpdate(sceneId, currentUserProvider.tenantId())
-                .orElseThrow(() -> new ResourceNotFoundException("Scene not found: " + sceneId));
+        Scene scene = sceneRepository.findByIdAndTenantIdForUpdate(sceneId, currentUserProvider.tenantId())
+                .orElseThrow(() -> sceneNotFound(sceneId));
+        requireSceneBookAccess(scene, sceneId, true);
+        return scene;
+    }
+
+    private Scene getSceneForEdit(UUID sceneId) {
+        Scene scene = sceneRepository.findByIdAndTenantId(sceneId, currentUserProvider.tenantId())
+                .orElseThrow(() -> sceneNotFound(sceneId));
+        requireSceneBookAccess(scene, sceneId, true);
+        return scene;
+    }
+
+    private void requireSceneBookAccess(Scene scene, UUID sceneId, boolean edit) {
+        try {
+            if (edit) {
+                bookAccessService.requireBookEditAccess(scene.getBook().getId());
+            } else {
+                bookAccessService.requireBookReadAccess(scene.getBook().getId());
+            }
+        } catch (ResourceNotFoundException exception) {
+            throw sceneNotFound(sceneId);
+        }
+    }
+
+    private ResourceNotFoundException sceneNotFound(UUID sceneId) {
+        return new ResourceNotFoundException("Scene not found: " + sceneId);
     }
 
     private Character findCharacterForBook(UUID bookId, UUID characterId, String fieldName) {
