@@ -311,6 +311,7 @@ public class UserDashboardService {
     private static class BookTotals {
         private final Book book;
         private final Set<LocalDate> positiveDates = new HashSet<>();
+        private boolean recordedContribution;
         private long productiveWords;
         private long manuscriptAdjustments;
 
@@ -321,13 +322,16 @@ public class UserDashboardService {
         void add(DailyWritingProgress progress) {
             productiveWords += progress.getProductiveWordCountChange();
             manuscriptAdjustments += progress.getManuscriptAdjustmentWordCount();
+            if (UserDashboardService.hasRecordedContribution(progress)) {
+                recordedContribution = true;
+            }
             if (progress.getProductiveWordCountChange() > 0) {
                 positiveDates.add(progress.getProgressDate());
             }
         }
 
         boolean hasRecordedContribution() {
-            return productiveWords != 0 || manuscriptAdjustments != 0;
+            return recordedContribution;
         }
     }
 }

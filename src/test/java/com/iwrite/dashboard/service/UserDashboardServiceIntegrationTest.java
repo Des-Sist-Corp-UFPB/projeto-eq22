@@ -232,6 +232,53 @@ class UserDashboardServiceIntegrationTest extends PostgresIntegrationTest {
     }
 
     @Test
+    void netZeroProductiveBookStillAppearsWhenRowsRecordActivity() {
+        Book book = bookService.getBook(createBook("Net zero productive book").id());
+        saveProgress(book, DEFAULT_USER_ID, TODAY.minusDays(1), 100, 0);
+        saveProgress(book, DEFAULT_USER_ID, TODAY, -100, 0);
+        entityManager.flush();
+        entityManager.clear();
+
+        var dashboard = dashboardService.getCurrentUserDashboard(WritingProgressPeriod.SEVEN_DAYS);
+
+        assertThat(dashboard.summary().productiveWords()).isZero();
+        assertThat(dashboard.summary().booksWrittenIn()).isEqualTo(1);
+        assertThat(dashboard.summary().writingDays()).isEqualTo(1);
+        assertThat(dashboard.bookContributions())
+                .singleElement()
+                .satisfies(contribution -> {
+                    assertThat(contribution.bookId()).isEqualTo(book.getId());
+                    assertThat(contribution.productiveWords()).isZero();
+                    assertThat(contribution.manuscriptAdjustments()).isZero();
+                    assertThat(contribution.writingDays()).isEqualTo(1);
+                });
+    }
+
+    @Test
+    void netZeroAdjustmentOnlyBookStillAppearsWithoutCountingAsProductiveWriting() {
+        Book book = bookService.getBook(createBook("Net zero adjustment book").id());
+        saveProgress(book, DEFAULT_USER_ID, TODAY.minusDays(1), 0, 20);
+        saveProgress(book, DEFAULT_USER_ID, TODAY, 0, -20);
+        entityManager.flush();
+        entityManager.clear();
+
+        var dashboard = dashboardService.getCurrentUserDashboard(WritingProgressPeriod.SEVEN_DAYS);
+
+        assertThat(dashboard.summary().productiveWords()).isZero();
+        assertThat(dashboard.summary().manuscriptAdjustments()).isZero();
+        assertThat(dashboard.summary().booksWrittenIn()).isZero();
+        assertThat(dashboard.summary().writingDays()).isZero();
+        assertThat(dashboard.bookContributions())
+                .singleElement()
+                .satisfies(contribution -> {
+                    assertThat(contribution.bookId()).isEqualTo(book.getId());
+                    assertThat(contribution.productiveWords()).isZero();
+                    assertThat(contribution.manuscriptAdjustments()).isZero();
+                    assertThat(contribution.writingDays()).isZero();
+                });
+    }
+
+    @Test
     void currentGlobalStreakContinuesThroughYesterdayWhenTodayHasNoWriting() {
         Book book = bookService.getBook(createBook("No writing today streak").id());
         saveProgress(book, DEFAULT_USER_ID, TODAY.minusDays(2), 4, 0);
