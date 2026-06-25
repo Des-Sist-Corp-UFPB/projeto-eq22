@@ -1,7 +1,7 @@
 package com.iwrite.dashboard.service;
 
 import com.iwrite.book.entity.Book;
-import com.iwrite.book.service.BookService;
+import com.iwrite.book.service.BookAccessService;
 import com.iwrite.chapter.entity.Chapter;
 import com.iwrite.chapter.repository.ChapterRepository;
 import com.iwrite.character.entity.Character;
@@ -43,7 +43,7 @@ import java.util.UUID;
 @Service
 public class BookDashboardService {
 
-    private final BookService bookService;
+    private final BookAccessService bookAccessService;
     private final BookSectionRepository sectionRepository;
     private final ChapterRepository chapterRepository;
     private final SceneRepository sceneRepository;
@@ -52,7 +52,7 @@ public class BookDashboardService {
     private final ScenePlanningCompletenessService planningCompletenessService;
 
     public BookDashboardService(
-            BookService bookService,
+            BookAccessService bookAccessService,
             BookSectionRepository sectionRepository,
             ChapterRepository chapterRepository,
             SceneRepository sceneRepository,
@@ -60,7 +60,7 @@ public class BookDashboardService {
             WritingScheduleService writingScheduleService,
             ScenePlanningCompletenessService planningCompletenessService
     ) {
-        this.bookService = bookService;
+        this.bookAccessService = bookAccessService;
         this.sectionRepository = sectionRepository;
         this.chapterRepository = chapterRepository;
         this.sceneRepository = sceneRepository;
@@ -76,7 +76,7 @@ public class BookDashboardService {
 
     @Transactional
     public BookDashboardResponse getDashboard(UUID bookId, WritingProgressPeriod progressPeriod) {
-        Book book = bookService.getBook(bookId);
+        Book book = bookAccessService.requireBookReadAccess(bookId);
         List<Scene> scenes = sceneRepository.findByBookIdOrderBySortOrderAsc(bookId);
 
         int totalScenes = scenes.size();

@@ -1,5 +1,6 @@
 export type BookStatus = "PLANNING" | "WRITING" | "REVISING" | "FINISHED" | "ARCHIVED";
 export type DayOfWeek = "MONDAY" | "TUESDAY" | "WEDNESDAY" | "THURSDAY" | "FRIDAY" | "SATURDAY" | "SUNDAY";
+export type BookAccessLevel = "OWNER" | "COLLABORATOR";
 
 export type Book = {
   id: string;
@@ -10,6 +11,7 @@ export type Book = {
   targetWordCount: number | null;
   dailyTargetWordCount: number | null;
   plannedWritingDays: DayOfWeek[];
+  accessLevel: BookAccessLevel;
   createdAt: string;
   updatedAt: string;
 };

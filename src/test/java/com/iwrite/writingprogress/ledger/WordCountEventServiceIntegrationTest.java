@@ -1,6 +1,7 @@
 package com.iwrite.writingprogress.ledger;
 
 import com.iwrite.book.dto.BookRequest;
+import com.iwrite.book.service.BookCollaboratorService;
 import com.iwrite.scene.dto.SceneResponse;
 import com.iwrite.scene.entity.SceneStatus;
 import com.iwrite.support.PostgresIntegrationTest;
@@ -57,6 +58,9 @@ class WordCountEventServiceIntegrationTest extends PostgresIntegrationTest {
 
     @Autowired
     private WordCountEventService eventService;
+
+    @Autowired
+    private BookCollaboratorService collaboratorService;
 
     @Autowired
     private BookWordCountEventRepository eventRepository;
@@ -170,6 +174,7 @@ class WordCountEventServiceIntegrationTest extends PostgresIntegrationTest {
         var book = createBook("ledger interleaved users");
         var scene = createEmptyScene(book.id(), "Interleaved scene");
         UUID userBId = createMember("ledger-user-b@iwrite.local");
+        collaboratorService.grantInternal(book.id(), userBId, DEFAULT_USER_ID);
         entityManager.flush();
 
         eventService.record(command(book.id(), scene, BookWordCountEventType.CONTENT_SAVE, 5, 5, UUID.randomUUID(), 15));
@@ -318,6 +323,7 @@ class WordCountEventServiceIntegrationTest extends PostgresIntegrationTest {
         var book = createBook("ledger same instant zones");
         var scene = createEmptyScene(book.id(), "Same instant scene");
         UUID userBId = createMember("ledger-zoned-user-b@iwrite.local");
+        collaboratorService.grantInternal(book.id(), userBId, DEFAULT_USER_ID);
         entityManager.flush();
         writingProgressClock.setInstant(Instant.parse("2026-06-02T23:30:00Z"));
 

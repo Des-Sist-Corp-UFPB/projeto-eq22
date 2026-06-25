@@ -1,7 +1,7 @@
 package com.iwrite.outline.service;
 
 import com.iwrite.book.entity.Book;
-import com.iwrite.book.service.BookService;
+import com.iwrite.book.service.BookAccessService;
 import com.iwrite.chapter.entity.Chapter;
 import com.iwrite.chapter.repository.ChapterRepository;
 import com.iwrite.outline.dto.BookOutlineResponse;
@@ -24,20 +24,20 @@ import java.util.stream.Collectors;
 @Service
 public class OutlineService {
 
-    private final BookService bookService;
+    private final BookAccessService bookAccessService;
     private final BookSectionRepository sectionRepository;
     private final ChapterRepository chapterRepository;
     private final SceneRepository sceneRepository;
     private final ScenePlanningCompletenessService planningCompletenessService;
 
     public OutlineService(
-            BookService bookService,
+            BookAccessService bookAccessService,
             BookSectionRepository sectionRepository,
             ChapterRepository chapterRepository,
             SceneRepository sceneRepository,
             ScenePlanningCompletenessService planningCompletenessService
     ) {
-        this.bookService = bookService;
+        this.bookAccessService = bookAccessService;
         this.sectionRepository = sectionRepository;
         this.chapterRepository = chapterRepository;
         this.sceneRepository = sceneRepository;
@@ -46,7 +46,7 @@ public class OutlineService {
 
     @Transactional(readOnly = true)
     public BookOutlineResponse getOutline(UUID bookId) {
-        Book book = bookService.getBook(bookId);
+        Book book = bookAccessService.requireBookReadAccess(bookId);
         List<BookSection> sections = sectionRepository.findByBookIdOrderBySortOrderAsc(bookId);
         List<Chapter> chapters = chapterRepository.findByBookIdOrderBySortOrderAsc(bookId);
         List<Scene> scenes = sceneRepository.findOutlineScenesByBookId(bookId);

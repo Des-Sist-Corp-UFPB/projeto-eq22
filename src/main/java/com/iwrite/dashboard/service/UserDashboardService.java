@@ -1,7 +1,7 @@
 package com.iwrite.dashboard.service;
 
 import com.iwrite.book.entity.Book;
-import com.iwrite.book.service.BookService;
+import com.iwrite.book.service.BookAccessService;
 import com.iwrite.common.exception.ResourceNotFoundException;
 import com.iwrite.dashboard.dto.BookContributionDashboardResponse;
 import com.iwrite.dashboard.dto.ContributionDailyWritingResponse;
@@ -45,7 +45,7 @@ public class UserDashboardService {
     private final CurrentUserMembershipService currentUserMembershipService;
     private final DailyWritingProgressRepository progressRepository;
     private final WritingDayResolver writingDayResolver;
-    private final BookService bookService;
+    private final BookAccessService bookAccessService;
     private final UserRepository userRepository;
 
     public UserDashboardService(
@@ -53,14 +53,14 @@ public class UserDashboardService {
             CurrentUserMembershipService currentUserMembershipService,
             DailyWritingProgressRepository progressRepository,
             WritingDayResolver writingDayResolver,
-            BookService bookService,
+            BookAccessService bookAccessService,
             UserRepository userRepository
     ) {
         this.currentUserProvider = currentUserProvider;
         this.currentUserMembershipService = currentUserMembershipService;
         this.progressRepository = progressRepository;
         this.writingDayResolver = writingDayResolver;
-        this.bookService = bookService;
+        this.bookAccessService = bookAccessService;
         this.userRepository = userRepository;
     }
 
@@ -94,7 +94,7 @@ public class UserDashboardService {
             WritingProgressPeriod progressPeriod,
             UUID contributorId
     ) {
-        Book book = bookService.getBook(bookId);
+        Book book = bookAccessService.requireBookReadAccess(bookId);
         UUID currentUserId = currentUserMembershipService.requireCurrentUserMemberId();
         LocalDate today = writingDayResolver.currentWritingDate();
         LocalDate startDate = progressPeriod.startDateInclusive(today);

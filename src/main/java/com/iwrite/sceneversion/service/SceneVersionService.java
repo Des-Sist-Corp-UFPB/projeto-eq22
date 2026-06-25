@@ -1,5 +1,6 @@
 package com.iwrite.sceneversion.service;
 
+import com.iwrite.book.service.BookAccessService;
 import com.iwrite.common.exception.ResourceNotFoundException;
 import com.iwrite.scene.entity.Scene;
 import com.iwrite.scene.repository.SceneRepository;
@@ -38,6 +39,7 @@ public class SceneVersionService {
     private final SceneVersionRepository versionRepository;
     private final SceneRepository sceneRepository;
     private final CurrentUserProvider currentUserProvider;
+    private final BookAccessService bookAccessService;
 
     @PersistenceContext
     private EntityManager entityManager;
@@ -45,11 +47,13 @@ public class SceneVersionService {
     public SceneVersionService(
             SceneVersionRepository versionRepository,
             SceneRepository sceneRepository,
-            CurrentUserProvider currentUserProvider
+            CurrentUserProvider currentUserProvider,
+            BookAccessService bookAccessService
     ) {
         this.versionRepository = versionRepository;
         this.sceneRepository = sceneRepository;
         this.currentUserProvider = currentUserProvider;
+        this.bookAccessService = bookAccessService;
     }
 
     @Transactional(readOnly = true)
@@ -175,7 +179,11 @@ public class SceneVersionService {
     }
 
     private void requireCurrentScene(UUID sceneId) {
-        if (sceneRepository.findByIdAndTenantId(sceneId, currentUserProvider.tenantId()).isEmpty()) {
+        Scene scene = sceneRepository.findByIdAndTenantId(sceneId, currentUserProvider.tenantId())
+                .orElseThrow(() -> new ResourceNotFoundException("Scene not found: " + sceneId));
+        try {
+            bookAccessService.requireBookReadAccess(scene.getBook().getId());
+        } catch (ResourceNotFoundException exception) {
             throw new ResourceNotFoundException("Scene not found: " + sceneId);
         }
     }

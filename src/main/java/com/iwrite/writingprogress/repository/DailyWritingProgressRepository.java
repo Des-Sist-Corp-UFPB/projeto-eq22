@@ -54,6 +54,16 @@ public interface DailyWritingProgressRepository extends JpaRepository<DailyWriti
             join fetch progress.book book
             where progress.user.id = :userId
               and book.tenant.id = :tenantId
+              and (
+                    book.owner.id = :userId
+                    or exists (
+                        select 1
+                        from BookCollaborator collaborator
+                        where collaborator.book = book
+                          and collaborator.tenant.id = :tenantId
+                          and collaborator.user.id = :userId
+                    )
+              )
               and progress.progressDate between :startDate and :endDate
             order by progress.progressDate asc, book.title asc, book.id asc
             """)
@@ -70,6 +80,16 @@ public interface DailyWritingProgressRepository extends JpaRepository<DailyWriti
             join progress.book book
             where progress.user.id = :userId
               and book.tenant.id = :tenantId
+              and (
+                    book.owner.id = :userId
+                    or exists (
+                        select 1
+                        from BookCollaborator collaborator
+                        where collaborator.book = book
+                          and collaborator.tenant.id = :tenantId
+                          and collaborator.user.id = :userId
+                    )
+              )
               and progress.productiveWordCountChange > 0
               and progress.progressDate <= :endDate
             order by progress.progressDate asc

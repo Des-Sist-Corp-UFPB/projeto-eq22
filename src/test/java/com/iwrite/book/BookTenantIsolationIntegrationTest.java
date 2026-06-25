@@ -206,6 +206,7 @@ class BookTenantIsolationIntegrationTest extends PostgresIntegrationTest {
                 .andExpect(jsonPath("$.plannedWritingDays", contains("MONDAY", "WEDNESDAY")));
 
         UUID sameTenantUserId = createMember(DEFAULT_TENANT_ID, "same-tenant-reader@iwrite.local");
+        addCollaborator(book.id(), sameTenantUserId);
         currentUserProvider.switchTo(sameTenantUserId, DEFAULT_TENANT_ID, ZoneId.of("UTC"));
 
         mockMvc.perform(get("/api/books"))
@@ -230,6 +231,8 @@ class BookTenantIsolationIntegrationTest extends PostgresIntegrationTest {
                         .containsExactlyInAnyOrder(java.time.DayOfWeek.MONDAY, java.time.DayOfWeek.WEDNESDAY));
 
         UUID sameTenantPatchUserId = createMember(DEFAULT_TENANT_ID, "same-tenant-patcher@iwrite.local");
+        currentUserProvider.reset();
+        addCollaborator(book.id(), sameTenantPatchUserId);
         currentUserProvider.switchTo(sameTenantPatchUserId, DEFAULT_TENANT_ID, ZoneId.of("UTC"));
         mockMvc.perform(patch("/api/books/{bookId}", book.id())
                         .contentType(MediaType.APPLICATION_JSON)
@@ -269,6 +272,13 @@ class BookTenantIsolationIntegrationTest extends PostgresIntegrationTest {
         entityManager.persist(membership);
         entityManager.flush();
         return user.getId();
+    }
+
+    private void addCollaborator(UUID bookId, UUID userId) throws Exception {
+        mockMvc.perform(post("/api/books/{bookId}/collaborators", bookId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("userId", userId))))
+                .andExpect(status().isCreated());
     }
 
     private void assertBookNotFound(org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder request)

@@ -22,6 +22,7 @@ const bookStatuses = Object.keys(statusLabels) as BookStatus[];
 
 export function BookCard({ book }: { book: Book }) {
   const queryClient = useQueryClient();
+  const isOwner = book.accessLevel === "OWNER";
   const [isEditing, setIsEditing] = useState(false);
   const [title, setTitle] = useState(book.title);
   const [subtitle, setSubtitle] = useState(book.subtitle ?? "");
@@ -168,9 +169,11 @@ export function BookCard({ book }: { book: Book }) {
           <Button type="button" variant="secondary" size="sm" onClick={() => setIsEditing(true)}>
             Editar
           </Button>
-          <Button type="button" variant="ghost" size="sm" onClick={handleDelete} disabled={deleteMutation.isPending}>
-            {deleteMutation.isPending ? "Excluindo..." : "Excluir"}
-          </Button>
+          {isOwner ? (
+            <Button type="button" variant="ghost" size="sm" onClick={handleDelete} disabled={deleteMutation.isPending}>
+              {deleteMutation.isPending ? "Excluindo..." : "Excluir"}
+            </Button>
+          ) : null}
         </div>
         {deleteMutation.isError ? (
           <FeedbackMessage variant="error">Não foi possível excluir o livro.</FeedbackMessage>

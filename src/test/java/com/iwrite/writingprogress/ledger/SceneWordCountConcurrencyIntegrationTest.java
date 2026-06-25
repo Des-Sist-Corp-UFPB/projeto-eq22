@@ -3,6 +3,7 @@ package com.iwrite.writingprogress.ledger;
 import com.iwrite.common.exception.ConflictException;
 import com.iwrite.common.exception.ResourceNotFoundException;
 import com.iwrite.book.entity.Book;
+import com.iwrite.book.service.BookCollaboratorService;
 import com.iwrite.scene.dto.SceneContentRequest;
 import com.iwrite.scene.dto.SceneRequest;
 import com.iwrite.scene.dto.SceneResponse;
@@ -67,6 +68,9 @@ class SceneWordCountConcurrencyIntegrationTest extends PostgresIntegrationTest {
 
     @Autowired
     private ThreadLocalCurrentUserProvider currentUserProvider;
+
+    @Autowired
+    private BookCollaboratorService collaboratorService;
 
     @Autowired
     private PlatformTransactionManager transactionManager;
@@ -220,6 +224,7 @@ class SceneWordCountConcurrencyIntegrationTest extends PostgresIntegrationTest {
     void sameKeyDifferentActorConflictsAtBookScope() {
         var world = createStoryWorld("b7c same key different actor");
         UUID otherUserId = createMember("b7c-other-actor@iwrite.local");
+        collaboratorService.grantInternal(world.book().id(), otherUserId, DEFAULT_USER_ID);
         UUID operationId = UUID.randomUUID();
 
         sceneService.updateContent(
@@ -269,6 +274,7 @@ class SceneWordCountConcurrencyIntegrationTest extends PostgresIntegrationTest {
         SceneResponse firstScene = createScene(chapter, "First concurrent", SceneStatus.DRAFT, 0, "");
         SceneResponse secondScene = createScene(chapter, "Second concurrent", SceneStatus.DRAFT, 1, "");
         UUID otherUserId = createMember("b7c-concurrent-user@iwrite.local");
+        collaboratorService.grantInternal(book.id(), otherUserId, DEFAULT_USER_ID);
         UUID firstOperationId = UUID.randomUUID();
         UUID secondOperationId = UUID.randomUUID();
 

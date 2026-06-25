@@ -1,7 +1,7 @@
 package com.iwrite.chapter.service;
 
 import com.iwrite.book.entity.Book;
-import com.iwrite.book.service.BookService;
+import com.iwrite.book.service.BookAccessService;
 import com.iwrite.chapter.dto.ChapterRequest;
 import com.iwrite.chapter.dto.ChapterResponse;
 import com.iwrite.chapter.dto.ChapterUpdateRequest;
@@ -33,7 +33,7 @@ public class ChapterService {
     private final BookSectionService sectionService;
     private final SceneRepository sceneRepository;
     private final SceneDeletionLedgerService sceneDeletionLedgerService;
-    private final BookService bookService;
+    private final BookAccessService bookAccessService;
     private final CurrentUserProvider currentUserProvider;
 
     public ChapterService(
@@ -41,14 +41,14 @@ public class ChapterService {
             BookSectionService sectionService,
             SceneRepository sceneRepository,
             SceneDeletionLedgerService sceneDeletionLedgerService,
-            BookService bookService,
+            BookAccessService bookAccessService,
             CurrentUserProvider currentUserProvider
     ) {
         this.chapterRepository = chapterRepository;
         this.sectionService = sectionService;
         this.sceneRepository = sceneRepository;
         this.sceneDeletionLedgerService = sceneDeletionLedgerService;
-        this.bookService = bookService;
+        this.bookAccessService = bookAccessService;
         this.currentUserProvider = currentUserProvider;
     }
 
@@ -88,7 +88,7 @@ public class ChapterService {
     public void delete(UUID chapterId) {
         Chapter chapter = getChapter(chapterId);
         var scenes = sceneRepository.findByChapterIdForUpdate(chapterId);
-        Book lockedBook = bookService.getBookForWordCountUpdate(chapter.getBook().getId());
+        Book lockedBook = bookAccessService.requireBookEditAccessForUpdate(chapter.getBook().getId());
         sceneDeletionLedgerService.prepareSceneDeletes(scenes, lockedBook, UUID.randomUUID());
         chapterRepository.deleteById(chapterId);
     }
@@ -102,8 +102,22 @@ public class ChapterService {
 
     @Transactional(readOnly = true)
     public Chapter getChapter(UUID chapterId) {
-        return chapterRepository.findByIdAndTenantId(chapterId, currentUserProvider.tenantId())
-                .orElseThrow(() -> new ResourceNotFoundException("Chapter not found: " + chapterId));
+        Chapter chapter = chapterRepository.findByIdAndTenantId(chapterId, currentUserProvider.tenantId())
+                .orElseThrow(() -> chapterNotFound(chapterId));
+        requireChapterBookEditAccess(chapter, chapterId);
+        return chapter;
+    }
+
+    private void requireChapterBookEditAccess(Chapter chapter, UUID chapterId) {
+        try {
+            bookAccessService.requireBookEditAccess(chapter.getBook().getId());
+        } catch (ResourceNotFoundException exception) {
+            throw chapterNotFound(chapterId);
+        }
+    }
+
+    private ResourceNotFoundException chapterNotFound(UUID chapterId) {
+        return new ResourceNotFoundException("Chapter not found: " + chapterId);
     }
 
     private <T> void applyReorder(

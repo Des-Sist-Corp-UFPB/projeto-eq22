@@ -1,7 +1,7 @@
 package com.iwrite.item.service;
 
 import com.iwrite.book.entity.Book;
-import com.iwrite.book.service.BookService;
+import com.iwrite.book.service.BookAccessService;
 import com.iwrite.character.entity.Character;
 import com.iwrite.character.service.CharacterService;
 import com.iwrite.common.exception.BadRequestException;
@@ -26,20 +26,20 @@ import java.util.UUID;
 public class ItemService {
 
     private final ItemRepository itemRepository;
-    private final BookService bookService;
+    private final BookAccessService bookAccessService;
     private final CharacterService characterService;
     private final CurrentUserProvider currentUserProvider;
     private final SceneRepository sceneRepository;
 
     public ItemService(
             ItemRepository itemRepository,
-            BookService bookService,
+            BookAccessService bookAccessService,
             CharacterService characterService,
             CurrentUserProvider currentUserProvider,
             SceneRepository sceneRepository
     ) {
         this.itemRepository = itemRepository;
-        this.bookService = bookService;
+        this.bookAccessService = bookAccessService;
         this.characterService = characterService;
         this.currentUserProvider = currentUserProvider;
         this.sceneRepository = sceneRepository;
@@ -47,7 +47,7 @@ public class ItemService {
 
     @Transactional(readOnly = true)
     public List<ItemResponse> findByBook(UUID bookId) {
-        bookService.getBook(bookId);
+        bookAccessService.requireBookReadAccess(bookId);
         return itemRepository.findByBook_IdAndBook_Tenant_IdOrderByNameAscIdAsc(
                         bookId,
                         currentUserProvider.tenantId()
@@ -64,7 +64,7 @@ public class ItemService {
 
     @Transactional
     public ItemResponse create(UUID bookId, ItemRequest request) {
-        Book book = bookService.getBook(bookId);
+        Book book = bookAccessService.requireBookEditAccess(bookId);
         Character owner = findOwnerForBook(bookId, request.currentOwnerCharacterId());
 
         Item item = new Item();
@@ -131,13 +131,33 @@ public class ItemService {
 
     @Transactional(readOnly = true)
     public Item getItem(UUID itemId) {
-        return itemRepository.findByIdAndBook_Tenant_Id(itemId, currentUserProvider.tenantId())
-                .orElseThrow(() -> new ResourceNotFoundException("Item not found: " + itemId));
+        Item item = itemRepository.findByIdAndBook_Tenant_Id(itemId, currentUserProvider.tenantId())
+                .orElseThrow(() -> itemNotFound(itemId));
+        requireItemBookAccess(item, itemId, false);
+        return item;
     }
 
     private Item getItemForUpdate(UUID itemId, UUID tenantId) {
-        return itemRepository.findByIdAndBookTenantIdForUpdate(itemId, tenantId)
-                .orElseThrow(() -> new ResourceNotFoundException("Item not found: " + itemId));
+        Item item = itemRepository.findByIdAndBookTenantIdForUpdate(itemId, tenantId)
+                .orElseThrow(() -> itemNotFound(itemId));
+        requireItemBookAccess(item, itemId, true);
+        return item;
+    }
+
+    private void requireItemBookAccess(Item item, UUID itemId, boolean edit) {
+        try {
+            if (edit) {
+                bookAccessService.requireBookEditAccess(item.getBook().getId());
+            } else {
+                bookAccessService.requireBookReadAccess(item.getBook().getId());
+            }
+        } catch (ResourceNotFoundException exception) {
+            throw itemNotFound(itemId);
+        }
+    }
+
+    private ResourceNotFoundException itemNotFound(UUID itemId) {
+        return new ResourceNotFoundException("Item not found: " + itemId);
     }
 
     private Character findOwnerForBook(UUID bookId, UUID characterId) {

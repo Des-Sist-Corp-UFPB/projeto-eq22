@@ -1,6 +1,7 @@
 package com.iwrite.book.dto;
 
 import com.iwrite.book.entity.Book;
+import com.iwrite.book.entity.BookAccessLevel;
 import com.iwrite.book.entity.BookStatus;
 
 import java.time.DayOfWeek;
@@ -17,11 +18,12 @@ public record BookResponse(
         Integer targetWordCount,
         Integer dailyTargetWordCount,
         List<DayOfWeek> plannedWritingDays,
+        BookAccessLevel accessLevel,
         OffsetDateTime createdAt,
         OffsetDateTime updatedAt
 ) {
 
-    public static BookResponse fromEntity(Book book, List<DayOfWeek> plannedWritingDays) {
+    public static BookResponse fromEntity(Book book, List<DayOfWeek> plannedWritingDays, BookAccessLevel accessLevel) {
         return new BookResponse(
                 book.getId(),
                 book.getTitle(),
@@ -31,6 +33,7 @@ public record BookResponse(
                 book.getTargetWordCount(),
                 book.getDailyTargetWordCount(),
                 plannedWritingDays,
+                accessLevel,
                 book.getCreatedAt(),
                 book.getUpdatedAt()
         );

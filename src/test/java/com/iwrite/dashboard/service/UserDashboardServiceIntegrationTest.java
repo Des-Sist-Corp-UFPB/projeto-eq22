@@ -410,9 +410,16 @@ class UserDashboardServiceIntegrationTest extends PostgresIntegrationTest {
         tenant.setName("Foreign tenant");
         tenant.setDefaultTimeZoneId("America/Sao_Paulo");
         entityManager.persist(tenant);
+        User owner = createUser("Foreign Book Owner", "service.foreign.owner@iwrite.local", "America/Sao_Paulo");
+        TenantMembership membership = new TenantMembership();
+        membership.setTenant(tenant);
+        membership.setUser(owner);
+        membership.setRole(TenantMembershipRole.OWNER);
+        entityManager.persist(membership);
 
         Book book = new Book();
         book.setTenant(tenant);
+        book.setOwner(owner);
         book.setTitle(title);
         entityManager.persist(book);
         return book;

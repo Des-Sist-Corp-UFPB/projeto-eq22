@@ -2,6 +2,7 @@ package com.iwrite.book.entity;
 
 import com.iwrite.section.entity.BookSection;
 import com.iwrite.tenant.entity.Tenant;
+import com.iwrite.user.entity.User;
 import jakarta.persistence.CascadeType;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -34,6 +35,10 @@ public class Book {
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "tenant_id", nullable = false)
     private Tenant tenant;
+
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @JoinColumn(name = "owner_user_id", nullable = false)
+    private User owner;
 
     @Column(nullable = false)
     private String title;
@@ -85,6 +90,14 @@ public class Book {
 
     public void setTenant(Tenant tenant) {
         this.tenant = tenant;
+    }
+
+    public User getOwner() {
+        return owner;
+    }
+
+    public void setOwner(User owner) {
+        this.owner = owner;
     }
 
     public String getTitle() {

@@ -134,9 +134,16 @@ class UserDashboardControllerIntegrationTest extends PostgresIntegrationTest {
         tenant.setName("HTTP user dashboard foreign tenant");
         tenant.setDefaultTimeZoneId("UTC");
         entityManager.persist(tenant);
+        User owner = createUser("HTTP Foreign Book Owner", "http.user.dashboard.foreign.owner@iwrite.local");
+        TenantMembership membership = new TenantMembership();
+        membership.setTenant(tenant);
+        membership.setUser(owner);
+        membership.setRole(TenantMembershipRole.OWNER);
+        entityManager.persist(membership);
 
         Book book = new Book();
         book.setTenant(tenant);
+        book.setOwner(owner);
         book.setTitle(title);
         entityManager.persist(book);
         return book;
