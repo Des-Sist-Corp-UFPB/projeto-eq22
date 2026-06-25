@@ -6,10 +6,6 @@ const nextConfig: NextConfig = {
   async rewrites() {
     return [
       {
-        source: "/ping",
-        destination: "http://127.0.0.1:8085/ping",
-      },
-      {
         source: "/api/:path*",
         destination: "http://127.0.0.1:8085/api/:path*",
       },
