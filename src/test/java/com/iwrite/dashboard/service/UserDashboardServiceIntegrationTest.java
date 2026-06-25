@@ -3,6 +3,7 @@ package com.iwrite.dashboard.service;
 import com.iwrite.book.entity.Book;
 import com.iwrite.common.exception.ResourceNotFoundException;
 import com.iwrite.support.PostgresIntegrationTest;
+import com.iwrite.support.SwitchableCurrentUserProvider;
 import com.iwrite.tenant.entity.Tenant;
 import com.iwrite.tenant.entity.TenantMembership;
 import com.iwrite.tenant.entity.TenantMembershipRole;
@@ -12,6 +13,7 @@ import com.iwrite.writingprogress.repository.DailyWritingProgressRepository;
 import com.iwrite.writingprogress.service.WritingProgressPeriod;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.TestConfiguration;
@@ -46,8 +48,16 @@ class UserDashboardServiceIntegrationTest extends PostgresIntegrationTest {
     @Autowired
     private DailyWritingProgressRepository progressRepository;
 
+    @Autowired
+    private SwitchableCurrentUserProvider currentUserProvider;
+
     @PersistenceContext
     private EntityManager entityManager;
+
+    @AfterEach
+    void resetCurrentUser() {
+        currentUserProvider.reset();
+    }
 
     @Test
     void currentUserDashboardAggregatesRecordedProgressAcrossAuthorizedTenantBooksOnly() {
@@ -274,6 +284,47 @@ class UserDashboardServiceIntegrationTest extends PostgresIntegrationTest {
                 .satisfies(day -> assertThat(day.productiveWords()).isEqualTo(5));
     }
 
+    @Test
+    void globalStreaksIgnoreStoredProgressDatesAfterCurrentEffectiveWritingDate() {
+        Book book = bookService.getBook(createBook("Future-relative global streak book").id());
+        LocalDate newEffectiveToday = LocalDate.of(2026, 6, 23);
+        saveProgress(book, DEFAULT_USER_ID, LocalDate.of(2026, 6, 21), 10, 0);
+        saveProgress(book, DEFAULT_USER_ID, LocalDate.of(2026, 6, 22), 10, 0);
+        saveProgress(book, DEFAULT_USER_ID, newEffectiveToday, 10, 0);
+        saveProgress(book, DEFAULT_USER_ID, LocalDate.of(2026, 6, 24), 10, 0);
+        saveProgress(book, DEFAULT_USER_ID, LocalDate.of(2026, 6, 25), 10, 0);
+        saveProgress(book, DEFAULT_USER_ID, LocalDate.of(2026, 6, 26), 10, 0);
+        saveProgress(book, DEFAULT_USER_ID, LocalDate.of(2026, 6, 27), 10, 0);
+
+        User currentUser = entityManager.find(User.class, DEFAULT_USER_ID);
+        currentUser.setTimeZoneId("America/Los_Angeles");
+        currentUserProvider.switchTo(DEFAULT_USER_ID, DEFAULT_TENANT_ID, ZoneId.of("America/Los_Angeles"));
+        entityManager.flush();
+        entityManager.clear();
+
+        var dashboard = dashboardService.getCurrentUserDashboard(WritingProgressPeriod.SEVEN_DAYS);
+
+        assertThat(dashboard.period().endDate()).isEqualTo(newEffectiveToday);
+        assertThat(dashboard.summary().currentGlobalWritingStreak()).isEqualTo(3);
+        assertThat(dashboard.summary().bestGlobalWritingStreak()).isEqualTo(3);
+        assertThat(dashboard.summary().writingDaysThisMonth()).isEqualTo(3);
+        assertThat(dashboard.dailySeries()).hasSize(7);
+        assertThat(dashboard.dailySeries().getLast().date()).isEqualTo(newEffectiveToday);
+        assertThat(progressRepository.findByUser_IdAndBookIdAndProgressDateBetweenOrderByProgressDateAsc(
+                DEFAULT_USER_ID,
+                book.getId(),
+                LocalDate.of(2026, 6, 24),
+                LocalDate.of(2026, 6, 27)
+        ))
+                .extracting(DailyWritingProgress::getProgressDate)
+                .containsExactly(
+                        LocalDate.of(2026, 6, 24),
+                        LocalDate.of(2026, 6, 25),
+                        LocalDate.of(2026, 6, 26),
+                        LocalDate.of(2026, 6, 27)
+                );
+    }
+
     private void saveProgress(Book book, UUID userId, LocalDate progressDate, int productiveWords, int manuscriptAdjustments) {
         DailyWritingProgress progress = new DailyWritingProgress();
         progress.setBook(entityManager.getReference(Book.class, book.getId()));
@@ -322,6 +373,12 @@ class UserDashboardServiceIntegrationTest extends PostgresIntegrationTest {
 
     @TestConfiguration
     static class FixedWritingProgressClockConfig {
+
+        @Bean
+        @Primary
+        SwitchableCurrentUserProvider switchableCurrentUserProvider() {
+            return new SwitchableCurrentUserProvider();
+        }
 
         @Bean
         @Primary

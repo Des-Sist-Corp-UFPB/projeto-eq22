@@ -77,7 +77,7 @@ public class UserDashboardService {
                 today
         );
         Set<LocalDate> positiveDates = new HashSet<>(
-                progressRepository.findPositiveProgressDatesForUserTenant(currentUserId, tenantId)
+                progressRepository.findPositiveProgressDatesForUserTenantThroughDate(currentUserId, tenantId, today)
         );
 
         return new UserDashboardResponse(

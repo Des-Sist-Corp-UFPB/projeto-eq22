@@ -71,11 +71,13 @@ public interface DailyWritingProgressRepository extends JpaRepository<DailyWriti
             where progress.user.id = :userId
               and book.tenant.id = :tenantId
               and progress.productiveWordCountChange > 0
+              and progress.progressDate <= :endDate
             order by progress.progressDate asc
             """)
-    List<LocalDate> findPositiveProgressDatesForUserTenant(
+    List<LocalDate> findPositiveProgressDatesForUserTenantThroughDate(
             @Param("userId") UUID userId,
-            @Param("tenantId") UUID tenantId
+            @Param("tenantId") UUID tenantId,
+            @Param("endDate") LocalDate endDate
     );
 
     @Query("""
