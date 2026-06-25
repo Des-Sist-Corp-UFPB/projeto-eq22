@@ -326,6 +326,15 @@ class ControllerContractIntegrationTest extends PostgresIntegrationTest {
     }
 
     @Test
+    void postSceneAiAnalysisReturnsUnavailableWhenAiIsDisabled() throws Exception {
+        StoryWorld world = createStoryWorld("HTTP AI disabled");
+
+        mockMvc.perform(post("/api/scenes/{sceneId}/ai-analysis", world.scene().id()))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.messages", hasItem(containsString("AI scene analysis is not available"))));
+    }
+
+    @Test
     void patchItemUpdatesOwnerAndReturnsOwnerSummary() throws Exception {
         StoryWorld world = createStoryWorld("HTTP item");
 
