@@ -50,4 +50,4 @@ COPY --from=frontend-build /frontend/node_modules /app/frontend/node_modules
 
 EXPOSE 8080
 
-CMD ["sh", "-c", "SERVER_PORT=8085 java -jar /app/backend/app.jar & exec /app/frontend/node_modules/.bin/next start /app/frontend -p 8080"]
+CMD ["sh", "-c", "set -eu; SERVER_PORT=8085 java -jar /app/backend/app.jar & backend_pid=$!; echo 'Waiting for backend health...'; until wget -q -O /dev/null http://127.0.0.1:8085/ping; do if ! kill -0 \"$backend_pid\" 2>/dev/null; then echo 'Backend exited before becoming healthy'; wait \"$backend_pid\"; exit 1; fi; sleep 1; done; echo 'Backend healthy; starting frontend'; exec /app/frontend/node_modules/.bin/next start /app/frontend -p 8080 -H 0.0.0.0"]
