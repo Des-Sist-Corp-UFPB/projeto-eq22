@@ -68,6 +68,10 @@ public enum WritingProgressPeriod {
         return startDate(today);
     }
 
+    public String requestValue() {
+        return requestValue;
+    }
+
     abstract LocalDate startDate(LocalDate today);
 
     private static LocalDate firstDayOfCurrentMonthMinusMonths(LocalDate today, int months) {

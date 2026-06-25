@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { BooksList } from "@/features/books/components/books-list";
 import { CreateBookForm } from "@/features/books/components/create-book-form";
@@ -14,6 +15,12 @@ export default function HomePage() {
               <p className="max-w-2xl text-base leading-7 text-zinc-600">
                 Organize seus livros em andamento e entre no workspace quando for hora de escrever.
               </p>
+              <Link
+                href="/dashboard"
+                className="inline-flex w-fit min-h-9 items-center justify-center rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm font-medium text-zinc-900 transition hover:bg-zinc-100"
+              >
+                Ver minha escrita
+              </Link>
             </div>
           </header>
           <BooksList />

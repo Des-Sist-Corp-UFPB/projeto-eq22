@@ -92,6 +92,75 @@ export type WritingScheduleResponse = {
   currentScheduleEffectiveFrom: string;
 };
 
+export type BookMyWritingResponse = {
+  progress: WritingProgressDashboardResponse;
+  schedule: WritingScheduleResponse;
+};
+
+export type WritingProgressPeriodResponse = {
+  value: string;
+  startDate: string;
+  endDate: string;
+};
+
+export type UserWritingSummaryResponse = {
+  productiveWords: number;
+  manuscriptAdjustments: number;
+  writingDays: number;
+  booksWrittenIn: number;
+  currentGlobalWritingStreak: number;
+  bestGlobalWritingStreak: number;
+  writingDaysThisMonth: number;
+};
+
+export type UserDailyWritingResponse = {
+  date: string;
+  productiveWords: number;
+  manuscriptAdjustments: number;
+};
+
+export type UserBookContributionResponse = {
+  bookId: string;
+  title: string;
+  productiveWords: number;
+  manuscriptAdjustments: number;
+  writingDays: number;
+};
+
+export type UserDashboardResponse = {
+  period: WritingProgressPeriodResponse;
+  summary: UserWritingSummaryResponse;
+  dailySeries: UserDailyWritingResponse[];
+  bookContributions: UserBookContributionResponse[];
+};
+
+export type ContributorSummaryResponse = {
+  userId: string;
+  displayName: string;
+};
+
+export type ContributionSummaryResponse = {
+  productiveWords: number;
+  manuscriptAdjustments: number;
+  writingDays: number;
+  contributorsCount: number;
+};
+
+export type ContributionDailyWritingResponse = {
+  date: string;
+  productiveWords: number;
+  manuscriptAdjustments: number;
+};
+
+export type BookContributionDashboardResponse = {
+  period: WritingProgressPeriodResponse;
+  scope: "ALL_CONTRIBUTORS" | "SINGLE_CONTRIBUTOR";
+  selectedContributor: ContributorSummaryResponse | null;
+  availableContributors: ContributorSummaryResponse[];
+  summary: ContributionSummaryResponse;
+  dailySeries: ContributionDailyWritingResponse[];
+};
+
 export type BookDashboardResponse = {
   bookId: string;
   title: string;
@@ -104,8 +173,7 @@ export type BookDashboardResponse = {
   totalSections: number;
   totalChapters: number;
   totalScenes: number;
-  writingProgress: WritingProgressDashboardResponse;
-  writingSchedule: WritingScheduleResponse;
+  myWriting: BookMyWritingResponse;
   planningProgress: PlanningProgressResponse;
   scenesByStatus: StatusCountResponse[];
   povStats: PovStatsResponse[];

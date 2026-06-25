@@ -12,7 +12,7 @@ import { Input } from "@/components/ui/input";
 import { updateBook } from "@/features/books/api/books-api";
 import type { DayOfWeek } from "@/features/books/types";
 import type { WritingProgressPeriod } from "@/features/dashboard/api/dashboard-api";
-import { useBookDashboard } from "@/features/dashboard/api/dashboard-hooks";
+import { useBookContributions, useBookDashboard } from "@/features/dashboard/api/dashboard-hooks";
 import {
   DashboardDetailModal,
   type DashboardDetailTarget,
@@ -121,13 +121,16 @@ function DashboardContent({
         />
       ) : null}
 
+      <SectionHeader title="Progresso do manuscrito" description="Estado compartilhado do livro, independente do contribuidor." />
       <WordTargetCard dashboard={dashboard} />
+      <SectionHeader title="Meu progresso" description="Sua rotina, metas e escrita registrada para este livro." />
       <DailyWritingGoalCard
         dashboard={dashboard}
         progressPeriod={progressPeriod}
         isProgressRefetching={isProgressRefetching}
         onProgressPeriodChange={onProgressPeriodChange}
       />
+      <BookContributionCard key={dashboard.bookId} bookId={dashboard.bookId} progressPeriod={progressPeriod} />
 
       <Card className="p-4 transition-[transform,background-color,box-shadow] duration-150 ease-out hover:scale-[1.01] hover:bg-white hover:shadow-sm hover:shadow-zinc-200/70">
         <div className="flex flex-wrap items-end justify-between gap-3">
@@ -253,8 +256,8 @@ function DailyWritingGoalCard({
   onProgressPeriodChange: (period: WritingProgressPeriod) => void;
 }) {
   const queryClient = useQueryClient();
-  const today = dashboard.writingProgress.today;
-  const writingSchedule = dashboard.writingSchedule;
+  const today = dashboard.myWriting.progress.today;
+  const writingSchedule = dashboard.myWriting.schedule;
   const currentDailyTargetWordCount = dashboard.dailyTargetWordCount;
   const [isEditing, setIsEditing] = useState(false);
   const [isEditingRoutine, setIsEditingRoutine] = useState(false);
@@ -532,7 +535,7 @@ function DailyWritingGoalCard({
 
       <DailyProgressChart
         todayDate={today.date}
-        recentDays={dashboard.writingProgress.recentDays}
+        recentDays={dashboard.myWriting.progress.recentDays}
         dailyTargetWordCount={effectiveDailyTargetWordCount}
         progressPeriod={progressPeriod}
         isRefetching={isProgressRefetching}
@@ -547,6 +550,72 @@ function DailyWritingGoalCard({
   );
 }
 
+function BookContributionCard({
+  bookId,
+  progressPeriod,
+}: {
+  bookId: string;
+  progressPeriod: WritingProgressPeriod;
+}) {
+  const [contributorId, setContributorId] = useState<string>("");
+  const contributionsQuery = useBookContributions(bookId, progressPeriod, contributorId || undefined);
+  const contributions = contributionsQuery.data;
+
+  return (
+    <Card className="p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <SectionHeader
+          title="Contribuição da equipe"
+          description="Palavras produtivas registradas por contribuidores deste livro no período selecionado."
+        />
+        {contributions?.availableContributors.length ? (
+          <label className="grid gap-1 text-xs font-medium text-zinc-600">
+            Contribuidor
+            <select
+              value={contributorId}
+              onChange={(event) => setContributorId(event.target.value)}
+              className="rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900"
+            >
+              <option value="">Todos os contribuidores</option>
+              {contributions.availableContributors.map((contributor) => (
+                <option key={contributor.userId} value={contributor.userId}>
+                  {contributor.displayName}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
+      </div>
+
+      {contributionsQuery.isLoading ? (
+        <p className="mt-4 text-sm text-zinc-500">Carregando contribuições...</p>
+      ) : null}
+      {contributionsQuery.isError ? (
+        <FeedbackMessage variant="error" className="mt-4">
+          Não foi possível carregar as contribuições registradas.
+        </FeedbackMessage>
+      ) : null}
+      {contributions ? (
+        <div className="mt-4 grid gap-3 sm:grid-cols-4">
+          <DashboardMetricCard label="Palavras produtivas" value={formatSignedNumber(contributions.summary.productiveWords)} />
+          <DashboardMetricCard label="Ajustes do manuscrito" value={formatSignedNumber(contributions.summary.manuscriptAdjustments)} />
+          <DashboardMetricCard label="Dias com escrita" value={formatNumber(contributions.summary.writingDays)} />
+          <DashboardMetricCard label="Contribuidores" value={formatNumber(contributions.summary.contributorsCount)} />
+          <div className="sm:col-span-4">
+            <MiniWritingSeries
+              entries={contributions.dailySeries.map((day) => ({
+                date: day.date,
+                productiveWords: day.productiveWords,
+                manuscriptAdjustments: day.manuscriptAdjustments,
+              }))}
+            />
+          </div>
+        </div>
+      ) : null}
+    </Card>
+  );
+}
+
 function DailyProgressChart({
   todayDate,
   recentDays,
@@ -556,7 +625,7 @@ function DailyProgressChart({
   onProgressPeriodChange,
 }: {
   todayDate: string;
-  recentDays: BookDashboardResponse["writingProgress"]["recentDays"];
+  recentDays: BookDashboardResponse["myWriting"]["progress"]["recentDays"];
   dailyTargetWordCount: number | null;
   progressPeriod: WritingProgressPeriod;
   isRefetching: boolean;
@@ -727,7 +796,7 @@ const CHART_BASELINE_Y = 98;
 
 function buildWritingProgressChartEntries(
   todayDate: string,
-  recentDays: BookDashboardResponse["writingProgress"]["recentDays"],
+  recentDays: BookDashboardResponse["myWriting"]["progress"]["recentDays"],
   progressPeriod: WritingProgressPeriod
 ): WritingProgressChartEntry[] {
   const endDate = getChartEndDate(todayDate);
@@ -776,7 +845,7 @@ function getWritingProgressPeriodLabel(
 }
 
 function buildDailyProgressBuckets(
-  recentDays: BookDashboardResponse["writingProgress"]["recentDays"],
+  recentDays: BookDashboardResponse["myWriting"]["progress"]["recentDays"],
   progressPeriod: WritingProgressPeriod,
   endDate: Date
 ) {
@@ -798,7 +867,7 @@ function buildDailyProgressBuckets(
 }
 
 function buildMonthlyProgressBuckets(
-  recentDays: BookDashboardResponse["writingProgress"]["recentDays"],
+  recentDays: BookDashboardResponse["myWriting"]["progress"]["recentDays"],
   progressPeriod: WritingProgressPeriod,
   endDate: Date
 ) {
@@ -1056,6 +1125,35 @@ function SectionHeader({ title, description }: { title: string; description: str
     <div>
       <h2 className="text-base font-semibold text-zinc-950">{title}</h2>
       <p className="mt-1 text-sm text-zinc-500">{description}</p>
+    </div>
+  );
+}
+
+function MiniWritingSeries({
+  entries,
+}: {
+  entries: Array<{ date: string; productiveWords: number; manuscriptAdjustments: number }>;
+}) {
+  const visibleEntries = entries.filter((entry) => entry.productiveWords !== 0 || entry.manuscriptAdjustments !== 0);
+
+  if (visibleEntries.length === 0) {
+    return <EmptyState title="Nenhuma contribuição registrada no período." size="sm" />;
+  }
+
+  return (
+    <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3">
+      <p className="text-sm font-medium text-zinc-900">Série diária registrada</p>
+      <ol className="mt-3 grid gap-2">
+        {visibleEntries.map((entry) => (
+          <li key={entry.date} className="flex flex-wrap items-center justify-between gap-2 text-sm">
+            <span className="text-zinc-600">{formatDashboardDate(entry.date)}</span>
+            <span className="font-medium text-zinc-950">
+              {formatSignedNumber(entry.productiveWords)} produtivas
+              {entry.manuscriptAdjustments !== 0 ? ` · ${formatSignedNumber(entry.manuscriptAdjustments)} ajustes` : ""}
+            </span>
+          </li>
+        ))}
+      </ol>
     </div>
   );
 }

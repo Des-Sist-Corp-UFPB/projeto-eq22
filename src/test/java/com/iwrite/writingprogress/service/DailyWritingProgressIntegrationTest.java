@@ -91,7 +91,7 @@ class DailyWritingProgressIntegrationTest extends PostgresIntegrationTest {
         assertThat(progress.getEndingManuscriptWordCount()).isZero();
         assertThat(progress.getProductiveWordCountChange()).isEqualTo(4);
         assertThat(progress.getManuscriptAdjustmentWordCount()).isEqualTo(-4);
-        assertThat(dashboardService.getDashboard(book.id()).writingProgress().consistency().writingDaysThisMonth()).isEqualTo(1);
+        assertThat(dashboardService.getDashboard(book.id()).myWriting().progress().consistency().writingDaysThisMonth()).isEqualTo(1);
     }
 
     @Test
@@ -125,14 +125,14 @@ class DailyWritingProgressIntegrationTest extends PostgresIntegrationTest {
 
         var dashboard = dashboardService.getDashboard(book.id());
 
-        assertThat(dashboard.writingProgress().today().date()).isEqualTo(TODAY);
-        assertThat(dashboard.writingProgress().today().dailyTargetWordCount()).isNull();
-        assertThat(dashboard.writingProgress().today().startingManuscriptWordCount()).isZero();
-        assertThat(dashboard.writingProgress().today().endingManuscriptWordCount()).isZero();
-        assertThat(dashboard.writingProgress().today().productiveWordCountChange()).isZero();
-        assertThat(dashboard.writingProgress().today().manuscriptAdjustmentWordCount()).isZero();
-        assertThat(dashboard.writingProgress().today().progressPercent()).isNull();
-        assertThat(dashboard.writingProgress().recentDays()).isEmpty();
+        assertThat(dashboard.myWriting().progress().today().date()).isEqualTo(TODAY);
+        assertThat(dashboard.myWriting().progress().today().dailyTargetWordCount()).isNull();
+        assertThat(dashboard.myWriting().progress().today().startingManuscriptWordCount()).isZero();
+        assertThat(dashboard.myWriting().progress().today().endingManuscriptWordCount()).isZero();
+        assertThat(dashboard.myWriting().progress().today().productiveWordCountChange()).isZero();
+        assertThat(dashboard.myWriting().progress().today().manuscriptAdjustmentWordCount()).isZero();
+        assertThat(dashboard.myWriting().progress().today().progressPercent()).isNull();
+        assertThat(dashboard.myWriting().progress().recentDays()).isEmpty();
     }
 
     @Test
@@ -152,12 +152,12 @@ class DailyWritingProgressIntegrationTest extends PostgresIntegrationTest {
 
         var dashboard = dashboardService.getDashboard(book.id());
 
-        assertThat(dashboard.writingProgress().today().date()).isEqualTo(today);
-        assertThat(dashboard.writingProgress().today().dailyTargetWordCount()).isEqualTo(6);
-        assertThat(dashboard.writingProgress().today().productiveWordCountChange()).isEqualTo(3);
-        assertThat(dashboard.writingProgress().today().manuscriptAdjustmentWordCount()).isZero();
-        assertThat(dashboard.writingProgress().today().progressPercent()).isEqualTo(50.0);
-        assertThat(dashboard.writingProgress().recentDays())
+        assertThat(dashboard.myWriting().progress().today().date()).isEqualTo(today);
+        assertThat(dashboard.myWriting().progress().today().dailyTargetWordCount()).isEqualTo(6);
+        assertThat(dashboard.myWriting().progress().today().productiveWordCountChange()).isEqualTo(3);
+        assertThat(dashboard.myWriting().progress().today().manuscriptAdjustmentWordCount()).isZero();
+        assertThat(dashboard.myWriting().progress().today().progressPercent()).isEqualTo(50.0);
+        assertThat(dashboard.myWriting().progress().recentDays())
                 .extracting(day -> day.date())
                 .containsExactly(today, today.minusDays(1), today.minusDays(2));
     }
@@ -172,7 +172,7 @@ class DailyWritingProgressIntegrationTest extends PostgresIntegrationTest {
 
         saveProgress(persistedBook, TODAY, 100, 112, 2, 10);
 
-        var today = dashboardService.getDashboard(book.id()).writingProgress().today();
+        var today = dashboardService.getDashboard(book.id()).myWriting().progress().today();
 
         assertThat(today.startingManuscriptWordCount()).isEqualTo(100);
         assertThat(today.endingManuscriptWordCount()).isEqualTo(112);
@@ -190,7 +190,7 @@ class DailyWritingProgressIntegrationTest extends PostgresIntegrationTest {
         saveProgress(persistedBook, today.minusDays(1), 100, 104, 4, 0);
         saveProgress(persistedBook, today, 104, 99, 0, -5);
 
-        var consistency = dashboardService.getDashboard(book.id()).writingProgress().consistency();
+        var consistency = dashboardService.getDashboard(book.id()).myWriting().progress().consistency();
 
         assertThat(consistency.currentStreakDays()).isEqualTo(1);
         assertThat(consistency.writingDaysThisMonth()).isEqualTo(1);
@@ -214,7 +214,7 @@ class DailyWritingProgressIntegrationTest extends PostgresIntegrationTest {
         var dashboard = dashboardService.getDashboard(book.id());
 
         assertThat(dashboard.totalWordCount()).isEqualTo(3);
-        assertThat(dashboard.writingProgress().today().endingManuscriptWordCount()).isEqualTo(999);
+        assertThat(dashboard.myWriting().progress().today().endingManuscriptWordCount()).isEqualTo(999);
     }
 
     @Test
@@ -227,7 +227,7 @@ class DailyWritingProgressIntegrationTest extends PostgresIntegrationTest {
         saveProgress(persistedBook, today.minusDays(1), 4, 7);
         saveProgress(persistedBook, today, 7, 9);
 
-        var consistency = dashboardService.getDashboard(book.id()).writingProgress().consistency();
+        var consistency = dashboardService.getDashboard(book.id()).myWriting().progress().consistency();
 
         assertThat(consistency.currentStreakDays()).isEqualTo(3);
         assertThat(consistency.bestStreakDays()).isEqualTo(3);
@@ -242,7 +242,7 @@ class DailyWritingProgressIntegrationTest extends PostgresIntegrationTest {
         saveProgress(persistedMissingTodayBook, today.minusDays(2), 0, 1);
         saveProgress(persistedMissingTodayBook, today.minusDays(1), 1, 3);
 
-        assertThat(dashboardService.getDashboard(missingTodayBook.id()).writingProgress().consistency().currentStreakDays())
+        assertThat(dashboardService.getDashboard(missingTodayBook.id()).myWriting().progress().consistency().currentStreakDays())
                 .isEqualTo(2);
     }
 
@@ -255,7 +255,7 @@ class DailyWritingProgressIntegrationTest extends PostgresIntegrationTest {
         saveProgress(persistedZeroTodayBook, today.minusDays(1), 1, 3);
         saveProgress(persistedZeroTodayBook, today, 3, 3);
 
-        assertThat(dashboardService.getDashboard(zeroTodayBook.id()).writingProgress().consistency().currentStreakDays())
+        assertThat(dashboardService.getDashboard(zeroTodayBook.id()).myWriting().progress().consistency().currentStreakDays())
                 .isEqualTo(2);
     }
 
@@ -269,7 +269,7 @@ class DailyWritingProgressIntegrationTest extends PostgresIntegrationTest {
         saveProgress(persistedBook, today.minusDays(1), 2, 2);
         saveProgress(persistedBook, today, 2, 1);
 
-        var consistency = dashboardService.getDashboard(book.id()).writingProgress().consistency();
+        var consistency = dashboardService.getDashboard(book.id()).myWriting().progress().consistency();
 
         assertThat(consistency.currentStreakDays()).isZero();
         assertThat(consistency.bestStreakDays()).isEqualTo(1);
@@ -286,7 +286,7 @@ class DailyWritingProgressIntegrationTest extends PostgresIntegrationTest {
         saveProgress(persistedBook, today.minusDays(1), 2, 3);
         saveProgress(persistedBook, today, 3, 4);
 
-        var consistency = dashboardService.getDashboard(book.id()).writingProgress().consistency();
+        var consistency = dashboardService.getDashboard(book.id()).myWriting().progress().consistency();
 
         assertThat(consistency.currentStreakDays()).isEqualTo(2);
         assertThat(consistency.bestStreakDays()).isEqualTo(2);
@@ -304,7 +304,7 @@ class DailyWritingProgressIntegrationTest extends PostgresIntegrationTest {
         saveProgress(persistedBook, today.minusDays(1), 4, 3);
         saveProgress(persistedBook, today, 3, 5);
 
-        var consistency = dashboardService.getDashboard(book.id()).writingProgress().consistency();
+        var consistency = dashboardService.getDashboard(book.id()).myWriting().progress().consistency();
 
         assertThat(consistency.currentStreakDays()).isEqualTo(1);
         assertThat(consistency.bestStreakDays()).isEqualTo(1);
@@ -324,9 +324,9 @@ class DailyWritingProgressIntegrationTest extends PostgresIntegrationTest {
         saveProgress(persistedBook, today, 5, 6);
 
         var dashboard = dashboardService.getDashboard(book.id(), WritingProgressPeriod.SEVEN_DAYS);
-        var consistency = dashboard.writingProgress().consistency();
+        var consistency = dashboard.myWriting().progress().consistency();
 
-        assertThat(dashboard.writingProgress().recentDays())
+        assertThat(dashboard.myWriting().progress().recentDays())
                 .extracting(day -> day.date())
                 .doesNotContain(today.minusDays(20), today.minusDays(19), today.minusDays(18), today.minusDays(17));
         assertThat(consistency.currentStreakDays()).isEqualTo(2);
@@ -348,7 +348,7 @@ class DailyWritingProgressIntegrationTest extends PostgresIntegrationTest {
         saveProgress(persistedBook, today.minusDays(4), 17, 16);
         saveProgress(persistedBook, today, 16, 20);
 
-        var consistency = dashboardService.getDashboard(book.id()).writingProgress().consistency();
+        var consistency = dashboardService.getDashboard(book.id()).myWriting().progress().consistency();
 
         assertThat(consistency.writingDaysThisMonth()).isEqualTo(4);
         assertThat(consistency.recentWindowDays()).isEqualTo(7);
@@ -373,11 +373,11 @@ class DailyWritingProgressIntegrationTest extends PostgresIntegrationTest {
 
         var dashboard = dashboardService.getDashboard(book.id());
 
-        assertThat(dashboard.writingProgress().consistency().currentStreakDays()).isEqualTo(2);
-        assertThat(dashboard.writingSchedule().plannedWritingDays())
+        assertThat(dashboard.myWriting().progress().consistency().currentStreakDays()).isEqualTo(2);
+        assertThat(dashboard.myWriting().schedule().plannedWritingDays())
                 .containsExactly(DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, DayOfWeek.THURSDAY, DayOfWeek.FRIDAY);
-        assertThat(dashboard.writingSchedule().todayPlannedWritingDay()).isTrue();
-        assertThat(dashboard.writingSchedule().currentScheduleEffectiveFrom()).isEqualTo(today.plusDays(1));
+        assertThat(dashboard.myWriting().schedule().todayPlannedWritingDay()).isTrue();
+        assertThat(dashboard.myWriting().schedule().currentScheduleEffectiveFrom()).isEqualTo(today.plusDays(1));
     }
 
     @Test
@@ -397,10 +397,10 @@ class DailyWritingProgressIntegrationTest extends PostgresIntegrationTest {
         saveProgress(persistedBook, today, 2, 5);
 
         var dashboard = dashboardService.getDashboard(book.id());
-        var consistency = dashboard.writingProgress().consistency();
+        var consistency = dashboard.myWriting().progress().consistency();
 
-        assertThat(dashboard.writingSchedule().todayPlannedWritingDay()).isFalse();
-        assertThat(dashboard.writingProgress().today().productiveWordCountChange()).isEqualTo(3);
+        assertThat(dashboard.myWriting().schedule().todayPlannedWritingDay()).isFalse();
+        assertThat(dashboard.myWriting().progress().today().productiveWordCountChange()).isEqualTo(3);
         assertThat(consistency.currentStreakDays()).isEqualTo(1);
         assertThat(consistency.writingDaysThisMonth()).isEqualTo(2);
     }
@@ -421,7 +421,7 @@ class DailyWritingProgressIntegrationTest extends PostgresIntegrationTest {
         saveProgress(persistedBook, today.minusDays(5), 0, 1);
         saveProgress(persistedBook, today, 1, 3);
 
-        var consistency = dashboardService.getDashboard(book.id()).writingProgress().consistency();
+        var consistency = dashboardService.getDashboard(book.id()).myWriting().progress().consistency();
 
         assertThat(consistency.recentWindowDays()).isEqualTo(7);
         assertThat(consistency.recentWritingDays()).isEqualTo(2);

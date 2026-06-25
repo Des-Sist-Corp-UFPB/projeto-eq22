@@ -40,7 +40,7 @@ type SceneVersionPage = {
 
 type Dashboard = {
   totalWordCount: number;
-  writingProgress: {
+  myWriting: { progress: {
     today: {
       productiveWordCountChange: number;
       manuscriptAdjustmentWordCount: number;
@@ -53,7 +53,7 @@ type Dashboard = {
     consistency: {
       currentStreakDays: number;
     };
-  };
+  } };
 };
 
 type SeededBook = {
@@ -103,9 +103,9 @@ test("restores an earlier scene version without inflating productivity", async (
 
   const dashboard = await getDashboard(page.request, seeded.book.id);
   expect(dashboard.totalWordCount).toBe(3);
-  expect(dashboard.writingProgress.today.productiveWordCountChange).toBe(5);
-  expect(dashboard.writingProgress.today.manuscriptAdjustmentWordCount).toBe(-2);
-  expect(dashboard.writingProgress.today.endingManuscriptWordCount).toBe(3);
+  expect(dashboard.myWriting.progress.today.productiveWordCountChange).toBe(5);
+  expect(dashboard.myWriting.progress.today.manuscriptAdjustmentWordCount).toBe(-2);
+  expect(dashboard.myWriting.progress.today.endingManuscriptWordCount).toBe(3);
 
   await page.getByRole("button", { name: /Vis/ }).click();
   await expect(page.getByTestId("manuscript-adjustment-summary")).toContainText("-2 palavras");
@@ -188,11 +188,11 @@ test("scene deletion is a manuscript adjustment without reducing productivity", 
   const dashboard = await getDashboard(page.request, seeded.book.id);
   expect(currentScene.wordCount).toBe(5);
   expect(dashboard.totalWordCount).toBe(5);
-  expect(dashboard.writingProgress.today.productiveWordCountChange).toBe(8);
-  expect(dashboard.writingProgress.today.manuscriptAdjustmentWordCount).toBe(-3);
-  expect(dashboard.writingProgress.today.endingManuscriptWordCount).toBe(5);
-  expect(dashboard.writingProgress.consistency.currentStreakDays).toBeGreaterThanOrEqual(1);
-  expect(dashboard.writingProgress.recentDays.some((day) => day.productiveWordCountChange < 0)).toBe(false);
+  expect(dashboard.myWriting.progress.today.productiveWordCountChange).toBe(8);
+  expect(dashboard.myWriting.progress.today.manuscriptAdjustmentWordCount).toBe(-3);
+  expect(dashboard.myWriting.progress.today.endingManuscriptWordCount).toBe(5);
+  expect(dashboard.myWriting.progress.consistency.currentStreakDays).toBeGreaterThanOrEqual(1);
+  expect(dashboard.myWriting.progress.recentDays.some((day) => day.productiveWordCountChange < 0)).toBe(false);
 
   await page.getByRole("button", { name: /Vis/ }).click();
   await expect(page.getByText("Hoje: 8 / 5 palavras")).toBeVisible();

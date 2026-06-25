@@ -7,6 +7,7 @@ import { renderWithClient } from "@/test/test-utils";
 
 const mocks = vi.hoisted(() => ({
   useBookDashboard: vi.fn(),
+  useBookContributions: vi.fn(),
   useCharacter: vi.fn(),
   useLocation: vi.fn(),
   useItem: vi.fn(),
@@ -15,6 +16,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@/features/dashboard/api/dashboard-hooks", () => ({
   useBookDashboard: mocks.useBookDashboard,
+  useBookContributions: mocks.useBookContributions,
 }));
 
 vi.mock("@/features/characters/api/characters-hooks", () => ({
@@ -39,6 +41,25 @@ describe("BookDashboard", () => {
     mocks.useCharacter.mockReturnValue({ isLoading: false, isError: false, data: characterAda });
     mocks.useLocation.mockReturnValue({ isLoading: false, isError: false, data: locationLibrary });
     mocks.useItem.mockReturnValue({ isLoading: false, isError: false, data: itemKey });
+    mocks.useBookContributions.mockReturnValue({
+      isLoading: false,
+      isError: false,
+      data: {
+        period: { value: "7d", startDate: "2026-05-08", endDate: "2026-05-14" },
+        scope: "ALL_CONTRIBUTORS",
+        selectedContributor: null,
+        availableContributors: [{ userId: "user-1", displayName: "Carlos" }],
+        summary: {
+          productiveWords: 300,
+          manuscriptAdjustments: 100,
+          writingDays: 1,
+          contributorsCount: 1,
+        },
+        dailySeries: [
+          { date: "2026-05-14", productiveWords: 300, manuscriptAdjustments: 100 },
+        ],
+      },
+    });
     mocks.updateBook.mockResolvedValue({});
   });
 
@@ -115,25 +136,133 @@ describe("BookDashboard", () => {
     expect(screen.getByRole("button", { name: "Ver cenas com status Rascunho" })).toBeInTheDocument();
   });
 
+  test("contribuicoes usam escopo de todos por padrao", () => {
+    mocks.useBookDashboard.mockReturnValue({ isLoading: false, isError: false, data: dashboardWithScenes });
+
+    renderWithClient(<BookDashboard bookId="book-1" />);
+
+    expect(mocks.useBookContributions).toHaveBeenLastCalledWith("book-1", "7d", undefined);
+    expect(screen.getByText("Contribuição da equipe")).toBeInTheDocument();
+    expect(screen.getByText("Contribuidores")).toBeInTheDocument();
+  });
+
+  test("selecionar contribuidor passa o id para o hook e renderiza os dados retornados", async () => {
+    mocks.useBookDashboard.mockReturnValue({ isLoading: false, isError: false, data: dashboardWithScenes });
+    mocks.useBookContributions.mockImplementation((_bookId: string, _period: string, contributorId?: string) => ({
+      isLoading: false,
+      isError: false,
+      data: contributorId === "user-2"
+        ? {
+            period: { value: "7d", startDate: "2026-05-08", endDate: "2026-05-14" },
+            scope: "SINGLE_CONTRIBUTOR",
+            selectedContributor: { userId: "user-2", displayName: "Bruna" },
+            availableContributors: [
+              { userId: "user-1", displayName: "Carlos" },
+              { userId: "user-2", displayName: "Bruna" },
+            ],
+            summary: { productiveWords: 7, manuscriptAdjustments: -2, writingDays: 1, contributorsCount: 1 },
+            dailySeries: [{ date: "2026-05-14", productiveWords: 7, manuscriptAdjustments: -2 }],
+          }
+        : {
+            period: { value: "7d", startDate: "2026-05-08", endDate: "2026-05-14" },
+            scope: "ALL_CONTRIBUTORS",
+            selectedContributor: null,
+            availableContributors: [
+              { userId: "user-1", displayName: "Carlos" },
+              { userId: "user-2", displayName: "Bruna" },
+            ],
+            summary: { productiveWords: 30, manuscriptAdjustments: 0, writingDays: 2, contributorsCount: 2 },
+            dailySeries: [{ date: "2026-05-14", productiveWords: 30, manuscriptAdjustments: 0 }],
+          },
+    }));
+
+    renderWithClient(<BookDashboard bookId="book-1" />);
+
+    fireEvent.change(screen.getByLabelText("Contribuidor"), { target: { value: "user-2" } });
+
+    await waitFor(() => expect(mocks.useBookContributions).toHaveBeenLastCalledWith("book-1", "7d", "user-2"));
+    expect(screen.getByText("7 produtivas · -2 ajustes")).toBeInTheDocument();
+  });
+
+  test("contribuicoes vazias exibem estado vazio", () => {
+    mocks.useBookDashboard.mockImplementation((bookId: string) => ({
+      isLoading: false,
+      isError: false,
+      data: { ...dashboardWithScenes, bookId },
+    }));
+    mocks.useBookContributions.mockReturnValue({
+      isLoading: false,
+      isError: false,
+      data: {
+        period: { value: "7d", startDate: "2026-05-08", endDate: "2026-05-14" },
+        scope: "SINGLE_CONTRIBUTOR",
+        selectedContributor: { userId: "user-1", displayName: "Carlos" },
+        availableContributors: [],
+        summary: { productiveWords: 0, manuscriptAdjustments: 0, writingDays: 0, contributorsCount: 0 },
+        dailySeries: [],
+      },
+    });
+
+    renderWithClient(<BookDashboard bookId="book-1" />);
+
+    expect(screen.getByText("Nenhuma contribuição registrada no período.")).toBeInTheDocument();
+  });
+
+  test("limpa contribuidor selecionado quando o livro muda sem desmontar", async () => {
+    mocks.useBookDashboard.mockImplementation((bookId: string) => ({
+      isLoading: false,
+      isError: false,
+      data: { ...dashboardWithScenes, bookId },
+    }));
+    mocks.useBookContributions.mockReturnValue({
+      isLoading: false,
+      isError: false,
+      data: {
+        period: { value: "7d", startDate: "2026-05-08", endDate: "2026-05-14" },
+        scope: "ALL_CONTRIBUTORS",
+        selectedContributor: null,
+        availableContributors: [
+          { userId: "user-1", displayName: "Carlos" },
+          { userId: "user-2", displayName: "Bruna" },
+        ],
+        summary: { productiveWords: 30, manuscriptAdjustments: 0, writingDays: 2, contributorsCount: 2 },
+        dailySeries: [{ date: "2026-05-14", productiveWords: 30, manuscriptAdjustments: 0 }],
+      },
+    });
+
+    const { rerender } = renderWithClient(<BookDashboard bookId="book-1" />);
+
+    fireEvent.change(screen.getByLabelText("Contribuidor"), { target: { value: "user-2" } });
+    await waitFor(() => expect(mocks.useBookContributions).toHaveBeenLastCalledWith("book-1", "7d", "user-2"));
+
+    rerender(<BookDashboard bookId="book-2" />);
+
+    await waitFor(() => expect(mocks.useBookContributions).toHaveBeenLastCalledWith("book-2", "7d", undefined));
+    expect(mocks.useBookContributions).not.toHaveBeenCalledWith("book-2", "7d", "user-2");
+  });
+
   test("grafico de produtividade usa apenas palavras produtivas", () => {
     const dashboardWithLargeAdjustment = {
       ...dashboardWithScenes,
-      writingProgress: {
-        ...dashboardWithScenes.writingProgress,
+      myWriting: {
+        progress: {
+        ...dashboardWithScenes.myWriting.progress,
         today: {
-          ...dashboardWithScenes.writingProgress.today,
+          ...dashboardWithScenes.myWriting.progress.today,
           productiveWordCountChange: 20,
           manuscriptAdjustmentWordCount: 700,
           progressPercent: 4,
         },
         recentDays: [
           {
-            ...dashboardWithScenes.writingProgress.today,
+            ...dashboardWithScenes.myWriting.progress.today,
             productiveWordCountChange: 20,
             manuscriptAdjustmentWordCount: 700,
             progressPercent: 4,
           },
         ],
+        },
+        schedule: dashboardWithScenes.myWriting.schedule,
       },
     };
     mocks.useBookDashboard.mockReturnValue({ isLoading: false, isError: false, data: dashboardWithLargeAdjustment });
@@ -150,15 +279,18 @@ describe("BookDashboard", () => {
   test("mostra resumo de ajustes do manuscrito quando houver ajuste no periodo", () => {
     const dashboardWithAdjustment = {
       ...dashboardWithScenes,
-      writingProgress: {
-        ...dashboardWithScenes.writingProgress,
+      myWriting: {
+        progress: {
+        ...dashboardWithScenes.myWriting.progress,
         recentDays: [
           {
-            ...dashboardWithScenes.writingProgress.today,
+            ...dashboardWithScenes.myWriting.progress.today,
             productiveWordCountChange: 20,
             manuscriptAdjustmentWordCount: 700,
           },
         ],
+        },
+        schedule: dashboardWithScenes.myWriting.schedule,
       },
     };
     mocks.useBookDashboard.mockReturnValue({ isLoading: false, isError: false, data: dashboardWithAdjustment });
@@ -166,7 +298,7 @@ describe("BookDashboard", () => {
     renderWithClient(<BookDashboard bookId="book-1" />);
 
     expect(screen.getByTestId("manuscript-adjustment-summary")).toBeInTheDocument();
-    expect(screen.getByText("Ajustes do manuscrito")).toBeInTheDocument();
+    expect(screen.getAllByText("Ajustes do manuscrito").length).toBeGreaterThan(0);
     expect(screen.getByText("Alterações causadas por restaurações, exclusões ou importações. Não contam como produtividade.")).toBeInTheDocument();
     expect(screen.getByText("700 palavras")).toBeInTheDocument();
   });
@@ -195,28 +327,34 @@ describe("BookDashboard", () => {
   test("7, 15 e 30 dias renderizam buckets diarios fixos", async () => {
     const staleRecentDashboard = {
       ...dashboardWithScenes,
-      writingProgress: {
-        ...dashboardWithScenes.writingProgress,
+      myWriting: {
+        progress: {
+        ...dashboardWithScenes.myWriting.progress,
         today: {
-          ...dashboardWithScenes.writingProgress.today,
+          ...dashboardWithScenes.myWriting.progress.today,
           date: "2026-05-14",
           productiveWordCountChange: 0,
           manuscriptAdjustmentWordCount: 0,
         },
         recentDays: [
-          { ...dashboardWithScenes.writingProgress.today, date: "2026-05-10", productiveWordCountChange: 120, manuscriptAdjustmentWordCount: 0 },
+          { ...dashboardWithScenes.myWriting.progress.today, date: "2026-05-10", productiveWordCountChange: 120, manuscriptAdjustmentWordCount: 0 },
         ],
+        },
+        schedule: dashboardWithScenes.myWriting.schedule,
       },
     };
     const thirtyDayDashboard = {
       ...dashboardWithScenes,
-      writingProgress: {
-        ...dashboardWithScenes.writingProgress,
+      myWriting: {
+        progress: {
+        ...dashboardWithScenes.myWriting.progress,
         recentDays: [
-          { ...dashboardWithScenes.writingProgress.today, date: "2026-05-12", productiveWordCountChange: 120, manuscriptAdjustmentWordCount: 0 },
-          { ...dashboardWithScenes.writingProgress.today, date: "2026-05-13", productiveWordCountChange: 220, manuscriptAdjustmentWordCount: 0 },
-          { ...dashboardWithScenes.writingProgress.today, date: "2026-05-14", productiveWordCountChange: 320, manuscriptAdjustmentWordCount: 0 },
+          { ...dashboardWithScenes.myWriting.progress.today, date: "2026-05-12", productiveWordCountChange: 120, manuscriptAdjustmentWordCount: 0 },
+          { ...dashboardWithScenes.myWriting.progress.today, date: "2026-05-13", productiveWordCountChange: 220, manuscriptAdjustmentWordCount: 0 },
+          { ...dashboardWithScenes.myWriting.progress.today, date: "2026-05-14", productiveWordCountChange: 320, manuscriptAdjustmentWordCount: 0 },
         ],
+        },
+        schedule: dashboardWithScenes.myWriting.schedule,
       },
     };
     mocks.useBookDashboard.mockImplementation((_bookId: string, period: string) => ({
@@ -257,35 +395,44 @@ describe("BookDashboard", () => {
   test("3, 6 e 12 meses renderizam buckets mensais fixos", async () => {
     const threeMonthDashboard = {
       ...dashboardWithScenes,
-      writingProgress: {
-        ...dashboardWithScenes.writingProgress,
+      myWriting: {
+        progress: {
+        ...dashboardWithScenes.myWriting.progress,
         recentDays: [
-          { ...dashboardWithScenes.writingProgress.today, date: "2026-05-14", productiveWordCountChange: 300, manuscriptAdjustmentWordCount: 0 },
-          { ...dashboardWithScenes.writingProgress.today, date: "2026-05-01", productiveWordCountChange: 200, manuscriptAdjustmentWordCount: 0 },
-          { ...dashboardWithScenes.writingProgress.today, date: "2026-04-20", productiveWordCountChange: 100, manuscriptAdjustmentWordCount: 0 },
-          { ...dashboardWithScenes.writingProgress.today, date: "2026-03-10", productiveWordCountChange: 50, manuscriptAdjustmentWordCount: 0 },
+          { ...dashboardWithScenes.myWriting.progress.today, date: "2026-05-14", productiveWordCountChange: 300, manuscriptAdjustmentWordCount: 0 },
+          { ...dashboardWithScenes.myWriting.progress.today, date: "2026-05-01", productiveWordCountChange: 200, manuscriptAdjustmentWordCount: 0 },
+          { ...dashboardWithScenes.myWriting.progress.today, date: "2026-04-20", productiveWordCountChange: 100, manuscriptAdjustmentWordCount: 0 },
+          { ...dashboardWithScenes.myWriting.progress.today, date: "2026-03-10", productiveWordCountChange: 50, manuscriptAdjustmentWordCount: 0 },
         ],
+        },
+        schedule: dashboardWithScenes.myWriting.schedule,
       },
     };
     const sixMonthDashboard = {
       ...dashboardWithScenes,
-      writingProgress: {
-        ...dashboardWithScenes.writingProgress,
+      myWriting: {
+        progress: {
+        ...dashboardWithScenes.myWriting.progress,
         recentDays: [
-          ...threeMonthDashboard.writingProgress.recentDays,
-          { ...dashboardWithScenes.writingProgress.today, date: "2026-02-07", productiveWordCountChange: 40, manuscriptAdjustmentWordCount: 0 },
-          { ...dashboardWithScenes.writingProgress.today, date: "2026-01-03", productiveWordCountChange: 30, manuscriptAdjustmentWordCount: 0 },
+          ...threeMonthDashboard.myWriting.progress.recentDays,
+          { ...dashboardWithScenes.myWriting.progress.today, date: "2026-02-07", productiveWordCountChange: 40, manuscriptAdjustmentWordCount: 0 },
+          { ...dashboardWithScenes.myWriting.progress.today, date: "2026-01-03", productiveWordCountChange: 30, manuscriptAdjustmentWordCount: 0 },
         ],
+        },
+        schedule: dashboardWithScenes.myWriting.schedule,
       },
     };
     const twelveMonthDashboard = {
       ...dashboardWithScenes,
-      writingProgress: {
-        ...dashboardWithScenes.writingProgress,
+      myWriting: {
+        progress: {
+        ...dashboardWithScenes.myWriting.progress,
         recentDays: [
-          { ...dashboardWithScenes.writingProgress.today, date: "2026-04-20", productiveWordCountChange: 100, manuscriptAdjustmentWordCount: 0 },
-          { ...dashboardWithScenes.writingProgress.today, date: "2025-06-15", productiveWordCountChange: 10, manuscriptAdjustmentWordCount: 0 },
+          { ...dashboardWithScenes.myWriting.progress.today, date: "2026-04-20", productiveWordCountChange: 100, manuscriptAdjustmentWordCount: 0 },
+          { ...dashboardWithScenes.myWriting.progress.today, date: "2025-06-15", productiveWordCountChange: 10, manuscriptAdjustmentWordCount: 0 },
         ],
+        },
+        schedule: dashboardWithScenes.myWriting.schedule,
       },
     };
     mocks.useBookDashboard.mockImplementation((_bookId: string, period: string) => ({
@@ -376,19 +523,21 @@ describe("BookDashboard", () => {
   test("mostra dia de descanso com progresso extra", () => {
     const restDayDashboard = {
       ...dashboardWithScenes,
-      writingSchedule: {
-        plannedWritingDays: ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"],
-        plannedWritingDaysPerWeek: 5,
-        restDays: ["SATURDAY", "SUNDAY"],
-        todayPlannedWritingDay: false,
-        currentScheduleEffectiveFrom: "2026-05-14",
-      },
-      writingProgress: {
-        ...dashboardWithScenes.writingProgress,
-        today: {
-          ...dashboardWithScenes.writingProgress.today,
-          productiveWordCountChange: 120,
-          manuscriptAdjustmentWordCount: 0,
+      myWriting: {
+        progress: {
+          ...dashboardWithScenes.myWriting.progress,
+          today: {
+            ...dashboardWithScenes.myWriting.progress.today,
+            productiveWordCountChange: 120,
+            manuscriptAdjustmentWordCount: 0,
+          },
+        },
+        schedule: {
+          plannedWritingDays: ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"],
+          plannedWritingDaysPerWeek: 5,
+          restDays: ["SATURDAY", "SUNDAY"],
+          todayPlannedWritingDay: false,
+          currentScheduleEffectiveFrom: "2026-05-14",
         },
       },
     };
@@ -418,12 +567,15 @@ describe("BookDashboard", () => {
     const dashboardWithRemovedCurrentGoal = {
       ...dashboardWithScenes,
       dailyTargetWordCount: null,
-      writingProgress: {
-        ...dashboardWithScenes.writingProgress,
-        today: {
-          ...dashboardWithScenes.writingProgress.today,
-          dailyTargetWordCount: 500,
+      myWriting: {
+        progress: {
+          ...dashboardWithScenes.myWriting.progress,
+          today: {
+            ...dashboardWithScenes.myWriting.progress.today,
+            dailyTargetWordCount: 500,
+          },
         },
+        schedule: dashboardWithScenes.myWriting.schedule,
       },
     };
     mocks.useBookDashboard.mockReturnValue({ isLoading: false, isError: false, data: dashboardWithRemovedCurrentGoal });

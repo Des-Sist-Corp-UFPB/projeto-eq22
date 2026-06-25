@@ -9,6 +9,8 @@ export const queryKeys = {
   item: (itemId: string) => ["items", itemId] as const,
   outline: (bookId: string) => ["books", bookId, "outline"] as const,
   bookDashboard: (bookId: string) => ["books", bookId, "dashboard"] as const,
+  bookContributions: (bookId: string) => ["books", bookId, "dashboard", "contributions"] as const,
+  userDashboard: ["dashboard", "me"] as const,
   scene: (sceneId: string) => ["scenes", sceneId] as const,
   sceneVersions: (sceneId: string) => ["scenes", sceneId, "versions"] as const,
   sceneVersion: (sceneId: string, versionId: string) => ["scenes", sceneId, "versions", versionId] as const,
