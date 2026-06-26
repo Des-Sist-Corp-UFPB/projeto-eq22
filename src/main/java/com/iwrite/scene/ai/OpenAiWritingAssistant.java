@@ -5,11 +5,13 @@ import com.iwrite.scene.dto.SceneAnalysisResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.model.openai.autoconfigure.OpenAiChatProperties;
+import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.ai.retry.NonTransientAiException;
 import org.springframework.ai.retry.TransientAiException;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
+import org.springframework.util.StringUtils;
 
 @Component
 @ConditionalOnProperty(name = "spring.ai.model.chat", havingValue = "openai")
@@ -38,12 +40,15 @@ public class OpenAiWritingAssistant implements WritingAssistant {
 
     private final ChatClient chatClient;
     private final String modelName;
+    private final OpenAiChatOptions requestOptions;
 
     public OpenAiWritingAssistant(
             ChatClient.Builder chatClientBuilder,
-            @Value("${spring.ai.openai.chat.options.model:gpt-4o-mini}") String modelName) {
+            OpenAiChatProperties chatProperties,
+            OpenAiChatGenerationProperties generationProperties) {
         this.chatClient = chatClientBuilder.build();
-        this.modelName = modelName;
+        this.requestOptions = buildRequestOptions(chatProperties.getOptions(), generationProperties);
+        this.modelName = requestOptions.getModel();
     }
 
     @Override
@@ -56,6 +61,7 @@ public class OpenAiWritingAssistant implements WritingAssistant {
                             .param("truncated", prompt.truncated())
                             .param("focus", prompt.focus() == null ? "" : prompt.focus())
                             .param("sceneText", prompt.sceneText()))
+                    .options(requestOptions.copy())
                     .call()
                     .entity(SceneAnalysisResponse.class);
             logResult(startedAt, "success", "none");
@@ -92,5 +98,57 @@ public class OpenAiWritingAssistant implements WritingAssistant {
             return "provider_timeout";
         }
         return "provider_response_failure";
+    }
+
+    private static OpenAiChatOptions buildRequestOptions(
+            OpenAiChatOptions configuredOptions,
+            OpenAiChatGenerationProperties generationProperties) {
+        Integer maxTokens = parseInteger(generationProperties.getMaxTokens(), "OPENAI_MAX_TOKENS");
+        Integer maxCompletionTokens = parseInteger(
+                generationProperties.getMaxCompletionTokens(),
+                "OPENAI_MAX_COMPLETION_TOKENS");
+        if (maxTokens != null && maxCompletionTokens != null) {
+            throw new IllegalStateException(
+                    "Configure only one token limit: OPENAI_MAX_TOKENS or OPENAI_MAX_COMPLETION_TOKENS.");
+        }
+
+        OpenAiChatOptions.Builder builder = OpenAiChatOptions.builder()
+                .model(configuredOptions.getModel());
+        Double temperature = parseDouble(generationProperties.getTemperature(), "OPENAI_TEMPERATURE");
+        if (temperature != null) {
+            builder.temperature(temperature);
+        }
+        if (maxTokens != null) {
+            builder.maxTokens(maxTokens);
+        }
+        if (maxCompletionTokens != null) {
+            builder.maxCompletionTokens(maxCompletionTokens);
+        }
+        if (StringUtils.hasText(generationProperties.getReasoningEffort())) {
+            builder.reasoningEffort(generationProperties.getReasoningEffort().trim());
+        }
+        return builder.build();
+    }
+
+    private static Integer parseInteger(String value, String environmentVariableName) {
+        if (!StringUtils.hasText(value)) {
+            return null;
+        }
+        try {
+            return Integer.valueOf(value.trim());
+        } catch (NumberFormatException exception) {
+            throw new IllegalStateException(environmentVariableName + " must be an integer.", exception);
+        }
+    }
+
+    private static Double parseDouble(String value, String environmentVariableName) {
+        if (!StringUtils.hasText(value)) {
+            return null;
+        }
+        try {
+            return Double.valueOf(value.trim());
+        } catch (NumberFormatException exception) {
+            throw new IllegalStateException(environmentVariableName + " must be a number.", exception);
+        }
     }
 }

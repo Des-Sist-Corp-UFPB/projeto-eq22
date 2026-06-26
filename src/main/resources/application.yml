@@ -20,8 +20,6 @@ spring:
         completions-path: ${OPENAI_COMPLETIONS_PATH:/v1/chat/completions}
         options:
           model: ${OPENAI_MODEL:gpt-4o-mini}
-          temperature: 0.2
-          max-tokens: ${OPENAI_MAX_TOKENS:4096}
   application:
     name: iwrite-backend
   datasource:
@@ -51,6 +49,14 @@ logging:
     org.springframework.ai.retry.autoconfigure.SpringAiRetryAutoConfiguration: OFF
 
 iwrite:
+  ai:
+    openai:
+      chat:
+        options:
+          temperature: ${OPENAI_TEMPERATURE:}
+          max-tokens: ${OPENAI_MAX_TOKENS:}
+          max-completion-tokens: ${OPENAI_MAX_COMPLETION_TOKENS:}
+          reasoning-effort: ${OPENAI_REASONING_EFFORT:}
   current-user:
     development:
       enabled: ${IWRITE_DEVELOPMENT_CURRENT_USER_ENABLED:false}
