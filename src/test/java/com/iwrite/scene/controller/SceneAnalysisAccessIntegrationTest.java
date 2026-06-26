@@ -24,12 +24,16 @@ import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.Primary;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.ZoneId;
 import java.util.List;
 import java.util.UUID;
 
 import static com.iwrite.support.SwitchableCurrentUserProvider.DEFAULT_TENANT_ID;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.hasItem;
 import static org.mockito.ArgumentMatchers.any;
@@ -113,6 +117,23 @@ class SceneAnalysisAccessIntegrationTest extends PostgresIntegrationTest {
         mockMvc.perform(post("/api/scenes/{sceneId}/ai-analysis", scene.id()))
                 .andExpect(status().isServiceUnavailable())
                 .andExpect(jsonPath("$.messages", hasItem("AI scene analysis could not be completed.")));
+    }
+
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    void endpointCallsAssistantOutsideDatabaseTransaction() throws Exception {
+        var book = createBook("AI transaction boundary");
+        var section = createSection(book, "Part");
+        var chapter = createChapter(section, "Chapter");
+        var scene = createScene(chapter, "Scene", SceneStatus.DRAFT, 0, "scene words");
+        when(writingAssistant.analyzeScene(any(SceneAnalysisPrompt.class))).thenAnswer(invocation -> {
+            assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+            return validAnalysis();
+        });
+
+        mockMvc.perform(post("/api/scenes/{sceneId}/ai-analysis", scene.id()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.summary").value("Summary"));
     }
 
     private UUID createMember(UUID tenantId, String displayName, String email) {

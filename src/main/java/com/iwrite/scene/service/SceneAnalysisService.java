@@ -2,6 +2,7 @@ package com.iwrite.scene.service;
 
 import com.iwrite.common.exception.BadRequestException;
 import com.iwrite.common.exception.ServiceUnavailableException;
+import com.iwrite.export.service.TipTapPlainTextRenderer;
 import com.iwrite.scene.ai.SceneAnalysisPrompt;
 import com.iwrite.scene.ai.WritingAssistant;
 import com.iwrite.scene.dto.SceneAnalysisRequest;
@@ -10,7 +11,8 @@ import com.iwrite.scene.entity.Scene;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.List;
 import java.util.UUID;
@@ -24,22 +26,24 @@ public class SceneAnalysisService {
 
     private final SceneService sceneService;
     private final WritingAssistant writingAssistant;
+    private final TipTapPlainTextRenderer tipTapPlainTextRenderer;
+    private final TransactionTemplate readOnlyTransactionTemplate;
 
-    public SceneAnalysisService(SceneService sceneService, WritingAssistant writingAssistant) {
+    public SceneAnalysisService(
+            SceneService sceneService,
+            WritingAssistant writingAssistant,
+            TipTapPlainTextRenderer tipTapPlainTextRenderer,
+            PlatformTransactionManager transactionManager
+    ) {
         this.sceneService = sceneService;
         this.writingAssistant = writingAssistant;
+        this.tipTapPlainTextRenderer = tipTapPlainTextRenderer;
+        this.readOnlyTransactionTemplate = new TransactionTemplate(transactionManager);
+        this.readOnlyTransactionTemplate.setReadOnly(true);
     }
 
-    @Transactional(readOnly = true)
     public SceneAnalysisResponse analyze(UUID sceneId, SceneAnalysisRequest request) {
-        Scene scene = sceneService.getScene(sceneId);
-        String sceneText = usableSceneText(scene);
-        String focus = usableFocus(request);
-        SceneAnalysisPrompt prompt = new SceneAnalysisPrompt(
-                truncateForModel(sceneText),
-                focus,
-                sceneText.length() > MAX_SCENE_TEXT_CHARS
-        );
+        SceneAnalysisPrompt prompt = readOnlyTransactionTemplate.execute(status -> loadPrompt(sceneId, request));
 
         long startedAt = System.nanoTime();
         try {
@@ -55,12 +59,25 @@ public class SceneAnalysisService {
         }
     }
 
+    private SceneAnalysisPrompt loadPrompt(UUID sceneId, SceneAnalysisRequest request) {
+        Scene scene = sceneService.getScene(sceneId);
+        String sceneText = usableSceneText(scene);
+        return new SceneAnalysisPrompt(
+                truncateForModel(sceneText),
+                usableFocus(request),
+                sceneText.length() > MAX_SCENE_TEXT_CHARS
+        );
+    }
+
     private String usableSceneText(Scene scene) {
-        String contentText = scene.getContentText();
-        if (contentText == null || contentText.trim().isEmpty()) {
+        String sceneText = tipTapPlainTextRenderer.render(scene.getContentJson())
+                .orElseGet(() -> scene.getContentText() == null || scene.getContentText().isBlank()
+                        ? null
+                        : scene.getContentText());
+        if (sceneText == null || sceneText.trim().isEmpty()) {
             throw new BadRequestException("Scene must contain textual content before AI analysis.");
         }
-        return contentText;
+        return sceneText;
     }
 
     private String usableFocus(SceneAnalysisRequest request) {
