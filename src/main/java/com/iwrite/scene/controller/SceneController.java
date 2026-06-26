@@ -1,11 +1,14 @@
 package com.iwrite.scene.controller;
 
 import com.iwrite.common.dto.ReorderRequest;
+import com.iwrite.scene.dto.SceneAnalysisRequest;
+import com.iwrite.scene.dto.SceneAnalysisResponse;
 import com.iwrite.scene.dto.SceneContentRequest;
 import com.iwrite.scene.dto.ScenePlanningRequest;
 import com.iwrite.scene.dto.SceneRequest;
 import com.iwrite.scene.dto.SceneResponse;
 import com.iwrite.scene.dto.SceneUpdateRequest;
+import com.iwrite.scene.service.SceneAnalysisService;
 import com.iwrite.scene.service.SceneService;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
@@ -26,9 +29,11 @@ import java.util.UUID;
 public class SceneController {
 
     private final SceneService sceneService;
+    private final SceneAnalysisService sceneAnalysisService;
 
-    public SceneController(SceneService sceneService) {
+    public SceneController(SceneService sceneService, SceneAnalysisService sceneAnalysisService) {
         this.sceneService = sceneService;
+        this.sceneAnalysisService = sceneAnalysisService;
     }
 
     @PostMapping("/chapters/{chapterId}/scenes")
@@ -55,6 +60,14 @@ public class SceneController {
     @PatchMapping("/scenes/{sceneId}/planning")
     public SceneResponse updatePlanning(@PathVariable UUID sceneId, @Valid @RequestBody ScenePlanningRequest request) {
         return sceneService.updatePlanning(sceneId, request);
+    }
+
+    @PostMapping("/scenes/{sceneId}/ai-analysis")
+    public SceneAnalysisResponse analyze(
+            @PathVariable UUID sceneId,
+            @Valid @RequestBody(required = false) SceneAnalysisRequest request
+    ) {
+        return sceneAnalysisService.analyze(sceneId, request);
     }
 
     @PatchMapping("/chapters/{chapterId}/scenes/reorder")

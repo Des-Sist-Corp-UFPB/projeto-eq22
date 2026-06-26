@@ -1,6 +1,8 @@
 package com.iwrite.api;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.iwrite.scene.ai.DisabledWritingAssistant;
+import com.iwrite.scene.ai.WritingAssistant;
 import com.iwrite.scene.entity.SceneStatus;
 import com.iwrite.scene.repository.SceneRepository;
 import com.iwrite.support.PostgresIntegrationTest;
@@ -8,12 +10,14 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
+import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.hasItem;
@@ -26,6 +30,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @AutoConfigureMockMvc
+@TestPropertySource(properties = "spring.ai.model.chat=none")
 class ControllerContractIntegrationTest extends PostgresIntegrationTest {
 
     @Autowired
@@ -36,6 +41,9 @@ class ControllerContractIntegrationTest extends PostgresIntegrationTest {
 
     @Autowired
     private SceneRepository sceneRepository;
+
+    @Autowired
+    private WritingAssistant writingAssistant;
 
     @Test
     void getDashboardReturnsBookMetrics() throws Exception {
@@ -323,6 +331,17 @@ class ControllerContractIntegrationTest extends PostgresIntegrationTest {
                         ))))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.messages", hasItem(containsString("Scene not found"))));
+    }
+
+    @Test
+    void postSceneAiAnalysisReturnsUnavailableWhenAiIsDisabled() throws Exception {
+        StoryWorld world = createStoryWorld("HTTP AI disabled");
+
+        assertThat(writingAssistant).isInstanceOf(DisabledWritingAssistant.class);
+
+        mockMvc.perform(post("/api/scenes/{sceneId}/ai-analysis", world.scene().id()))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.messages", hasItem(containsString("AI scene analysis is not available"))));
     }
 
     @Test
