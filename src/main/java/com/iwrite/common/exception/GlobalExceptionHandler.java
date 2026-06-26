@@ -22,7 +22,7 @@ public class GlobalExceptionHandler {
         return buildResponse(HttpStatus.NOT_FOUND, List.of(exception.getMessage()));
     }
 
-    @ExceptionHandler({NoHandlerFoundException.class, NoResourceFoundException.class})
+    @ExceptionHandler({ NoHandlerFoundException.class, NoResourceFoundException.class })
     public ResponseEntity<ApiErrorResponse> handleUnmappedRoute(Exception exception) {
         return buildResponse(HttpStatus.NOT_FOUND, List.of("Resource not found"));
     }
@@ -35,6 +35,11 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(ConflictException.class)
     public ResponseEntity<ApiErrorResponse> handleConflict(ConflictException exception) {
         return buildResponse(HttpStatus.CONFLICT, List.of(exception.getMessage()));
+    }
+
+    @ExceptionHandler(ServiceUnavailableException.class)
+    public ResponseEntity<ApiErrorResponse> handleServiceUnavailable(ServiceUnavailableException exception) {
+        return buildResponse(HttpStatus.SERVICE_UNAVAILABLE, List.of(exception.getMessage()));
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
@@ -78,8 +83,7 @@ public class GlobalExceptionHandler {
                 OffsetDateTime.now(),
                 status.value(),
                 status.getReasonPhrase(),
-                messages
-        );
+                messages);
 
         return ResponseEntity.status(status).body(response);
     }
