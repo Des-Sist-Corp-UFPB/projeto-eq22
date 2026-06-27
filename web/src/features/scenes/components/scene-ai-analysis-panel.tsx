@@ -11,16 +11,30 @@ import {
 import { ApiError } from "@/lib/api/client";
 
 const CONTENT_ID = "scene-ai-analysis-content";
+const FOCUS_HELP_ID = "scene-ai-analysis-focus-help";
+const MAX_FOCUS_LENGTH = 300;
 const UNAVAILABLE_MESSAGE = "A análise com IA está indisponível no momento. Tente novamente mais tarde.";
 const GENERIC_ERROR_MESSAGE = "Não foi possível concluir a análise. Tente novamente.";
 
+export type SceneContentSyncState = "saved" | "dirty" | "saving" | "error" | "loading";
+
 type SceneAiAnalysisPanelProps = {
   sceneId: string;
+  contentSyncState: SceneContentSyncState;
 };
 
-export function SceneAiAnalysisPanel({ sceneId }: SceneAiAnalysisPanelProps) {
+const contentSyncMessages: Partial<Record<SceneContentSyncState, string>> = {
+  dirty: "Salve as alterações antes de analisar a versão mais recente.",
+  saving: "O conteúdo está sendo salvo. Aguarde para analisar.",
+  error: "O conteúdo mais recente não foi salvo. Salve novamente antes de analisar.",
+  loading: "Aguarde o carregamento do conteúdo da cena.",
+};
+
+export function SceneAiAnalysisPanel({ sceneId, contentSyncState }: SceneAiAnalysisPanelProps) {
   const activeSceneIdRef = useRef(sceneId);
   activeSceneIdRef.current = sceneId;
+  const contentSyncStateRef = useRef(contentSyncState);
+  contentSyncStateRef.current = contentSyncState;
 
   const previousSceneIdRef = useRef(sceneId);
   const requestSequenceRef = useRef(0);
@@ -49,6 +63,20 @@ export function SceneAiAnalysisPanel({ sceneId }: SceneAiAnalysisPanelProps) {
   }, [sceneId]);
 
   useEffect(() => {
+    if (contentSyncState === "saved") {
+      return;
+    }
+
+    requestSequenceRef.current += 1;
+    activeControllerRef.current?.abort();
+    activeControllerRef.current = null;
+    loadingRef.current = false;
+    setResult(null);
+    setErrorMessage(null);
+    setIsLoading(false);
+  }, [contentSyncState]);
+
+  useEffect(() => {
     return () => {
       requestSequenceRef.current += 1;
       activeControllerRef.current?.abort();
@@ -58,7 +86,11 @@ export function SceneAiAnalysisPanel({ sceneId }: SceneAiAnalysisPanelProps) {
 
   async function handleAnalyze(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (loadingRef.current) {
+    if (
+      loadingRef.current ||
+      contentSyncStateRef.current !== "saved" ||
+      focus.length > MAX_FOCUS_LENGTH
+    ) {
       return;
     }
 
@@ -70,12 +102,14 @@ export function SceneAiAnalysisPanel({ sceneId }: SceneAiAnalysisPanelProps) {
     activeControllerRef.current = controller;
     loadingRef.current = true;
     setIsLoading(true);
+    setResult(null);
     setErrorMessage(null);
 
     const requestIsStale = () =>
       controller.signal.aborted ||
       capturedSequence !== requestSequenceRef.current ||
-      capturedSceneId !== activeSceneIdRef.current;
+      capturedSceneId !== activeSceneIdRef.current ||
+      contentSyncStateRef.current !== "saved";
 
     try {
       const analysis = await analyzeScene(
@@ -105,6 +139,8 @@ export function SceneAiAnalysisPanel({ sceneId }: SceneAiAnalysisPanelProps) {
       }
     }
   }
+
+  const isAnalysisAvailable = contentSyncState === "saved";
 
   return (
     <section className="border-b border-zinc-200 bg-white px-4 py-3 md:px-7">
@@ -137,25 +173,40 @@ export function SceneAiAnalysisPanel({ sceneId }: SceneAiAnalysisPanelProps) {
               id="scene-ai-analysis-focus"
               value={focus}
               rows={3}
+              maxLength={MAX_FOCUS_LENGTH}
+              aria-describedby={FOCUS_HELP_ID}
               disabled={isLoading}
-              onChange={(event) => setFocus(event.target.value)}
+              onChange={(event) => {
+                if (event.target.value.length <= MAX_FOCUS_LENGTH) {
+                  setFocus(event.target.value);
+                }
+              }}
               placeholder="Opcional: destaque ritmo, diálogo, tensão..."
               className="resize-y bg-white text-sm text-zinc-900 focus:ring-2 focus:ring-zinc-200"
             />
+            <div id={FOCUS_HELP_ID} className="flex flex-wrap items-start justify-between gap-2 text-xs text-zinc-500">
+              <span>
+                <span className="block">A IA analisa a última versão salva.</span>
+                {contentSyncMessages[contentSyncState] ? (
+                  <span className="mt-0.5 block">{contentSyncMessages[contentSyncState]}</span>
+                ) : null}
+              </span>
+              <span>{focus.length}/{MAX_FOCUS_LENGTH}</span>
+            </div>
             <div>
-              <Button type="submit" size="sm" disabled={isLoading}>
+              <Button type="submit" size="sm" disabled={isLoading || !isAnalysisAvailable}>
                 {isLoading ? "Analisando..." : "Analisar com IA"}
               </Button>
             </div>
           </form>
 
-          {errorMessage ? (
+          {errorMessage && isAnalysisAvailable ? (
             <FeedbackMessage variant="error" className="mt-4">
               {errorMessage}
             </FeedbackMessage>
           ) : null}
 
-          {result ? <SceneAnalysisSections result={result} /> : null}
+          {result && isAnalysisAvailable ? <SceneAnalysisSections result={result} /> : null}
         </div>
       </div>
     </section>

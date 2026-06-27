@@ -6,7 +6,10 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { ErrorState, LoadingState } from "@/components/ui/feedback";
 import { deleteScene, getScene, restoreSceneVersion, updateScene, updateSceneContent } from "@/features/scenes/api/scenes-api";
-import { SceneAiAnalysisPanel } from "@/features/scenes/components/scene-ai-analysis-panel";
+import {
+  SceneAiAnalysisPanel,
+  type SceneContentSyncState,
+} from "@/features/scenes/components/scene-ai-analysis-panel";
 import { SceneContentEditor } from "@/features/scenes/components/scene-content-editor";
 import { SceneEditorHeader, type ContentSaveStatus } from "@/features/scenes/components/scene-editor-header";
 import { SceneEmptyState } from "@/features/scenes/components/scene-empty-state";
@@ -483,7 +486,20 @@ export function SceneEditor({
     );
   }
 
-  if (loadedSceneId !== scene.id) {
+  const activeContentMutationSceneId = contentMutation.variables?.targetSceneId;
+  const hasUnsavedContent = contentJson !== lastSavedContentJson || contentText !== lastSavedContentText;
+  const contentSyncState: SceneContentSyncState =
+    loadedSceneId !== scene.id
+      ? "loading"
+      : contentMutation.isPending && activeContentMutationSceneId === scene.id
+        ? "saving"
+        : contentMutation.isError && activeContentMutationSceneId === scene.id
+          ? "error"
+          : hasUnsavedContent
+            ? "dirty"
+            : "saved";
+
+  if (contentSyncState === "loading") {
     return (
       <section className="p-6">
         <LoadingState label="Preparando editor..." />
@@ -491,16 +507,8 @@ export function SceneEditor({
     );
   }
 
-  const activeContentMutationSceneId = contentMutation.variables?.targetSceneId;
-  const hasUnsavedContent = contentJson !== lastSavedContentJson || contentText !== lastSavedContentText;
   const contentSaveStatus: ContentSaveStatus =
-    contentMutation.isPending && activeContentMutationSceneId === scene.id
-      ? "saving"
-      : contentMutation.isError && activeContentMutationSceneId === scene.id
-        ? "error"
-        : hasUnsavedContent
-          ? "editing"
-          : "saved";
+    contentSyncState === "dirty" ? "editing" : contentSyncState;
 
   return (
     <section className={`h-full overflow-y-auto bg-zinc-100/70 ${isFocusMode ? "p-2 md:p-4 lg:p-6" : "p-4 md:p-6 lg:p-8"}`}>
@@ -597,7 +605,7 @@ export function SceneEditor({
         </section>
 
         <div className={isFocusMode ? "hidden" : ""}>
-          <SceneAiAnalysisPanel sceneId={scene.id} />
+          <SceneAiAnalysisPanel sceneId={scene.id} contentSyncState={contentSyncState} />
         </div>
 
         <div className="min-h-0 bg-white lg:h-full">
