@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { SceneEditor } from "@/features/scenes/components/scene-editor";
 import { sceneForPlanning } from "@/test/fixtures";
 import { renderWithClient } from "@/test/test-utils";
+import { queryKeys } from "@/lib/query/keys";
 
 const mocks = vi.hoisted(() => ({
   getScene: vi.fn(),
@@ -30,14 +31,22 @@ vi.mock("@/features/scenes/api/analyze-scene", () => ({
 vi.mock("@/features/scenes/components/scene-content-editor", () => ({
   SceneContentEditor: ({
     sourceSceneId,
+    contentText,
     onContentChange,
   }: {
     sourceSceneId: string;
+    contentText: string;
     onContentChange: (sceneId: string, contentJson: string, contentText: string) => void;
   }) => (
-    <button type="button" onClick={() => onContentChange(sourceSceneId, "{\"type\":\"doc\"}", "Novo texto")}>
-      Alterar conteudo
-    </button>
+    <div>
+      <p data-testid="editor-content">{contentText}</p>
+      <button type="button" onClick={() => onContentChange(sourceSceneId, "{\"type\":\"doc\"}", "Novo texto")}>
+        Alterar conteudo
+      </button>
+      <button type="button" onClick={() => onContentChange(sourceSceneId, "{\"type\":\"doc-2\"}", "Texto mais novo")}>
+        Alterar novamente
+      </button>
+    </div>
   ),
 }));
 
@@ -57,11 +66,7 @@ const analysisResult = {
 describe("SceneEditor content save contract", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.randomUUID
-      .mockReturnValueOnce("operation-autosave")
-      .mockReturnValueOnce("operation-manual")
-      .mockReturnValueOnce("operation-first")
-      .mockReturnValueOnce("operation-second");
+    mocks.randomUUID.mockReset().mockReturnValue("operation-id");
     vi.stubGlobal("crypto", {
       randomUUID: mocks.randomUUID,
     });
@@ -79,6 +84,7 @@ describe("SceneEditor content save contract", () => {
   });
 
   test("autosave sends expectedContentRevision operationId and AUTO_SAVE", async () => {
+    mocks.randomUUID.mockReturnValueOnce("operation-autosave");
     renderEditor();
     await screen.findByRole("heading", { name: sceneForPlanning.title });
 
@@ -101,6 +107,7 @@ describe("SceneEditor content save contract", () => {
   });
 
   test("manual save sends expectedContentRevision operationId and MANUAL_SAVE", async () => {
+    mocks.randomUUID.mockReturnValueOnce("operation-manual");
     renderEditor();
     await screen.findByRole("heading", { name: sceneForPlanning.title });
 
@@ -117,7 +124,138 @@ describe("SceneEditor content save contract", () => {
     });
   });
 
+  test("metadata update preserves dirty visible content until that content is saved", async () => {
+    const metadataUpdate = createDeferred<typeof sceneForPlanning>();
+    const contentSave = createDeferred<typeof sceneForPlanning>();
+    mocks.updateScene.mockReturnValueOnce(metadataUpdate.promise);
+    mocks.updateSceneContent.mockReturnValueOnce(contentSave.promise);
+    renderEditor();
+    await screen.findByRole("heading", { name: sceneForPlanning.title });
+    expect(screen.getByTestId("editor-content")).toHaveTextContent("Texto da cena");
+    fireEvent.click(screen.getByRole("button", { name: "Expandir análise com IA" }));
+    vi.useFakeTimers();
+
+    fireEvent.click(screen.getByRole("button", { name: "Alterar conteudo" }));
+
+    expect(screen.getByTestId("editor-content")).toHaveTextContent("Novo texto");
+    expect(screen.getByRole("button", { name: "Analisar com IA" })).toBeDisabled();
+    expect(screen.getByText("Digitando...")).toBeInTheDocument();
+    expect(mocks.updateSceneContent).not.toHaveBeenCalled();
+
+    fireEvent.change(screen.getByLabelText("Título"), { target: { value: "Título atualizado" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar cena" }));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(mocks.updateScene).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      metadataUpdate.resolve({
+        ...sceneForPlanning,
+        title: "Título atualizado",
+        contentRevision: 3,
+      });
+      await metadataUpdate.promise;
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(screen.getByRole("heading", { name: "Título atualizado" })).toBeInTheDocument();
+
+    expect(screen.getByTestId("editor-content")).toHaveTextContent("Novo texto");
+    expect(screen.getByRole("button", { name: "Analisar com IA" })).toBeDisabled();
+    expect(screen.getByText("Digitando...")).toBeInTheDocument();
+    expect(mocks.updateSceneContent).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Salvar conteúdo" }));
+    vi.useRealTimers();
+    await waitFor(() => {
+      expect(mocks.updateSceneContent).toHaveBeenCalledWith(sceneForPlanning.id, {
+        contentJson: "{\"type\":\"doc\"}",
+        contentText: "Novo texto",
+        source: "MANUAL_SAVE",
+        expectedContentRevision: 3,
+        operationId: expect.any(String),
+      });
+    });
+    expect(screen.getByRole("button", { name: "Analisar com IA" })).toBeDisabled();
+
+    await act(async () => {
+      contentSave.resolve({
+        ...sceneForPlanning,
+        title: "Título atualizado",
+        contentJson: "{\"type\":\"doc\"}",
+        contentText: "Novo texto",
+        contentRevision: 4,
+      });
+      await contentSave.promise;
+    });
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Analisar com IA" })).toBeEnabled());
+    expect(screen.getByTestId("editor-content")).toHaveTextContent("Novo texto");
+    expect(screen.getByText("Salvo")).toBeInTheDocument();
+  });
+
+  test("same-scene refresh cannot disrupt a pending save or a newer local edit", async () => {
+    const firstSave = createDeferred<typeof sceneForPlanning>();
+    mocks.updateSceneContent
+      .mockReturnValueOnce(firstSave.promise)
+      .mockResolvedValueOnce({
+        ...sceneForPlanning,
+        contentJson: "{\"type\":\"doc-2\"}",
+        contentText: "Texto mais novo",
+        contentRevision: 5,
+      });
+    const { queryClient } = renderEditor();
+    await screen.findByRole("heading", { name: sceneForPlanning.title });
+    fireEvent.click(screen.getByRole("button", { name: "Expandir análise com IA" }));
+    fireEvent.click(screen.getByRole("button", { name: "Alterar conteudo" }));
+    fireEvent.click(screen.getByRole("button", { name: "Salvar conteúdo" }));
+    await waitFor(() => expect(mocks.updateSceneContent).toHaveBeenCalledTimes(1));
+
+    await act(async () => {
+      queryClient.setQueryData(queryKeys.scene(sceneForPlanning.id), {
+        ...sceneForPlanning,
+        title: "Cena atualizada externamente",
+        contentRevision: 99,
+      });
+    });
+    await screen.findByRole("heading", { name: "Cena atualizada externamente" });
+    expect(screen.getByTestId("editor-content")).toHaveTextContent("Novo texto");
+
+    vi.useFakeTimers();
+    fireEvent.click(screen.getByRole("button", { name: "Alterar novamente" }));
+    await act(async () => {
+      firstSave.resolve({
+        ...sceneForPlanning,
+        contentJson: "{\"type\":\"doc\"}",
+        contentText: "Novo texto",
+        contentRevision: 4,
+      });
+      await firstSave.promise;
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    expect(screen.getByText("Salve as alterações antes de analisar a versão mais recente.")).toBeInTheDocument();
+    expect(screen.getByTestId("editor-content")).toHaveTextContent("Texto mais novo");
+    expect(screen.getByRole("button", { name: "Analisar com IA" })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Salvar conteúdo" }));
+    vi.useRealTimers();
+    await waitFor(() => {
+      expect(mocks.updateSceneContent).toHaveBeenNthCalledWith(2, sceneForPlanning.id, {
+        contentJson: "{\"type\":\"doc-2\"}",
+        contentText: "Texto mais novo",
+        source: "MANUAL_SAVE",
+        expectedContentRevision: 4,
+        operationId: expect.any(String),
+      });
+    });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Analisar com IA" })).toBeEnabled());
+  });
+
   test("successful response updates revision refs for later saves", async () => {
+    mocks.randomUUID
+      .mockReturnValueOnce("operation-first")
+      .mockReturnValueOnce("operation-second");
     mocks.updateSceneContent
       .mockResolvedValueOnce({ ...sceneForPlanning, contentRevision: 4 })
       .mockResolvedValueOnce({ ...sceneForPlanning, contentRevision: 5 });
@@ -143,6 +281,7 @@ describe("SceneEditor content save contract", () => {
   });
 
   test("failed autosave uses one operationId and is not retried by the editor", async () => {
+    mocks.randomUUID.mockReturnValueOnce("operation-autosave");
     mocks.updateSceneContent.mockRejectedValueOnce(new Error("network down"));
     renderEditor();
     await screen.findByRole("heading", { name: sceneForPlanning.title });
@@ -269,7 +408,7 @@ describe("SceneEditor content save contract", () => {
 });
 
 function renderEditor() {
-  renderWithClient(
+  return renderWithClient(
     <SceneEditor
       bookId="book-1"
       sceneId={sceneForPlanning.id}

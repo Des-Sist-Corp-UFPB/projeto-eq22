@@ -228,6 +228,18 @@ export function SceneEditor({
     setTitle(queriedScene.title);
     setSummary(queriedScene.summary ?? "");
     setStatus(queriedScene.status);
+
+    const isInitialContentHydration = loadedSceneIdRef.current !== queriedScene.id;
+    const hasLocalUnsavedContent =
+      currentContentJsonRef.current !== lastSavedContentJsonRef.current ||
+      currentContentTextRef.current !== lastSavedContentTextRef.current;
+    const canHydrateContent =
+      isInitialContentHydration || (!hasLocalUnsavedContent && !contentSavePendingRef.current);
+
+    if (!canHydrateContent) {
+      return;
+    }
+
     setContentJson(queriedScene.contentJson ?? "");
     setContentText(queriedScene.contentText ?? "");
     setLastSavedContentJson(queriedScene.contentJson ?? "");
