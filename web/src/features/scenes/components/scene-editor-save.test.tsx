@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   updateSceneContent: vi.fn(),
   restoreSceneVersion: vi.fn(),
   deleteScene: vi.fn(),
+  analyzeScene: vi.fn(),
   randomUUID: vi.fn(),
 }));
 
@@ -20,6 +21,10 @@ vi.mock("@/features/scenes/api/scenes-api", () => ({
   updateSceneContent: mocks.updateSceneContent,
   restoreSceneVersion: mocks.restoreSceneVersion,
   deleteScene: mocks.deleteScene,
+}));
+
+vi.mock("@/features/scenes/api/analyze-scene", () => ({
+  analyzeScene: mocks.analyzeScene,
 }));
 
 vi.mock("@/features/scenes/components/scene-content-editor", () => ({
@@ -56,6 +61,14 @@ describe("SceneEditor content save contract", () => {
     mocks.updateSceneContent.mockResolvedValue({ ...sceneForPlanning, contentText: "Novo texto", contentRevision: 4 });
     mocks.restoreSceneVersion.mockResolvedValue(sceneForPlanning);
     mocks.deleteScene.mockResolvedValue(undefined);
+    mocks.analyzeScene.mockResolvedValue({
+      summary: "Resumo da análise",
+      tone: "Tenso",
+      pacing: "Crescente",
+      strengths: ["Conflito claro"],
+      issues: ["Transição rápida"],
+      suggestions: ["Expandir a reação"],
+    });
   });
 
   afterEach(() => {
@@ -146,6 +159,26 @@ describe("SceneEditor content save contract", () => {
     expect(mocks.updateSceneContent).toHaveBeenCalledWith(sceneForPlanning.id, expect.objectContaining({
       operationId: "operation-autosave",
     }));
+  });
+
+  test("AI analysis does not save metadata or content and does not schedule autosave", async () => {
+    renderEditor();
+    await screen.findByRole("heading", { name: sceneForPlanning.title });
+
+    fireEvent.click(screen.getByRole("button", { name: "Expandir análise com IA" }));
+    fireEvent.click(screen.getByRole("button", { name: "Analisar com IA" }));
+
+    expect(await screen.findByText("Resumo da análise")).toBeInTheDocument();
+    expect(mocks.analyzeScene).toHaveBeenCalledWith(sceneForPlanning.id, {}, expect.any(AbortSignal));
+
+    vi.useFakeTimers();
+    await act(async () => {
+      vi.advanceTimersByTime(1200);
+    });
+    vi.useRealTimers();
+
+    expect(mocks.updateScene).not.toHaveBeenCalled();
+    expect(mocks.updateSceneContent).not.toHaveBeenCalled();
   });
 });
 

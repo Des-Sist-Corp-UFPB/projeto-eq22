@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { ErrorState, LoadingState } from "@/components/ui/feedback";
 import { deleteScene, getScene, restoreSceneVersion, updateScene, updateSceneContent } from "@/features/scenes/api/scenes-api";
+import { SceneAiAnalysisPanel } from "@/features/scenes/components/scene-ai-analysis-panel";
 import { SceneContentEditor } from "@/features/scenes/components/scene-content-editor";
 import { SceneEditorHeader, type ContentSaveStatus } from "@/features/scenes/components/scene-editor-header";
 import { SceneEmptyState } from "@/features/scenes/components/scene-empty-state";
@@ -504,8 +505,10 @@ export function SceneEditor({
   return (
     <section className={`h-full overflow-y-auto bg-zinc-100/70 ${isFocusMode ? "p-2 md:p-4 lg:p-6" : "p-4 md:p-6 lg:p-8"}`}>
       <Card
-        className={`mx-auto grid min-h-full grid-rows-[auto_auto_auto_minmax(0,1fr)] overflow-hidden border-zinc-200 bg-white ${
-          isFocusMode ? "max-w-6xl shadow-sm shadow-zinc-200/70" : "max-w-7xl shadow-xl shadow-zinc-200/70"
+        className={`mx-auto grid min-h-full overflow-hidden border-zinc-200 bg-white ${
+          isFocusMode
+            ? "max-w-6xl grid-rows-[auto_auto_minmax(0,1fr)] shadow-sm shadow-zinc-200/70"
+            : "max-w-7xl grid-rows-[auto_auto_auto_auto_minmax(0,1fr)] shadow-xl shadow-zinc-200/70"
         }`}
       >
         <SceneEditorHeader
@@ -592,6 +595,10 @@ export function SceneEditor({
             ) : null}
           </div>
         </section>
+
+        <div className={isFocusMode ? "hidden" : ""}>
+          <SceneAiAnalysisPanel sceneId={scene.id} />
+        </div>
 
         <div className="min-h-0 bg-white lg:h-full">
           <SceneContentEditor

@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   updateSceneContent: vi.fn(),
   restoreSceneVersion: vi.fn(),
   deleteScene: vi.fn(),
+  analyzeScene: vi.fn(),
   randomUUID: vi.fn(),
 }));
 
@@ -21,6 +22,10 @@ vi.mock("@/features/scenes/api/scenes-api", () => ({
   updateSceneContent: mocks.updateSceneContent,
   restoreSceneVersion: mocks.restoreSceneVersion,
   deleteScene: mocks.deleteScene,
+}));
+
+vi.mock("@/features/scenes/api/analyze-scene", () => ({
+  analyzeScene: mocks.analyzeScene,
 }));
 
 vi.mock("@/features/scenes/components/scene-content-editor", () => ({
@@ -79,6 +84,14 @@ describe("SceneEditor restore orchestration", () => {
     mocks.updateSceneContent.mockResolvedValue({ ...sceneForPlanning, contentText: "Novo texto", contentRevision: 4 });
     mocks.restoreSceneVersion.mockResolvedValue({ ...sceneForPlanning, contentText: "Texto restaurado", contentRevision: 8 });
     mocks.deleteScene.mockResolvedValue(undefined);
+    mocks.analyzeScene.mockResolvedValue({
+      summary: "Resumo da análise",
+      tone: "Tenso",
+      pacing: "Crescente",
+      strengths: ["Conflito claro"],
+      issues: ["Transição rápida"],
+      suggestions: ["Expandir a reação"],
+    });
   });
 
   afterEach(() => {
