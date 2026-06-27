@@ -233,8 +233,13 @@ export function SceneEditor({
     const hasLocalUnsavedContent =
       currentContentJsonRef.current !== lastSavedContentJsonRef.current ||
       currentContentTextRef.current !== lastSavedContentTextRef.current;
+    const hasContentSaveInFlight =
+      contentSavePendingRef.current || contentSavePromiseRef.current !== null;
+    const isNewerContentRevision =
+      queriedScene.contentRevision > contentRevisionRef.current;
     const canHydrateContent =
-      isInitialContentHydration || (!hasLocalUnsavedContent && !contentSavePendingRef.current);
+      isInitialContentHydration ||
+      (isNewerContentRevision && !hasLocalUnsavedContent && !hasContentSaveInFlight);
 
     if (!canHydrateContent) {
       return;
@@ -251,6 +256,9 @@ export function SceneEditor({
     contentRevisionRef.current = queriedScene.contentRevision;
     loadedSceneIdRef.current = queriedScene.id;
     setLoadedSceneId(queriedScene.id);
+    if (!isInitialContentHydration) {
+      setEditorContentVersion((version) => version + 1);
+    }
   }, [sceneId, sceneQuery.data]);
 
   function handleMetadataSubmit(event: FormEvent<HTMLFormElement>) {
