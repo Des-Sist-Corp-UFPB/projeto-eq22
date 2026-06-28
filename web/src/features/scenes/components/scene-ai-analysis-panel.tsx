@@ -16,10 +16,11 @@ const MAX_FOCUS_LENGTH = 300;
 const UNAVAILABLE_MESSAGE = "A análise com IA está indisponível no momento. Tente novamente mais tarde.";
 const GENERIC_ERROR_MESSAGE = "Não foi possível concluir a análise. Tente novamente.";
 
-export type SceneContentSyncState = "saved" | "dirty" | "saving" | "error" | "loading";
+export type SceneContentSyncState = "saved" | "dirty" | "saving" | "error" | "loading" | "outdated";
 
 type SceneAiAnalysisPanelProps = {
   sceneId: string;
+  contentRevision: number;
   contentSyncState: SceneContentSyncState;
 };
 
@@ -28,15 +29,18 @@ const contentSyncMessages: Partial<Record<SceneContentSyncState, string>> = {
   saving: "O conteúdo está sendo salvo. Aguarde para analisar.",
   error: "O conteúdo mais recente não foi salvo. Salve novamente antes de analisar.",
   loading: "Aguarde o carregamento do conteúdo da cena.",
+  outdated: "Há uma versão salva mais recente. Conclua a edição para sincronizar antes de analisar.",
 };
 
-export function SceneAiAnalysisPanel({ sceneId, contentSyncState }: SceneAiAnalysisPanelProps) {
+export function SceneAiAnalysisPanel({ sceneId, contentRevision, contentSyncState }: SceneAiAnalysisPanelProps) {
   const activeSceneIdRef = useRef(sceneId);
   activeSceneIdRef.current = sceneId;
+  const activeContentRevisionRef = useRef(contentRevision);
+  activeContentRevisionRef.current = contentRevision;
   const contentSyncStateRef = useRef(contentSyncState);
   contentSyncStateRef.current = contentSyncState;
 
-  const previousSceneIdRef = useRef(sceneId);
+  const previousIdentityRef = useRef({ sceneId, contentRevision });
   const requestSequenceRef = useRef(0);
   const activeControllerRef = useRef<AbortController | null>(null);
   const loadingRef = useRef(false);
@@ -47,11 +51,14 @@ export function SceneAiAnalysisPanel({ sceneId, contentSyncState }: SceneAiAnaly
   const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
-    if (previousSceneIdRef.current === sceneId) {
+    if (
+      previousIdentityRef.current.sceneId === sceneId &&
+      previousIdentityRef.current.contentRevision === contentRevision
+    ) {
       return;
     }
 
-    previousSceneIdRef.current = sceneId;
+    previousIdentityRef.current = { sceneId, contentRevision };
     requestSequenceRef.current += 1;
     activeControllerRef.current?.abort();
     activeControllerRef.current = null;
@@ -59,8 +66,7 @@ export function SceneAiAnalysisPanel({ sceneId, contentSyncState }: SceneAiAnaly
     setResult(null);
     setErrorMessage(null);
     setIsLoading(false);
-    setFocus("");
-  }, [sceneId]);
+  }, [contentRevision, sceneId]);
 
   useEffect(() => {
     if (contentSyncState === "saved") {
@@ -96,6 +102,7 @@ export function SceneAiAnalysisPanel({ sceneId, contentSyncState }: SceneAiAnaly
 
     const controller = new AbortController();
     const capturedSceneId = sceneId;
+    const capturedContentRevision = contentRevision;
     const capturedSequence = ++requestSequenceRef.current;
     const trimmedFocus = focus.trim();
 
@@ -109,6 +116,7 @@ export function SceneAiAnalysisPanel({ sceneId, contentSyncState }: SceneAiAnaly
       controller.signal.aborted ||
       capturedSequence !== requestSequenceRef.current ||
       capturedSceneId !== activeSceneIdRef.current ||
+      capturedContentRevision !== activeContentRevisionRef.current ||
       contentSyncStateRef.current !== "saved";
 
     try {

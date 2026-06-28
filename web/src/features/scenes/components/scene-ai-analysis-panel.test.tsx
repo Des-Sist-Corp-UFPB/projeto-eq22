@@ -176,7 +176,45 @@ describe("SceneAiAnalysisPanel", () => {
     expect(screen.getByText("A IA analisa a última versão salva.")).toBeInTheDocument();
   });
 
-  test.each(["dirty", "saving", "error", "loading"] satisfies SceneContentSyncState[])(
+  test("disables analysis when a newer remote revision is pending", () => {
+    renderPanel("outdated");
+
+    expect(screen.getByRole("button", { name: "Analisar com IA" })).toBeDisabled();
+    expect(screen.getByText(/versão salva mais recente/)).toBeInTheDocument();
+    expect(mocks.analyzeScene).not.toHaveBeenCalled();
+  });
+
+  test("clears a completed analysis when the accepted revision changes and preserves focus", async () => {
+    const { rerender } = renderPanel("saved", 1);
+    fireEvent.change(screen.getByLabelText(/Foco/), { target: { value: "ritmo" } });
+    submitAnalysis();
+    expect(await screen.findByText(analysisResult.summary)).toBeInTheDocument();
+
+    rerender(<SceneAiAnalysisPanel sceneId="scene-1" contentRevision={2} contentSyncState="saved" />);
+
+    await waitFor(() => expect(screen.queryByText(analysisResult.summary)).not.toBeInTheDocument());
+    expect(screen.getByLabelText(/Foco/)).toHaveValue("ritmo");
+    expect(screen.getByRole("button", { name: "Analisar com IA" })).toBeEnabled();
+  });
+
+  test("aborts and ignores pending analysis when the accepted revision changes", async () => {
+    const pending = deferred<SceneAnalysisResult>();
+    mocks.analyzeScene.mockReturnValueOnce(pending.promise);
+    const { rerender } = renderPanel("saved", 1);
+    fireEvent.change(screen.getByLabelText(/Foco/), { target: { value: "diálogo" } });
+    submitAnalysis();
+    const signal = mocks.analyzeScene.mock.calls[0][2] as AbortSignal;
+
+    rerender(<SceneAiAnalysisPanel sceneId="scene-1" contentRevision={2} contentSyncState="saved" />);
+
+    await waitFor(() => expect(signal.aborted).toBe(true));
+    expect(screen.getByLabelText(/Foco/)).toHaveValue("diálogo");
+    await act(async () => pending.resolve(analysisResult));
+    expect(screen.queryByText(analysisResult.summary)).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  test.each(["dirty", "saving", "error", "loading", "outdated"] satisfies SceneContentSyncState[])(
     "aborta e ignora resposta pendente quando o conteúdo muda para %s",
     async (contentSyncState) => {
       const pending = deferred<SceneAnalysisResult>();
@@ -186,7 +224,7 @@ describe("SceneAiAnalysisPanel", () => {
       submitAnalysis();
       const signal = mocks.analyzeScene.mock.calls[0][2] as AbortSignal;
 
-      rerender(<SceneAiAnalysisPanel sceneId="scene-1" contentSyncState={contentSyncState} />);
+      rerender(<SceneAiAnalysisPanel sceneId="scene-1" contentRevision={1} contentSyncState={contentSyncState} />);
 
       await waitFor(() => expect(signal.aborted).toBe(true));
       expect(screen.getByLabelText("Foco da análise")).toHaveValue("ritmo");
@@ -201,7 +239,7 @@ describe("SceneAiAnalysisPanel", () => {
     submitAnalysis();
     expect(await screen.findByText(analysisResult.summary)).toBeInTheDocument();
 
-    rerender(<SceneAiAnalysisPanel sceneId="scene-1" contentSyncState="dirty" />);
+    rerender(<SceneAiAnalysisPanel sceneId="scene-1" contentRevision={1} contentSyncState="dirty" />);
 
     await waitFor(() => expect(screen.queryByText(analysisResult.summary)).not.toBeInTheDocument());
   });
@@ -212,7 +250,7 @@ describe("SceneAiAnalysisPanel", () => {
     submitAnalysis();
     expect(await screen.findByRole("alert")).toBeInTheDocument();
 
-    rerender(<SceneAiAnalysisPanel sceneId="scene-1" contentSyncState="dirty" />);
+    rerender(<SceneAiAnalysisPanel sceneId="scene-1" contentRevision={1} contentSyncState="dirty" />);
 
     await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
   });
@@ -221,7 +259,7 @@ describe("SceneAiAnalysisPanel", () => {
     const { rerender } = renderPanel("dirty");
     expect(screen.getByRole("button", { name: "Analisar com IA" })).toBeDisabled();
 
-    rerender(<SceneAiAnalysisPanel sceneId="scene-1" contentSyncState="saved" />);
+    rerender(<SceneAiAnalysisPanel sceneId="scene-1" contentRevision={1} contentSyncState="saved" />);
 
     expect(screen.getByRole("button", { name: "Analisar com IA" })).toBeEnabled();
   });
@@ -231,7 +269,7 @@ describe("SceneAiAnalysisPanel", () => {
     submitAnalysis();
     expect(await screen.findByText(analysisResult.summary)).toBeInTheDocument();
 
-    rerender(<SceneAiAnalysisPanel sceneId="scene-2" contentSyncState="saved" />);
+    rerender(<SceneAiAnalysisPanel sceneId="scene-2" contentRevision={1} contentSyncState="saved" />);
 
     await waitFor(() => {
       expect(screen.queryByText(analysisResult.summary)).not.toBeInTheDocument();
@@ -244,7 +282,7 @@ describe("SceneAiAnalysisPanel", () => {
     const { rerender } = renderPanel();
     submitAnalysis();
 
-    rerender(<SceneAiAnalysisPanel sceneId="scene-2" contentSyncState="saved" />);
+    rerender(<SceneAiAnalysisPanel sceneId="scene-2" contentRevision={1} contentSyncState="saved" />);
     await act(async () => pending.resolve(analysisResult));
 
     expect(screen.queryByText(analysisResult.summary)).not.toBeInTheDocument();
@@ -260,7 +298,7 @@ describe("SceneAiAnalysisPanel", () => {
     const { rerender } = renderPanel();
     submitAnalysis();
 
-    rerender(<SceneAiAnalysisPanel sceneId="scene-2" contentSyncState="saved" />);
+    rerender(<SceneAiAnalysisPanel sceneId="scene-2" contentRevision={1} contentSyncState="saved" />);
     await act(async () => pending.reject(failure));
 
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
@@ -294,16 +332,20 @@ describe("SceneAiAnalysisPanel", () => {
     submitAnalysis();
     const signal = mocks.analyzeScene.mock.calls[0][2] as AbortSignal;
 
-    rerender(<SceneAiAnalysisPanel sceneId="scene-2" contentSyncState="saved" />);
+    rerender(<SceneAiAnalysisPanel sceneId="scene-2" contentRevision={1} contentSyncState="saved" />);
 
     await waitFor(() => expect(signal.aborted).toBe(true));
     expect(screen.getByRole("button", { name: "Analisar com IA" })).toBeEnabled();
   });
 });
 
-function renderPanel(contentSyncState: SceneContentSyncState = "saved") {
+function renderPanel(contentSyncState: SceneContentSyncState = "saved", contentRevision = 1) {
   const renderResult = renderWithClient(
-    <SceneAiAnalysisPanel sceneId="scene-1" contentSyncState={contentSyncState} />
+    <SceneAiAnalysisPanel
+      sceneId="scene-1"
+      contentRevision={contentRevision}
+      contentSyncState={contentSyncState}
+    />
   );
   fireEvent.click(screen.getByRole("button", { name: "Expandir análise com IA" }));
   return renderResult;
