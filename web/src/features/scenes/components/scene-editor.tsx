@@ -6,6 +6,10 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { ErrorState, LoadingState } from "@/components/ui/feedback";
 import { deleteScene, getScene, restoreSceneVersion, updateScene, updateSceneContent } from "@/features/scenes/api/scenes-api";
+import {
+  SceneAiAnalysisPanel,
+  type SceneContentSyncState,
+} from "@/features/scenes/components/scene-ai-analysis-panel";
 import { SceneContentEditor } from "@/features/scenes/components/scene-content-editor";
 import { SceneEditorHeader, type ContentSaveStatus } from "@/features/scenes/components/scene-editor-header";
 import { SceneEmptyState } from "@/features/scenes/components/scene-empty-state";
@@ -50,6 +54,16 @@ type RestoreVersionVariables = {
   operationId: string;
 };
 
+type PersistedContentSnapshot = {
+  sceneId: string;
+  contentJson: string;
+  contentText: string;
+  contentRevision: number;
+  wordCount: number;
+  updatedAt: string;
+  sourceScene: Scene;
+};
+
 export type PlanningPanelOpenIntent = {
   sceneId: string;
   requestId: number;
@@ -79,6 +93,7 @@ export function SceneEditor({
   const lastSavedContentJsonRef = useRef("");
   const lastSavedContentTextRef = useRef("");
   const contentRevisionRef = useRef(0);
+  const pendingRemoteContentRef = useRef<PersistedContentSnapshot | null>(null);
   const consumedPlanningOpenRequestIdRef = useRef<number | null>(null);
   const [title, setTitle] = useState("");
   const [summary, setSummary] = useState("");
@@ -87,6 +102,8 @@ export function SceneEditor({
   const [contentText, setContentText] = useState("");
   const [lastSavedContentJson, setLastSavedContentJson] = useState("");
   const [lastSavedContentText, setLastSavedContentText] = useState("");
+  const [acceptedContentRevision, setAcceptedContentRevision] = useState<number | null>(null);
+  const [pendingRemoteContentRevision, setPendingRemoteContentRevision] = useState<number | null>(null);
   const [loadedSceneId, setLoadedSceneId] = useState<string | null>(null);
   const [isPlanningPanelOpen, setIsPlanningPanelOpen] = useState(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
@@ -123,6 +140,7 @@ export function SceneEditor({
         operationId,
       }),
   });
+  const resetContentMutation = contentMutation.reset;
 
   const restoreMutation = useMutation({
     mutationFn: ({ targetSceneId, versionId, expectedContentRevision, operationId }: RestoreVersionVariables) =>
@@ -155,9 +173,103 @@ export function SceneEditor({
     clearPendingAutosave();
   }, [clearPendingAutosave]);
 
+  const hasPendingNewerRemoteContent = useCallback((targetSceneId: string) => {
+    const pendingSnapshot = pendingRemoteContentRef.current;
+    return Boolean(
+      pendingSnapshot &&
+      pendingSnapshot.sceneId === targetSceneId &&
+      pendingSnapshot.contentRevision > contentRevisionRef.current
+    );
+  }, []);
+
+  const acceptContentRevision = useCallback((contentRevision: number) => {
+    if (loadedSceneIdRef.current === activeSceneIdRef.current && contentRevision < contentRevisionRef.current) {
+      return false;
+    }
+
+    contentRevisionRef.current = contentRevision;
+    setAcceptedContentRevision(contentRevision);
+    return true;
+  }, []);
+
+  const clearPendingRemoteContent = useCallback(() => {
+    pendingRemoteContentRef.current = null;
+    setPendingRemoteContentRevision(null);
+  }, []);
+
+  const reconcilePendingRemoteContent = useCallback(() => {
+    const pendingSnapshot = pendingRemoteContentRef.current;
+    if (!pendingSnapshot || pendingSnapshot.sceneId !== activeSceneIdRef.current) {
+      return false;
+    }
+
+    if (pendingSnapshot.contentRevision <= contentRevisionRef.current) {
+      clearPendingRemoteContent();
+      return false;
+    }
+
+    if (contentSavePendingRef.current || contentSavePromiseRef.current !== null) {
+      setPendingRemoteContentRevision(pendingSnapshot.contentRevision);
+      return false;
+    }
+
+    const pendingMatchesVisibleContent =
+      pendingSnapshot.contentJson === currentContentJsonRef.current &&
+      pendingSnapshot.contentText === currentContentTextRef.current;
+    const localContentIsClean =
+      currentContentJsonRef.current === lastSavedContentJsonRef.current &&
+      currentContentTextRef.current === lastSavedContentTextRef.current;
+
+    if (!pendingMatchesVisibleContent && !localContentIsClean) {
+      setPendingRemoteContentRevision(pendingSnapshot.contentRevision);
+      return false;
+    }
+
+    cancelQueuedAutosaves();
+    if (pendingMatchesVisibleContent) {
+      lastSavedContentJsonRef.current = pendingSnapshot.contentJson;
+      lastSavedContentTextRef.current = pendingSnapshot.contentText;
+      setLastSavedContentJson(pendingSnapshot.contentJson);
+      setLastSavedContentText(pendingSnapshot.contentText);
+    } else {
+      currentContentJsonRef.current = pendingSnapshot.contentJson;
+      currentContentTextRef.current = pendingSnapshot.contentText;
+      lastSavedContentJsonRef.current = pendingSnapshot.contentJson;
+      lastSavedContentTextRef.current = pendingSnapshot.contentText;
+      setContentJson(pendingSnapshot.contentJson);
+      setContentText(pendingSnapshot.contentText);
+      setLastSavedContentJson(pendingSnapshot.contentJson);
+      setLastSavedContentText(pendingSnapshot.contentText);
+      setEditorContentVersion((version) => version + 1);
+    }
+
+    acceptContentRevision(pendingSnapshot.contentRevision);
+    queryClient.setQueryData<Scene>(queryKeys.scene(pendingSnapshot.sceneId), (cachedScene) => {
+      const sceneToUpdate = cachedScene ?? pendingSnapshot.sourceScene;
+      if (sceneToUpdate.id !== pendingSnapshot.sceneId || sceneToUpdate.contentRevision > pendingSnapshot.contentRevision) {
+        return sceneToUpdate;
+      }
+
+      return {
+        ...sceneToUpdate,
+        contentJson: pendingSnapshot.contentJson,
+        contentText: pendingSnapshot.contentText,
+        contentRevision: pendingSnapshot.contentRevision,
+        wordCount: pendingSnapshot.wordCount,
+        updatedAt: pendingSnapshot.updatedAt,
+      };
+    });
+    resetContentMutation();
+    clearPendingRemoteContent();
+    return true;
+  }, [acceptContentRevision, cancelQueuedAutosaves, clearPendingRemoteContent, queryClient, resetContentMutation]);
+
   useEffect(() => {
     contentSavePendingRef.current = contentMutation.isPending;
-  }, [contentMutation.isPending]);
+    if (!contentMutation.isPending) {
+      reconcilePendingRemoteContent();
+    }
+  }, [contentMutation.isPending, reconcilePendingRemoteContent]);
 
   useEffect(() => {
     const storedValue = window.localStorage.getItem(PLANNING_PANEL_STORAGE_KEY);
@@ -198,6 +310,7 @@ export function SceneEditor({
     lastSavedContentJsonRef.current = "";
     lastSavedContentTextRef.current = "";
     contentRevisionRef.current = 0;
+    pendingRemoteContentRef.current = null;
     metadataMutation.reset();
     contentMutation.reset();
     restoreMutation.reset();
@@ -210,6 +323,8 @@ export function SceneEditor({
     setContentText("");
     setLastSavedContentJson("");
     setLastSavedContentText("");
+    setAcceptedContentRevision(null);
+    setPendingRemoteContentRevision(null);
     setLoadedSceneId(null);
     setIsHistoryOpen(false);
     setEditorContentVersion((version) => version + 1);
@@ -224,18 +339,48 @@ export function SceneEditor({
     setTitle(queriedScene.title);
     setSummary(queriedScene.summary ?? "");
     setStatus(queriedScene.status);
-    setContentJson(queriedScene.contentJson ?? "");
-    setContentText(queriedScene.contentText ?? "");
-    setLastSavedContentJson(queriedScene.contentJson ?? "");
-    setLastSavedContentText(queriedScene.contentText ?? "");
-    currentContentJsonRef.current = queriedScene.contentJson ?? "";
-    currentContentTextRef.current = queriedScene.contentText ?? "";
-    lastSavedContentJsonRef.current = queriedScene.contentJson ?? "";
-    lastSavedContentTextRef.current = queriedScene.contentText ?? "";
-    contentRevisionRef.current = queriedScene.contentRevision;
+
+    const incomingSnapshot: PersistedContentSnapshot = {
+      sceneId: queriedScene.id,
+      contentJson: queriedScene.contentJson ?? "",
+      contentText: queriedScene.contentText ?? "",
+      contentRevision: queriedScene.contentRevision,
+      wordCount: queriedScene.wordCount,
+      updatedAt: queriedScene.updatedAt,
+      sourceScene: queriedScene,
+    };
+    const isInitialContentHydration = loadedSceneIdRef.current !== queriedScene.id;
+
+    if (!isInitialContentHydration) {
+      if (incomingSnapshot.contentRevision <= contentRevisionRef.current) {
+        return;
+      }
+
+      const highestObservedSnapshot = pendingRemoteContentRef.current;
+      const snapshotToTrack =
+        !highestObservedSnapshot || incomingSnapshot.contentRevision > highestObservedSnapshot.contentRevision
+          ? incomingSnapshot
+          : highestObservedSnapshot;
+      pendingRemoteContentRef.current = snapshotToTrack;
+      setPendingRemoteContentRevision(snapshotToTrack.contentRevision);
+      cancelQueuedAutosaves();
+      reconcilePendingRemoteContent();
+      return;
+    }
+
+    clearPendingRemoteContent();
+    setContentJson(incomingSnapshot.contentJson);
+    setContentText(incomingSnapshot.contentText);
+    setLastSavedContentJson(incomingSnapshot.contentJson);
+    setLastSavedContentText(incomingSnapshot.contentText);
+    currentContentJsonRef.current = incomingSnapshot.contentJson;
+    currentContentTextRef.current = incomingSnapshot.contentText;
+    lastSavedContentJsonRef.current = incomingSnapshot.contentJson;
+    lastSavedContentTextRef.current = incomingSnapshot.contentText;
+    acceptContentRevision(incomingSnapshot.contentRevision);
     loadedSceneIdRef.current = queriedScene.id;
     setLoadedSceneId(queriedScene.id);
-  }, [sceneId, sceneQuery.data]);
+  }, [acceptContentRevision, cancelQueuedAutosaves, clearPendingRemoteContent, reconcilePendingRemoteContent, sceneId, sceneQuery.data]);
 
   function handleMetadataSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -277,7 +422,9 @@ export function SceneEditor({
 
       const savedContentJson = savedScene.contentJson ?? "";
       const savedContentText = savedScene.contentText ?? "";
-      contentRevisionRef.current = savedScene.contentRevision;
+      if (!acceptContentRevision(savedScene.contentRevision)) {
+        return savedScene;
+      }
       const currentContentMatchesSavedRequest =
         currentContentJsonRef.current === nextContentJson && currentContentTextRef.current === nextContentText;
 
@@ -300,6 +447,7 @@ export function SceneEditor({
       if (contentSavePromiseRef.current === savePromise) {
         contentSavePromiseRef.current = null;
       }
+      reconcilePendingRemoteContent();
     }
   }
 
@@ -309,7 +457,12 @@ export function SceneEditor({
   }
 
   function scheduleAutosave(targetSceneId: string, nextContentJson: string, nextContentText: string) {
-    if (!targetSceneId || targetSceneId !== activeSceneIdRef.current || loadedSceneIdRef.current !== targetSceneId) {
+    if (
+      !targetSceneId ||
+      targetSceneId !== activeSceneIdRef.current ||
+      loadedSceneIdRef.current !== targetSceneId ||
+      hasPendingNewerRemoteContent(targetSceneId)
+    ) {
       return;
     }
 
@@ -328,6 +481,10 @@ export function SceneEditor({
       }
 
       if (targetSceneId !== activeSceneIdRef.current || loadedSceneIdRef.current !== targetSceneId) {
+        return;
+      }
+
+      if (hasPendingNewerRemoteContent(targetSceneId)) {
         return;
       }
 
@@ -413,7 +570,10 @@ export function SceneEditor({
 
     const restoredContentJson = restoredScene.contentJson ?? "";
     const restoredContentText = restoredScene.contentText ?? "";
-    contentRevisionRef.current = restoredScene.contentRevision;
+    if (!acceptContentRevision(restoredScene.contentRevision)) {
+      return;
+    }
+    clearPendingRemoteContent();
     currentContentJsonRef.current = restoredContentJson;
     currentContentTextRef.current = restoredContentText;
     lastSavedContentJsonRef.current = restoredContentJson;
@@ -482,7 +642,25 @@ export function SceneEditor({
     );
   }
 
-  if (loadedSceneId !== scene.id) {
+  const activeContentMutationSceneId = contentMutation.variables?.targetSceneId;
+  const hasUnsavedContent = contentJson !== lastSavedContentJson || contentText !== lastSavedContentText;
+  const hasAcceptedSavedContent = lastSavedContentText.trim().length > 0;
+  const contentSyncState: SceneContentSyncState =
+    loadedSceneId !== scene.id || acceptedContentRevision === null
+      ? "loading"
+      : contentMutation.isPending && activeContentMutationSceneId === scene.id
+        ? "saving"
+        : contentMutation.isError && activeContentMutationSceneId === scene.id
+          ? "error"
+          : pendingRemoteContentRevision !== null
+            ? "outdated"
+            : hasUnsavedContent
+              ? "dirty"
+              : hasAcceptedSavedContent
+                ? "saved"
+                : "empty";
+
+  if (contentSyncState === "loading" || acceptedContentRevision === null) {
     return (
       <section className="p-6">
         <LoadingState label="Preparando editor..." />
@@ -490,22 +668,20 @@ export function SceneEditor({
     );
   }
 
-  const activeContentMutationSceneId = contentMutation.variables?.targetSceneId;
-  const hasUnsavedContent = contentJson !== lastSavedContentJson || contentText !== lastSavedContentText;
   const contentSaveStatus: ContentSaveStatus =
-    contentMutation.isPending && activeContentMutationSceneId === scene.id
-      ? "saving"
-      : contentMutation.isError && activeContentMutationSceneId === scene.id
-        ? "error"
-        : hasUnsavedContent
-          ? "editing"
-          : "saved";
+    contentSyncState === "dirty" || contentSyncState === "outdated"
+      ? "editing"
+      : contentSyncState === "empty"
+        ? "saved"
+        : contentSyncState;
 
   return (
     <section className={`h-full overflow-y-auto bg-zinc-100/70 ${isFocusMode ? "p-2 md:p-4 lg:p-6" : "p-4 md:p-6 lg:p-8"}`}>
       <Card
-        className={`mx-auto grid min-h-full grid-rows-[auto_auto_auto_minmax(0,1fr)] overflow-hidden border-zinc-200 bg-white ${
-          isFocusMode ? "max-w-6xl shadow-sm shadow-zinc-200/70" : "max-w-7xl shadow-xl shadow-zinc-200/70"
+        className={`mx-auto grid min-h-full overflow-hidden border-zinc-200 bg-white ${
+          isFocusMode
+            ? "max-w-6xl grid-rows-[auto_auto_minmax(0,1fr)] shadow-sm shadow-zinc-200/70"
+            : "max-w-7xl grid-rows-[auto_auto_auto_auto_minmax(0,1fr)] shadow-xl shadow-zinc-200/70"
         }`}
       >
         <SceneEditorHeader
@@ -593,6 +769,14 @@ export function SceneEditor({
           </div>
         </section>
 
+        <div className={isFocusMode ? "hidden" : ""}>
+          <SceneAiAnalysisPanel
+            sceneId={scene.id}
+            contentRevision={acceptedContentRevision}
+            contentSyncState={contentSyncState}
+          />
+        </div>
+
         <div className="min-h-0 bg-white lg:h-full">
           <SceneContentEditor
             contentKey={`${scene.id}:${editorContentVersion}`}
@@ -617,6 +801,7 @@ export function SceneEditor({
               setContentJson(nextContentJson);
               setContentText(nextContentText);
               scheduleAutosave(sourceSceneId, nextContentJson, nextContentText);
+              reconcilePendingRemoteContent();
             }}
           />
         </div>
