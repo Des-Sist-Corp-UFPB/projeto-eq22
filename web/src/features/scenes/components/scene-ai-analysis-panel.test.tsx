@@ -197,6 +197,19 @@ describe("SceneAiAnalysisPanel", () => {
     expect(screen.getByRole("button", { name: "Analisar com IA" })).toBeEnabled();
   });
 
+  test("clears focus on scene change and does not send the previous scene focus", async () => {
+    const { rerender } = renderPanel("saved", 1);
+    fireEvent.change(screen.getByLabelText(/Foco/), { target: { value: "ritmo" } });
+
+    rerender(<SceneAiAnalysisPanel sceneId="scene-2" contentRevision={1} contentSyncState="saved" />);
+
+    await waitFor(() => expect(screen.getByLabelText(/Foco/)).toHaveValue(""));
+    submitAnalysis();
+    await waitFor(() => {
+      expect(mocks.analyzeScene).toHaveBeenCalledWith("scene-2", {}, expect.any(AbortSignal));
+    });
+  });
+
   test("aborts and ignores pending analysis when the accepted revision changes", async () => {
     const pending = deferred<SceneAnalysisResult>();
     mocks.analyzeScene.mockReturnValueOnce(pending.promise);

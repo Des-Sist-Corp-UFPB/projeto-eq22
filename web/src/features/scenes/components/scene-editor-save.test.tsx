@@ -5,6 +5,7 @@ import { SceneEditor } from "@/features/scenes/components/scene-editor";
 import { sceneForPlanning } from "@/test/fixtures";
 import { renderWithClient } from "@/test/test-utils";
 import { queryKeys } from "@/lib/query/keys";
+import type { Scene } from "@/features/scenes/types";
 
 const mocks = vi.hoisted(() => ({
   getScene: vi.fn(),
@@ -434,6 +435,39 @@ describe("SceneEditor content save contract", () => {
     });
   });
 
+  test("recovers from a failed save when the pending remote snapshot matches visible content", async () => {
+    const contentSave = createDeferred<Scene>();
+    mocks.getScene.mockResolvedValueOnce({ ...sceneForPlanning, contentRevision: 1 });
+    mocks.updateSceneContent.mockReturnValueOnce(contentSave.promise);
+    const { queryClient } = renderEditor();
+    await screen.findByRole("heading", { name: sceneForPlanning.title });
+    fireEvent.click(screen.getByRole("button", { name: /Expandir análise/ }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Alterar conteudo" }));
+    fireEvent.click(screen.getByRole("button", { name: /Salvar conteúdo/ }));
+    await waitFor(() => expect(mocks.updateSceneContent).toHaveBeenCalledTimes(1));
+
+    await act(async () => {
+      queryClient.setQueryData<Scene>(queryKeys.scene(sceneForPlanning.id), {
+        ...sceneForPlanning,
+        contentJson: "{\"type\":\"doc\"}",
+        contentText: "Novo texto",
+        contentRevision: 2,
+        wordCount: 2,
+      });
+    });
+
+    await act(async () => {
+      contentSave.reject(new Error("save failed"));
+      await contentSave.promise.catch(() => undefined);
+    });
+
+    await waitFor(() => expect(screen.getByText("Salvo")).toBeInTheDocument());
+    expect(screen.getByTestId("editor-content")).toHaveTextContent("Novo texto");
+    expect(screen.getByRole("button", { name: "Analisar com IA" })).toBeEnabled();
+    expect(mocks.updateSceneContent).toHaveBeenCalledTimes(1);
+  });
+
   test("clears analysis when a matching newer revision is accepted", async () => {
     mocks.getScene.mockResolvedValueOnce({ ...sceneForPlanning, contentRevision: 1 });
     const { queryClient } = renderEditor();
@@ -497,6 +531,79 @@ describe("SceneEditor content save contract", () => {
     });
     expect(screen.queryByText("Conteúdo remoto atrasado")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Analisar com IA" })).toBeEnabled();
+  });
+
+  test("writes an accepted highest pending snapshot back to the scene cache", async () => {
+    const sceneTwo: Scene = {
+      ...sceneForPlanning,
+      id: "scene-2",
+      title: "Outra cena",
+      contentText: "Conteúdo da outra cena",
+      contentRevision: 1,
+    };
+    const stalledRefetch = createDeferred<Scene>();
+    mocks.getScene
+      .mockResolvedValueOnce({ ...sceneForPlanning, contentRevision: 1, wordCount: 3 })
+      .mockResolvedValueOnce(sceneTwo)
+      .mockReturnValueOnce(stalledRefetch.promise);
+    const { queryClient, rerender } = renderEditor();
+    await screen.findByRole("heading", { name: sceneForPlanning.title });
+    vi.useFakeTimers();
+    fireEvent.click(screen.getByRole("button", { name: "Alterar conteudo" }));
+
+    await act(async () => {
+      queryClient.setQueryData<Scene>(queryKeys.scene(sceneForPlanning.id), {
+        ...sceneForPlanning,
+        contentJson: "{\"type\":\"doc-3\"}",
+        contentText: "Conteúdo remoto da revisão 3",
+        contentRevision: 3,
+        wordCount: 33,
+        updatedAt: "2026-06-27T12:03:00Z",
+      });
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    await act(async () => {
+      queryClient.setQueryData<Scene>(queryKeys.scene(sceneForPlanning.id), {
+        ...sceneForPlanning,
+        title: "Metadados mais recentes",
+        contentJson: "{\"type\":\"doc-2\"}",
+        contentText: "Conteúdo remoto atrasado",
+        contentRevision: 2,
+        wordCount: 22,
+        updatedAt: "2026-06-27T12:02:00Z",
+      });
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Desfazer para A" }));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    vi.useRealTimers();
+
+    const cachedScene = queryClient.getQueryData<Scene>(queryKeys.scene(sceneForPlanning.id));
+    expect(cachedScene).toEqual(expect.objectContaining({
+      title: "Metadados mais recentes",
+      contentJson: "{\"type\":\"doc-3\"}",
+      contentText: "Conteúdo remoto da revisão 3",
+      contentRevision: 3,
+      wordCount: 33,
+      updatedAt: "2026-06-27T12:03:00Z",
+    }));
+
+    rerender(
+      <SceneEditor bookId="book-1" sceneId={sceneTwo.id} onSceneDeleted={vi.fn()} />
+    );
+    await screen.findByRole("heading", { name: sceneTwo.title });
+    rerender(
+      <SceneEditor bookId="book-1" sceneId={sceneForPlanning.id} onSceneDeleted={vi.fn()} />
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("editor-content")).toHaveTextContent("Conteúdo remoto da revisão 3");
+    });
+    expect(screen.getByText("33 palavras")).toBeInTheDocument();
+    expect(queryClient.getQueryData<Scene>(queryKeys.scene(sceneForPlanning.id))?.contentRevision).toBe(3);
   });
 
   test("newer revision preserves dirty local content and accepted revision", async () => {

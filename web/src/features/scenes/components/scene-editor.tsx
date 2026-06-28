@@ -59,6 +59,9 @@ type PersistedContentSnapshot = {
   contentJson: string;
   contentText: string;
   contentRevision: number;
+  wordCount: number;
+  updatedAt: string;
+  sourceScene: Scene;
 };
 
 export type PlanningPanelOpenIntent = {
@@ -137,6 +140,7 @@ export function SceneEditor({
         operationId,
       }),
   });
+  const resetContentMutation = contentMutation.reset;
 
   const restoreMutation = useMutation({
     mutationFn: ({ targetSceneId, versionId, expectedContentRevision, operationId }: RestoreVersionVariables) =>
@@ -231,9 +235,25 @@ export function SceneEditor({
     }
 
     acceptContentRevision(pendingSnapshot.contentRevision);
+    queryClient.setQueryData<Scene>(queryKeys.scene(pendingSnapshot.sceneId), (cachedScene) => {
+      const sceneToUpdate = cachedScene ?? pendingSnapshot.sourceScene;
+      if (sceneToUpdate.id !== pendingSnapshot.sceneId || sceneToUpdate.contentRevision > pendingSnapshot.contentRevision) {
+        return sceneToUpdate;
+      }
+
+      return {
+        ...sceneToUpdate,
+        contentJson: pendingSnapshot.contentJson,
+        contentText: pendingSnapshot.contentText,
+        contentRevision: pendingSnapshot.contentRevision,
+        wordCount: pendingSnapshot.wordCount,
+        updatedAt: pendingSnapshot.updatedAt,
+      };
+    });
+    resetContentMutation();
     clearPendingRemoteContent();
     return true;
-  }, [acceptContentRevision, cancelQueuedAutosaves, clearPendingRemoteContent]);
+  }, [acceptContentRevision, cancelQueuedAutosaves, clearPendingRemoteContent, queryClient, resetContentMutation]);
 
   useEffect(() => {
     contentSavePendingRef.current = contentMutation.isPending;
@@ -316,6 +336,9 @@ export function SceneEditor({
       contentJson: queriedScene.contentJson ?? "",
       contentText: queriedScene.contentText ?? "",
       contentRevision: queriedScene.contentRevision,
+      wordCount: queriedScene.wordCount,
+      updatedAt: queriedScene.updatedAt,
+      sourceScene: queriedScene,
     };
     const isInitialContentHydration = loadedSceneIdRef.current !== queriedScene.id;
 

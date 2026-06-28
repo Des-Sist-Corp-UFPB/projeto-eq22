@@ -51,13 +51,15 @@ export function SceneAiAnalysisPanel({ sceneId, contentRevision, contentSyncStat
   const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
+    const previousIdentity = previousIdentityRef.current;
     if (
-      previousIdentityRef.current.sceneId === sceneId &&
-      previousIdentityRef.current.contentRevision === contentRevision
+      previousIdentity.sceneId === sceneId &&
+      previousIdentity.contentRevision === contentRevision
     ) {
       return;
     }
 
+    const sceneChanged = previousIdentity.sceneId !== sceneId;
     previousIdentityRef.current = { sceneId, contentRevision };
     requestSequenceRef.current += 1;
     activeControllerRef.current?.abort();
@@ -66,6 +68,9 @@ export function SceneAiAnalysisPanel({ sceneId, contentRevision, contentSyncStat
     setResult(null);
     setErrorMessage(null);
     setIsLoading(false);
+    if (sceneChanged) {
+      setFocus("");
+    }
   }, [contentRevision, sceneId]);
 
   useEffect(() => {
