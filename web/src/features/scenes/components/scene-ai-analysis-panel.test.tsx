@@ -160,6 +160,7 @@ describe("SceneAiAnalysisPanel", () => {
       ["saving", "O conteúdo está sendo salvo. Aguarde para analisar."],
       ["error", "O conteúdo mais recente não foi salvo. Salve novamente antes de analisar."],
       ["loading", "Aguarde o carregamento do conteúdo da cena."],
+      ["empty", "Escreva algum conteúdo na cena antes de solicitar uma análise."],
     ] satisfies Array<[SceneContentSyncState, string]>
   )("desabilita análise quando o conteúdo está %s", (contentSyncState, message) => {
     renderPanel(contentSyncState);
@@ -181,6 +182,16 @@ describe("SceneAiAnalysisPanel", () => {
 
     expect(screen.getByRole("button", { name: "Analisar com IA" })).toBeDisabled();
     expect(screen.getByText(/versão salva mais recente/)).toBeInTheDocument();
+    expect(mocks.analyzeScene).not.toHaveBeenCalled();
+  });
+
+  test("does not submit analysis for an empty saved scene", () => {
+    renderPanel("empty");
+    const form = screen.getByRole("button", { name: "Analisar com IA" }).closest("form");
+
+    fireEvent.submit(form as HTMLFormElement);
+
+    expect(screen.getByText("Escreva algum conteúdo na cena antes de solicitar uma análise.")).toBeInTheDocument();
     expect(mocks.analyzeScene).not.toHaveBeenCalled();
   });
 
@@ -227,7 +238,7 @@ describe("SceneAiAnalysisPanel", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
-  test.each(["dirty", "saving", "error", "loading", "outdated"] satisfies SceneContentSyncState[])(
+  test.each(["dirty", "saving", "error", "loading", "outdated", "empty"] satisfies SceneContentSyncState[])(
     "aborta e ignora resposta pendente quando o conteúdo muda para %s",
     async (contentSyncState) => {
       const pending = deferred<SceneAnalysisResult>();

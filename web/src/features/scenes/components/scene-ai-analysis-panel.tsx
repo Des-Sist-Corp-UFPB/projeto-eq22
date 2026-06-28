@@ -16,7 +16,7 @@ const MAX_FOCUS_LENGTH = 300;
 const UNAVAILABLE_MESSAGE = "A análise com IA está indisponível no momento. Tente novamente mais tarde.";
 const GENERIC_ERROR_MESSAGE = "Não foi possível concluir a análise. Tente novamente.";
 
-export type SceneContentSyncState = "saved" | "dirty" | "saving" | "error" | "loading" | "outdated";
+export type SceneContentSyncState = "saved" | "dirty" | "saving" | "error" | "loading" | "outdated" | "empty";
 
 type SceneAiAnalysisPanelProps = {
   sceneId: string;
@@ -30,6 +30,7 @@ const contentSyncMessages: Partial<Record<SceneContentSyncState, string>> = {
   error: "O conteúdo mais recente não foi salvo. Salve novamente antes de analisar.",
   loading: "Aguarde o carregamento do conteúdo da cena.",
   outdated: "Há uma versão salva mais recente. Conclua a edição para sincronizar antes de analisar.",
+  empty: "Escreva algum conteúdo na cena antes de solicitar uma análise.",
 };
 
 export function SceneAiAnalysisPanel({ sceneId, contentRevision, contentSyncState }: SceneAiAnalysisPanelProps) {

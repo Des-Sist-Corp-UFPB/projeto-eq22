@@ -52,6 +52,9 @@ vi.mock("@/features/scenes/components/scene-content-editor", () => ({
       <button type="button" onClick={() => onContentChange(sourceSceneId, "{\"type\":\"doc-d\"}", "Texto local D")}>
         Alterar para D
       </button>
+      <button type="button" onClick={() => onContentChange(sourceSceneId, "{\"type\":\"doc\",\"content\":[]}", "")}>
+        Apagar conteudo
+      </button>
       <button
         type="button"
         onClick={() =>
@@ -136,6 +139,133 @@ describe("SceneEditor content save contract", () => {
         operationId: "operation-manual",
       });
     });
+  });
+
+  test("cancels queued autosave when a conflicting newer revision becomes pending", async () => {
+    mocks.getScene.mockResolvedValueOnce({ ...sceneForPlanning, contentRevision: 1 });
+    const { queryClient } = renderEditor();
+    await screen.findByRole("heading", { name: sceneForPlanning.title });
+    fireEvent.click(screen.getByRole("button", { name: /Expandir análise/ }));
+    vi.useFakeTimers();
+
+    fireEvent.click(screen.getByRole("button", { name: "Alterar conteudo" }));
+    await act(async () => {
+      queryClient.setQueryData(queryKeys.scene(sceneForPlanning.id), {
+        ...sceneForPlanning,
+        contentJson: "{\"type\":\"doc-2\"}",
+        contentText: "Conteúdo remoto C",
+        contentRevision: 2,
+      });
+      await vi.advanceTimersByTimeAsync(2400);
+    });
+
+    expect(screen.getByTestId("editor-content")).toHaveTextContent("Novo texto");
+    expect(screen.getByText(/versão salva mais recente/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Analisar com IA" })).toBeDisabled();
+    expect(screen.queryByText("Erro ao salvar")).not.toBeInTheDocument();
+    expect(mocks.updateSceneContent).not.toHaveBeenCalled();
+  });
+
+  test("blocks autosave while outdated and resumes after accepting the pending revision", async () => {
+    mocks.getScene.mockResolvedValueOnce({ ...sceneForPlanning, contentRevision: 1 });
+    mocks.updateSceneContent.mockResolvedValueOnce({
+      ...sceneForPlanning,
+      contentJson: "{\"type\":\"doc-d\"}",
+      contentText: "Texto local D",
+      contentRevision: 3,
+    });
+    const { queryClient } = renderEditor();
+    await screen.findByRole("heading", { name: sceneForPlanning.title });
+    vi.useFakeTimers();
+
+    fireEvent.click(screen.getByRole("button", { name: "Alterar conteudo" }));
+    await act(async () => {
+      queryClient.setQueryData(queryKeys.scene(sceneForPlanning.id), {
+        ...sceneForPlanning,
+        contentJson: "{\"type\":\"doc-2\"}",
+        contentText: "Conteúdo remoto C",
+        contentRevision: 2,
+      });
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Alterar para D" }));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2400);
+    });
+    expect(mocks.updateSceneContent).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Desfazer para A" }));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(screen.getByTestId("editor-content")).toHaveTextContent("Conteúdo remoto C");
+
+    fireEvent.click(screen.getByRole("button", { name: "Alterar para D" }));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1200);
+    });
+    vi.useRealTimers();
+
+    await waitFor(() => {
+      expect(mocks.updateSceneContent).toHaveBeenCalledWith(sceneForPlanning.id, expect.objectContaining({
+        contentJson: "{\"type\":\"doc-d\"}",
+        contentText: "Texto local D",
+        source: "AUTO_SAVE",
+        expectedContentRevision: 2,
+      }));
+    });
+  });
+
+  test.each(["", "   "])("treats saved content text %p as empty for AI analysis", async (savedContentText) => {
+    mocks.getScene.mockResolvedValueOnce({
+      ...sceneForPlanning,
+      contentJson: "{\"type\":\"doc\",\"content\":[]}",
+      contentText: savedContentText,
+      contentRevision: 1,
+      wordCount: 0,
+    });
+    renderEditor();
+    await screen.findByRole("heading", { name: sceneForPlanning.title });
+    fireEvent.click(screen.getByRole("button", { name: /Expandir análise/ }));
+    const analyzeButton = screen.getByRole("button", { name: "Analisar com IA" });
+
+    expect(analyzeButton).toBeDisabled();
+    expect(screen.getByText("Escreva algum conteúdo na cena antes de solicitar uma análise.")).toBeInTheDocument();
+    fireEvent.submit(analyzeButton.closest("form") as HTMLFormElement);
+    expect(mocks.analyzeScene).not.toHaveBeenCalled();
+  });
+
+  test("keeps local deletion dirty until saved and re-enables analysis after non-empty content is saved", async () => {
+    mocks.updateSceneContent
+      .mockResolvedValueOnce({
+        ...sceneForPlanning,
+        contentJson: "{\"type\":\"doc\",\"content\":[]}",
+        contentText: "",
+        contentRevision: 4,
+        wordCount: 0,
+      })
+      .mockResolvedValueOnce({
+        ...sceneForPlanning,
+        contentJson: "{\"type\":\"doc\"}",
+        contentText: "Novo texto",
+        contentRevision: 5,
+      });
+    renderEditor();
+    await screen.findByRole("heading", { name: sceneForPlanning.title });
+    fireEvent.click(screen.getByRole("button", { name: /Expandir análise/ }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Apagar conteudo" }));
+    expect(screen.getByText("Salve as alterações antes de analisar a versão mais recente.")).toBeInTheDocument();
+    expect(screen.queryByText("Escreva algum conteúdo na cena antes de solicitar uma análise.")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /Salvar conteúdo/ }));
+    expect(await screen.findByText("Escreva algum conteúdo na cena antes de solicitar uma análise.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Analisar com IA" })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Alterar conteudo" }));
+    fireEvent.click(screen.getByRole("button", { name: /Salvar conteúdo/ }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Analisar com IA" })).toBeEnabled());
+    expect(mocks.analyzeScene).not.toHaveBeenCalled();
   });
 
   test("metadata update preserves dirty visible content until that content is saved", async () => {

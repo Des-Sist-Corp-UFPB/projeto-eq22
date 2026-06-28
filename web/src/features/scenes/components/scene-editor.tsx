@@ -173,6 +173,15 @@ export function SceneEditor({
     clearPendingAutosave();
   }, [clearPendingAutosave]);
 
+  const hasPendingNewerRemoteContent = useCallback((targetSceneId: string) => {
+    const pendingSnapshot = pendingRemoteContentRef.current;
+    return Boolean(
+      pendingSnapshot &&
+      pendingSnapshot.sceneId === targetSceneId &&
+      pendingSnapshot.contentRevision > contentRevisionRef.current
+    );
+  }, []);
+
   const acceptContentRevision = useCallback((contentRevision: number) => {
     if (loadedSceneIdRef.current === activeSceneIdRef.current && contentRevision < contentRevisionRef.current) {
       return false;
@@ -354,6 +363,7 @@ export function SceneEditor({
           : highestObservedSnapshot;
       pendingRemoteContentRef.current = snapshotToTrack;
       setPendingRemoteContentRevision(snapshotToTrack.contentRevision);
+      cancelQueuedAutosaves();
       reconcilePendingRemoteContent();
       return;
     }
@@ -370,7 +380,7 @@ export function SceneEditor({
     acceptContentRevision(incomingSnapshot.contentRevision);
     loadedSceneIdRef.current = queriedScene.id;
     setLoadedSceneId(queriedScene.id);
-  }, [acceptContentRevision, clearPendingRemoteContent, reconcilePendingRemoteContent, sceneId, sceneQuery.data]);
+  }, [acceptContentRevision, cancelQueuedAutosaves, clearPendingRemoteContent, reconcilePendingRemoteContent, sceneId, sceneQuery.data]);
 
   function handleMetadataSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -447,7 +457,12 @@ export function SceneEditor({
   }
 
   function scheduleAutosave(targetSceneId: string, nextContentJson: string, nextContentText: string) {
-    if (!targetSceneId || targetSceneId !== activeSceneIdRef.current || loadedSceneIdRef.current !== targetSceneId) {
+    if (
+      !targetSceneId ||
+      targetSceneId !== activeSceneIdRef.current ||
+      loadedSceneIdRef.current !== targetSceneId ||
+      hasPendingNewerRemoteContent(targetSceneId)
+    ) {
       return;
     }
 
@@ -466,6 +481,10 @@ export function SceneEditor({
       }
 
       if (targetSceneId !== activeSceneIdRef.current || loadedSceneIdRef.current !== targetSceneId) {
+        return;
+      }
+
+      if (hasPendingNewerRemoteContent(targetSceneId)) {
         return;
       }
 
@@ -625,6 +644,7 @@ export function SceneEditor({
 
   const activeContentMutationSceneId = contentMutation.variables?.targetSceneId;
   const hasUnsavedContent = contentJson !== lastSavedContentJson || contentText !== lastSavedContentText;
+  const hasAcceptedSavedContent = lastSavedContentText.trim().length > 0;
   const contentSyncState: SceneContentSyncState =
     loadedSceneId !== scene.id || acceptedContentRevision === null
       ? "loading"
@@ -636,7 +656,9 @@ export function SceneEditor({
             ? "outdated"
             : hasUnsavedContent
               ? "dirty"
-              : "saved";
+              : hasAcceptedSavedContent
+                ? "saved"
+                : "empty";
 
   if (contentSyncState === "loading" || acceptedContentRevision === null) {
     return (
@@ -647,7 +669,11 @@ export function SceneEditor({
   }
 
   const contentSaveStatus: ContentSaveStatus =
-    contentSyncState === "dirty" || contentSyncState === "outdated" ? "editing" : contentSyncState;
+    contentSyncState === "dirty" || contentSyncState === "outdated"
+      ? "editing"
+      : contentSyncState === "empty"
+        ? "saved"
+        : contentSyncState;
 
   return (
     <section className={`h-full overflow-y-auto bg-zinc-100/70 ${isFocusMode ? "p-2 md:p-4 lg:p-6" : "p-4 md:p-6 lg:p-8"}`}>
