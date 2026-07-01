@@ -3,5 +3,9 @@ target/
 .git/
 .github/
 .vscode/
-web/
+web/node_modules/
+web/.next/
+web/playwright-report/
+web/test-results/
+web/.env.local
 *.log
