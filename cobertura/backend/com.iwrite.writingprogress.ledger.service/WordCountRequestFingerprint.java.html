@@ -1,0 +1,123 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="pt"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>WordCountRequestFingerprint.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">iwrite-backend</a> &gt; <a href="index.source.html" class="el_package">com.iwrite.writingprogress.ledger.service</a> &gt; <span class="el_source">WordCountRequestFingerprint.java</span></div><h1>WordCountRequestFingerprint.java</h1><pre class="source lang-java linenums">package com.iwrite.writingprogress.ledger.service;
+
+import com.iwrite.scene.entity.SceneStatus;
+import com.iwrite.sceneversion.entity.SceneVersionSource;
+
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
+import java.util.UUID;
+
+public final class WordCountRequestFingerprint {
+
+    private WordCountRequestFingerprint() {
+    }
+
+    public static String sceneCreate(
+            UUID actorUserId,
+            UUID bookId,
+            UUID chapterId,
+            String title,
+            String summary,
+            SceneStatus status,
+            Integer sortOrder,
+            String contentJson,
+            String contentText
+    ) {
+<span class="fc" id="L28">        return digest(</span>
+                &quot;SCENE_CREATE&quot;,
+                actorUserId,
+                bookId,
+                chapterId,
+                title,
+                summary,
+<span class="pc bpc" id="L35" title="1 of 2 branches missed.">                status == null ? null : status.name(),</span>
+                sortOrder,
+                contentJson,
+                contentText
+        );
+    }
+
+    public static String contentSave(
+            UUID actorUserId,
+            UUID bookId,
+            UUID sceneId,
+            Long expectedContentRevision,
+            SceneVersionSource source,
+            String contentJson,
+            String contentText
+    ) {
+<span class="fc" id="L51">        return digest(</span>
+                &quot;CONTENT_SAVE&quot;,
+                actorUserId,
+                bookId,
+                sceneId,
+                expectedContentRevision,
+<span class="fc bfc" id="L57" title="All 2 branches covered.">                source == null ? null : source.name(),</span>
+                contentJson,
+                contentText
+        );
+    }
+
+    public static String versionRestore(
+            UUID actorUserId,
+            UUID bookId,
+            UUID sceneId,
+            UUID versionId,
+            Long expectedContentRevision
+    ) {
+<span class="fc" id="L70">        return digest(</span>
+                &quot;VERSION_RESTORE&quot;,
+                actorUserId,
+                bookId,
+                sceneId,
+                versionId,
+                expectedContentRevision
+        );
+    }
+
+    public static String sceneDelete(
+            UUID actorUserId,
+            UUID bookId,
+            UUID originalSceneId,
+            UUID operationId,
+            UUID idempotencyKey,
+            Long contentRevisionBefore
+    ) {
+<span class="fc" id="L88">        return digest(</span>
+                &quot;SCENE_DELETE&quot;,
+                actorUserId,
+                bookId,
+                originalSceneId,
+                operationId,
+                idempotencyKey,
+                contentRevisionBefore
+        );
+    }
+
+    private static String digest(Object... fields) {
+        try {
+<span class="fc" id="L101">            MessageDigest digest = MessageDigest.getInstance(&quot;SHA-256&quot;);</span>
+<span class="fc" id="L102">            digest.update(canonical(fields).getBytes(StandardCharsets.UTF_8));</span>
+<span class="fc" id="L103">            return HexFormat.of().formatHex(digest.digest());</span>
+<span class="nc" id="L104">        } catch (NoSuchAlgorithmException exception) {</span>
+<span class="nc" id="L105">            throw new IllegalStateException(&quot;SHA-256 is not available&quot;, exception);</span>
+        }
+    }
+
+    private static String canonical(Object... fields) {
+<span class="fc" id="L110">        StringBuilder builder = new StringBuilder();</span>
+<span class="fc bfc" id="L111" title="All 2 branches covered.">        for (Object field : fields) {</span>
+<span class="fc bfc" id="L112" title="All 2 branches covered.">            if (field == null) {</span>
+<span class="fc" id="L113">                builder.append(&quot;-1:&quot;);</span>
+            } else {
+<span class="fc" id="L115">                String value = field.toString();</span>
+<span class="fc" id="L116">                builder.append(value.length()).append(':').append(value);</span>
+            }
+<span class="fc" id="L118">            builder.append(';');</span>
+        }
+<span class="fc" id="L120">        return builder.toString();</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

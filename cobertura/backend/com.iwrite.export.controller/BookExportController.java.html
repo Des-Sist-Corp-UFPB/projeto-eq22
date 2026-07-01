@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="pt"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>BookExportController.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">iwrite-backend</a> &gt; <a href="index.source.html" class="el_package">com.iwrite.export.controller</a> &gt; <span class="el_source">BookExportController.java</span></div><h1>BookExportController.java</h1><pre class="source lang-java linenums">package com.iwrite.export.controller;
+
+import com.iwrite.export.ExportFile;
+import com.iwrite.export.ExportFormat;
+import com.iwrite.export.ExportResponseFactory;
+import com.iwrite.export.service.BookExportService;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+
+import java.util.UUID;
+
+@RestController
+@RequestMapping(&quot;/api/books&quot;)
+public class BookExportController {
+
+    private final BookExportService bookExportService;
+    private final ExportResponseFactory exportResponseFactory;
+
+<span class="fc" id="L23">    public BookExportController(BookExportService bookExportService, ExportResponseFactory exportResponseFactory) {</span>
+<span class="fc" id="L24">        this.bookExportService = bookExportService;</span>
+<span class="fc" id="L25">        this.exportResponseFactory = exportResponseFactory;</span>
+<span class="fc" id="L26">    }</span>
+
+    @GetMapping(&quot;/{bookId}/exports/manuscript&quot;)
+    public ResponseEntity&lt;byte[]&gt; exportManuscript(
+            @PathVariable UUID bookId,
+            @RequestParam(defaultValue = &quot;md&quot;) String format,
+            @RequestParam(defaultValue = &quot;false&quot;) boolean includeSceneTitles,
+            @RequestParam(defaultValue = &quot;false&quot;) boolean includeEmptyScenes
+    ) {
+<span class="fc" id="L35">        ExportFile file = bookExportService.exportManuscript(</span>
+                bookId,
+<span class="fc" id="L37">                ExportFormat.parse(format),</span>
+                includeSceneTitles,
+                includeEmptyScenes
+        );
+
+<span class="fc" id="L42">        return exportResponseFactory.attachment(file);</span>
+    }
+
+    @GetMapping(&quot;/{bookId}/exports/notebook&quot;)
+    public ResponseEntity&lt;byte[]&gt; exportNotebook(
+            @PathVariable UUID bookId,
+            @RequestParam(defaultValue = &quot;md&quot;) String format,
+            @RequestParam(defaultValue = &quot;true&quot;) boolean includeOpen,
+            @RequestParam(defaultValue = &quot;true&quot;) boolean includeResolved
+    ) {
+<span class="fc" id="L52">        ExportFile file = bookExportService.exportNotebook(</span>
+                bookId,
+<span class="fc" id="L54">                ExportFormat.parse(format),</span>
+                includeOpen,
+                includeResolved
+        );
+
+<span class="fc" id="L59">        return exportResponseFactory.attachment(file);</span>
+    }
+
+    @GetMapping(&quot;/{bookId}/export/markdown&quot;)
+    public ResponseEntity&lt;byte[]&gt; exportMarkdown(
+            @PathVariable UUID bookId,
+            @RequestParam(defaultValue = &quot;false&quot;) boolean includeSceneTitles,
+            @RequestParam(defaultValue = &quot;false&quot;) boolean includeEmptyScenes
+    ) {
+<span class="fc" id="L68">        ExportFile file = bookExportService.exportManuscript(</span>
+                bookId,
+                ExportFormat.MD,
+                includeSceneTitles,
+                includeEmptyScenes
+        );
+
+<span class="fc" id="L75">        return exportResponseFactory.attachment(file);</span>
+    }
+
+    @GetMapping(&quot;/{bookId}/export/docx&quot;)
+    public ResponseEntity&lt;byte[]&gt; exportDocx(
+            @PathVariable UUID bookId,
+            @RequestParam(defaultValue = &quot;false&quot;) boolean includeSceneTitles,
+            @RequestParam(defaultValue = &quot;false&quot;) boolean includeEmptyScenes
+    ) {
+<span class="fc" id="L84">        ExportFile file = bookExportService.exportManuscript(</span>
+                bookId,
+                ExportFormat.DOCX,
+                includeSceneTitles,
+                includeEmptyScenes
+        );
+
+<span class="fc" id="L91">        return exportResponseFactory.attachment(file);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

@@ -1,5 +1,8 @@
 package com.iwrite.book.controller;
 
+import com.iwrite.audit.annotation.AuditedOperation;
+import com.iwrite.audit.entity.AuditAction;
+import com.iwrite.audit.entity.AuditResourceType;
 import com.iwrite.book.dto.BookRequest;
 import com.iwrite.book.dto.BookResponse;
 import com.iwrite.book.dto.BookUpdateRequest;
@@ -41,17 +44,32 @@ public class BookController {
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
+    @AuditedOperation(
+            action = AuditAction.BOOK_CREATED,
+            resourceType = AuditResourceType.BOOK,
+            resourceId = "#result?.id"
+    )
     public BookResponse create(@Valid @RequestBody BookRequest request) {
         return bookService.create(request);
     }
 
     @PatchMapping("/{bookId}")
+    @AuditedOperation(
+            action = AuditAction.BOOK_UPDATED,
+            resourceType = AuditResourceType.BOOK,
+            resourceId = "#bookId"
+    )
     public BookResponse update(@PathVariable UUID bookId, @Valid @RequestBody BookUpdateRequest request) {
         return bookService.update(bookId, request);
     }
 
     @DeleteMapping("/{bookId}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
+    @AuditedOperation(
+            action = AuditAction.BOOK_DELETED,
+            resourceType = AuditResourceType.BOOK,
+            resourceId = "#bookId"
+    )
     public void delete(@PathVariable UUID bookId) {
         bookService.delete(bookId);
     }

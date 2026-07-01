@@ -125,8 +125,8 @@ test("saves dirty local content before restoring and keeps it recoverable", asyn
   const contentB = "current persisted replacement";
   const dirtyContent = "dirty local draft survives history";
 
-  let scene = await updateSceneContent(page.request, seeded.scene.id, contentA, seeded.scene.contentRevision, "MANUAL_SAVE");
-  scene = await updateSceneContent(page.request, seeded.scene.id, contentB, scene.contentRevision, "MANUAL_SAVE");
+  const scene = await updateSceneContent(page.request, seeded.scene.id, contentA, seeded.scene.contentRevision, "MANUAL_SAVE");
+  await updateSceneContent(page.request, seeded.scene.id, contentB, scene.contentRevision, "MANUAL_SAVE");
 
   await openScene(page, seeded.book.id, seeded.scene.id, seeded.book.title);
   const editor = page.getByTestId("scene-content-editor");

@@ -1,0 +1,157 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="pt"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>WordCountEventService.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">iwrite-backend</a> &gt; <a href="index.source.html" class="el_package">com.iwrite.writingprogress.ledger.service</a> &gt; <span class="el_source">WordCountEventService.java</span></div><h1>WordCountEventService.java</h1><pre class="source lang-java linenums">package com.iwrite.writingprogress.ledger.service;
+
+import com.iwrite.book.entity.Book;
+import com.iwrite.book.service.BookService;
+import com.iwrite.common.exception.BadRequestException;
+import com.iwrite.scene.entity.Scene;
+import com.iwrite.user.context.CurrentUserMembershipService;
+import com.iwrite.writingprogress.ledger.entity.BookWordCountEvent;
+import com.iwrite.writingprogress.ledger.repository.BookWordCountEventRepository;
+import com.iwrite.writingprogress.repository.DailyWritingProgressRepository;
+import com.iwrite.writingprogress.service.WritingDayResolver;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.time.Clock;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
+import java.util.Objects;
+import java.util.UUID;
+
+@Service
+public class WordCountEventService {
+
+    private final BookService bookService;
+    private final BookWordCountEventRepository eventRepository;
+    private final DailyWritingProgressRepository progressRepository;
+    private final CurrentUserMembershipService currentUserMembershipService;
+    private final WritingDayResolver writingDayResolver;
+    private final Clock clock;
+
+    public WordCountEventService(
+            BookService bookService,
+            BookWordCountEventRepository eventRepository,
+            DailyWritingProgressRepository progressRepository,
+            CurrentUserMembershipService currentUserMembershipService,
+            WritingDayResolver writingDayResolver,
+            Clock clock
+<span class="fc" id="L40">    ) {</span>
+<span class="fc" id="L41">        this.bookService = bookService;</span>
+<span class="fc" id="L42">        this.eventRepository = eventRepository;</span>
+<span class="fc" id="L43">        this.progressRepository = progressRepository;</span>
+<span class="fc" id="L44">        this.currentUserMembershipService = currentUserMembershipService;</span>
+<span class="fc" id="L45">        this.writingDayResolver = writingDayResolver;</span>
+<span class="fc" id="L46">        this.clock = clock;</span>
+<span class="fc" id="L47">    }</span>
+
+    @Transactional
+    public WordCountEventRecordResult record(WordCountEventCommand command) {
+<span class="fc" id="L51">        validate(command);</span>
+
+<span class="fc" id="L53">        Book book = bookService.getBookForWordCountUpdate(command.bookId());</span>
+<span class="fc" id="L54">        return recordForLockedBook(book, command);</span>
+    }
+
+    public WordCountEventRecordResult recordForLockedBook(Book book, WordCountEventCommand command) {
+<span class="fc" id="L58">        validate(command);</span>
+<span class="pc bpc" id="L59" title="1 of 2 branches missed.">        if (!book.getId().equals(command.bookId())) {</span>
+<span class="nc" id="L60">            throw new BadRequestException(&quot;bookId must match the locked book&quot;);</span>
+        }
+
+<span class="fc" id="L63">        UUID actorUserId = currentUserMembershipService.requireCurrentUserMemberId();</span>
+<span class="fc" id="L64">        Instant eventInstant = clock.instant();</span>
+<span class="fc" id="L65">        OffsetDateTime eventTime = eventInstant.atOffset(ZoneOffset.UTC);</span>
+<span class="fc" id="L66">        LocalDate progressDate = writingDayResolver.writingDateFor(eventInstant);</span>
+<span class="fc" id="L67">        int inserted = eventRepository.insertIfAbsent(</span>
+<span class="fc" id="L68">                UUID.randomUUID(),</span>
+<span class="fc" id="L69">                command.bookId(),</span>
+<span class="fc" id="L70">                command.sceneId(),</span>
+                actorUserId,
+<span class="fc" id="L72">                command.originalSceneId(),</span>
+<span class="fc" id="L73">                command.sceneTitleSnapshot(),</span>
+<span class="fc" id="L74">                command.eventType().name(),</span>
+<span class="fc" id="L75">                command.productiveWordDelta(),</span>
+<span class="fc" id="L76">                command.manuscriptWordDelta(),</span>
+<span class="fc" id="L77">                command.operationId(),</span>
+<span class="fc" id="L78">                command.idempotencyKey(),</span>
+<span class="fc" id="L79">                command.contentRevisionBefore(),</span>
+<span class="fc" id="L80">                command.contentRevisionAfter(),</span>
+<span class="fc" id="L81">                command.requestFingerprint(),</span>
+                eventTime
+        );
+
+<span class="fc bfc" id="L85" title="All 2 branches covered.">        if (inserted == 0) {</span>
+<span class="fc" id="L86">            BookWordCountEvent existing = eventRepository</span>
+<span class="fc" id="L87">                    .findByBookIdAndIdempotencyKey(command.bookId(), command.idempotencyKey())</span>
+<span class="pc" id="L88">                    .orElseThrow(() -&gt; new WordCountEventConflictException(&quot;Word-count event idempotency state is inconsistent.&quot;));</span>
+<span class="fc bfc" id="L89" title="All 2 branches covered.">            if (matches(existing, command, actorUserId)) {</span>
+<span class="fc" id="L90">                return WordCountEventRecordResult.ALREADY_RECORDED;</span>
+            }
+<span class="fc" id="L92">            throw new WordCountEventConflictException(&quot;Idempotency key was already used for a different word-count event.&quot;);</span>
+        }
+
+<span class="fc bfc" id="L95" title="All 2 branches covered.">        if (shouldUpdateDailyRollup(command)) {</span>
+<span class="fc" id="L96">            progressRepository.upsertWordCountEventRollup(</span>
+<span class="fc" id="L97">                    UUID.randomUUID(),</span>
+                    actorUserId,
+<span class="fc" id="L99">                    command.bookId(),</span>
+                    progressDate,
+<span class="fc" id="L101">                    book.getDailyTargetWordCount(),</span>
+<span class="fc" id="L102">                    command.knownManuscriptTotalAfterOperation(),</span>
+<span class="fc" id="L103">                    command.productiveWordDelta(),</span>
+<span class="fc" id="L104">                    command.manuscriptWordDelta(),</span>
+                    eventTime
+            );
+        }
+<span class="fc" id="L108">        return WordCountEventRecordResult.RECORDED;</span>
+    }
+
+    private void validate(WordCountEventCommand command) {
+<span class="pc bpc" id="L112" title="1 of 2 branches missed.">        if (command == null) {</span>
+<span class="nc" id="L113">            throw new BadRequestException(&quot;word-count event command is required&quot;);</span>
+        }
+<span class="pc bpc" id="L115" title="1 of 2 branches missed.">        if (command.bookId() == null) {</span>
+<span class="nc" id="L116">            throw new BadRequestException(&quot;bookId is required&quot;);</span>
+        }
+<span class="pc bpc" id="L118" title="1 of 2 branches missed.">        if (command.eventType() == null) {</span>
+<span class="nc" id="L119">            throw new BadRequestException(&quot;eventType is required&quot;);</span>
+        }
+<span class="pc bpc" id="L121" title="1 of 2 branches missed.">        if (command.idempotencyKey() == null) {</span>
+<span class="nc" id="L122">            throw new BadRequestException(&quot;idempotencyKey is required&quot;);</span>
+        }
+<span class="pc bpc" id="L124" title="2 of 4 branches missed.">        if (command.requestFingerprint() == null || command.requestFingerprint().isBlank()) {</span>
+<span class="nc" id="L125">            throw new BadRequestException(&quot;requestFingerprint is required&quot;);</span>
+        }
+<span class="fc" id="L127">    }</span>
+
+    private boolean matches(BookWordCountEvent existing, WordCountEventCommand command, UUID actorUserId) {
+<span class="pc bpc" id="L130" title="1 of 2 branches missed.">        if (existing.getRequestFingerprint() == null) {</span>
+<span class="nc" id="L131">            return false;</span>
+        }
+
+<span class="fc bfc" id="L134" title="All 2 branches covered.">        return Objects.equals(existing.getRequestFingerprint(), command.requestFingerprint())</span>
+<span class="pc bpc" id="L135" title="1 of 2 branches missed.">                &amp;&amp; Objects.equals(existing.getBook().getId(), command.bookId())</span>
+<span class="pc bpc" id="L136" title="1 of 2 branches missed.">                &amp;&amp; Objects.equals(existing.getActorUser().getId(), actorUserId)</span>
+<span class="pc bpc" id="L137" title="1 of 2 branches missed.">                &amp;&amp; Objects.equals(sceneId(existing), command.sceneId())</span>
+<span class="pc bpc" id="L138" title="1 of 2 branches missed.">                &amp;&amp; Objects.equals(existing.getOriginalSceneId(), command.originalSceneId())</span>
+<span class="pc bpc" id="L139" title="1 of 2 branches missed.">                &amp;&amp; Objects.equals(existing.getSceneTitleSnapshot(), command.sceneTitleSnapshot())</span>
+<span class="pc bpc" id="L140" title="1 of 2 branches missed.">                &amp;&amp; existing.getEventType() == command.eventType()</span>
+<span class="pc bpc" id="L141" title="1 of 2 branches missed.">                &amp;&amp; Objects.equals(existing.getProductiveWordDelta(), command.productiveWordDelta())</span>
+<span class="pc bpc" id="L142" title="1 of 2 branches missed.">                &amp;&amp; Objects.equals(existing.getManuscriptWordDelta(), command.manuscriptWordDelta())</span>
+<span class="pc bpc" id="L143" title="1 of 2 branches missed.">                &amp;&amp; Objects.equals(existing.getOperationId(), command.operationId())</span>
+<span class="pc bpc" id="L144" title="1 of 2 branches missed.">                &amp;&amp; Objects.equals(existing.getContentRevisionBefore(), command.contentRevisionBefore())</span>
+<span class="pc bpc" id="L145" title="1 of 2 branches missed.">                &amp;&amp; Objects.equals(existing.getContentRevisionAfter(), command.contentRevisionAfter());</span>
+    }
+
+    private boolean shouldUpdateDailyRollup(WordCountEventCommand command) {
+<span class="fc bfc" id="L149" title="All 4 branches covered.">        return command.productiveWordDelta() != 0 || command.manuscriptWordDelta() != 0;</span>
+    }
+
+    private UUID sceneId(BookWordCountEvent event) {
+<span class="fc" id="L153">        Scene scene = event.getScene();</span>
+<span class="pc bpc" id="L154" title="1 of 2 branches missed.">        return scene == null ? null : scene.getId();</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

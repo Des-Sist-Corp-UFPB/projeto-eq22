@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="pt"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>SceneResponse.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">iwrite-backend</a> &gt; <a href="index.source.html" class="el_package">com.iwrite.scene.dto</a> &gt; <span class="el_source">SceneResponse.java</span></div><h1>SceneResponse.java</h1><pre class="source lang-java linenums">package com.iwrite.scene.dto;
+
+import com.iwrite.scene.entity.Scene;
+import com.iwrite.scene.entity.SceneStatus;
+
+import java.time.OffsetDateTime;
+import java.util.Comparator;
+import java.util.List;
+import java.util.UUID;
+
+<span class="fc" id="L11">public record SceneResponse(</span>
+        UUID id,
+        UUID bookId,
+        UUID chapterId,
+        String title,
+        String summary,
+        String contentJson,
+        String contentText,
+        SceneStatus status,
+        Integer sortOrder,
+        Integer wordCount,
+        Long contentRevision,
+        String goal,
+        String conflict,
+        String outcome,
+        String planningNotes,
+        CharacterSummaryResponse povCharacter,
+        LocationSummaryResponse mainLocation,
+        List&lt;CharacterSummaryResponse&gt; participantCharacters,
+        List&lt;ItemSummaryResponse&gt; items,
+        OffsetDateTime createdAt,
+        OffsetDateTime updatedAt
+) {
+
+    public static SceneResponse fromEntity(Scene scene) {
+<span class="fc" id="L36">        return new SceneResponse(</span>
+<span class="fc" id="L37">                scene.getId(),</span>
+<span class="fc" id="L38">                scene.getBook().getId(),</span>
+<span class="fc" id="L39">                scene.getChapter().getId(),</span>
+<span class="fc" id="L40">                scene.getTitle(),</span>
+<span class="fc" id="L41">                scene.getSummary(),</span>
+<span class="fc" id="L42">                scene.getContentJson(),</span>
+<span class="fc" id="L43">                scene.getContentText(),</span>
+<span class="fc" id="L44">                scene.getStatus(),</span>
+<span class="fc" id="L45">                scene.getSortOrder(),</span>
+<span class="fc" id="L46">                scene.getWordCount(),</span>
+<span class="fc" id="L47">                scene.getContentRevision(),</span>
+<span class="fc" id="L48">                scene.getGoal(),</span>
+<span class="fc" id="L49">                scene.getConflict(),</span>
+<span class="fc" id="L50">                scene.getOutcome(),</span>
+<span class="fc" id="L51">                scene.getPlanningNotes(),</span>
+<span class="fc" id="L52">                CharacterSummaryResponse.fromEntity(scene.getPovCharacter()),</span>
+<span class="fc" id="L53">                LocationSummaryResponse.fromEntity(scene.getMainLocation()),</span>
+<span class="fc" id="L54">                scene.getParticipantCharacters()</span>
+<span class="fc" id="L55">                        .stream()</span>
+<span class="fc" id="L56">                        .map(CharacterSummaryResponse::fromEntity)</span>
+<span class="fc" id="L57">                        .sorted(Comparator.comparing(CharacterSummaryResponse::name).thenComparing(CharacterSummaryResponse::id))</span>
+<span class="fc" id="L58">                        .toList(),</span>
+<span class="fc" id="L59">                scene.getItems()</span>
+<span class="fc" id="L60">                        .stream()</span>
+<span class="fc" id="L61">                        .map(ItemSummaryResponse::fromEntity)</span>
+<span class="fc" id="L62">                        .sorted(Comparator.comparing(ItemSummaryResponse::name).thenComparing(ItemSummaryResponse::id))</span>
+<span class="fc" id="L63">                        .toList(),</span>
+<span class="fc" id="L64">                scene.getCreatedAt(),</span>
+<span class="fc" id="L65">                scene.getUpdatedAt()</span>
+        );
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

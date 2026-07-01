@@ -1,0 +1,150 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="pt"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>BookSectionService.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">iwrite-backend</a> &gt; <a href="index.source.html" class="el_package">com.iwrite.section.service</a> &gt; <span class="el_source">BookSectionService.java</span></div><h1>BookSectionService.java</h1><pre class="source lang-java linenums">package com.iwrite.section.service;
+
+import com.iwrite.book.entity.Book;
+import com.iwrite.book.service.BookAccessService;
+import com.iwrite.common.dto.ReorderRequest;
+import com.iwrite.common.exception.BadRequestException;
+import com.iwrite.common.exception.ResourceNotFoundException;
+import com.iwrite.common.validation.RequestValidation;
+import com.iwrite.scene.repository.SceneRepository;
+import com.iwrite.scene.service.SceneDeletionLedgerService;
+import com.iwrite.section.dto.BookSectionRequest;
+import com.iwrite.section.dto.BookSectionResponse;
+import com.iwrite.section.dto.BookSectionUpdateRequest;
+import com.iwrite.section.entity.BookSection;
+import com.iwrite.section.entity.SectionType;
+import com.iwrite.section.repository.BookSectionRepository;
+import com.iwrite.user.context.CurrentUserProvider;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+import java.util.function.Function;
+import java.util.stream.Collectors;
+
+@Service
+public class BookSectionService {
+
+    private final BookSectionRepository sectionRepository;
+    private final BookAccessService bookAccessService;
+    private final SceneRepository sceneRepository;
+    private final SceneDeletionLedgerService sceneDeletionLedgerService;
+    private final CurrentUserProvider currentUserProvider;
+
+    public BookSectionService(
+            BookSectionRepository sectionRepository,
+            BookAccessService bookAccessService,
+            SceneRepository sceneRepository,
+            SceneDeletionLedgerService sceneDeletionLedgerService,
+            CurrentUserProvider currentUserProvider
+<span class="fc" id="L43">    ) {</span>
+<span class="fc" id="L44">        this.sectionRepository = sectionRepository;</span>
+<span class="fc" id="L45">        this.bookAccessService = bookAccessService;</span>
+<span class="fc" id="L46">        this.sceneRepository = sceneRepository;</span>
+<span class="fc" id="L47">        this.sceneDeletionLedgerService = sceneDeletionLedgerService;</span>
+<span class="fc" id="L48">        this.currentUserProvider = currentUserProvider;</span>
+<span class="fc" id="L49">    }</span>
+
+    @Transactional
+    public BookSectionResponse create(UUID bookId, BookSectionRequest request) {
+<span class="fc" id="L53">        Book book = bookAccessService.requireBookEditAccess(bookId);</span>
+
+<span class="fc" id="L55">        BookSection section = new BookSection();</span>
+<span class="fc" id="L56">        section.setBook(book);</span>
+<span class="fc" id="L57">        section.setTitle(request.title());</span>
+<span class="pc bpc" id="L58" title="1 of 2 branches missed.">        section.setType(request.type() == null ? SectionType.PART : request.type());</span>
+<span class="pc bpc" id="L59" title="1 of 2 branches missed.">        section.setSortOrder(request.sortOrder() == null ? sectionRepository.countByBookId(bookId) : request.sortOrder());</span>
+
+<span class="fc" id="L61">        return BookSectionResponse.fromEntity(sectionRepository.save(section));</span>
+    }
+
+    @Transactional
+    public BookSectionResponse update(UUID sectionId, BookSectionUpdateRequest request) {
+<span class="fc" id="L66">        BookSection section = getSection(sectionId);</span>
+<span class="fc" id="L67">        RequestValidation.rejectBlankWhenPresent(&quot;title&quot;, request.title());</span>
+
+<span class="pc bpc" id="L69" title="1 of 2 branches missed.">        if (request.title() != null) {</span>
+<span class="fc" id="L70">            section.setTitle(request.title());</span>
+        }
+<span class="pc bpc" id="L72" title="1 of 2 branches missed.">        if (request.type() != null) {</span>
+<span class="nc" id="L73">            section.setType(request.type());</span>
+        }
+<span class="pc bpc" id="L75" title="1 of 2 branches missed.">        if (request.sortOrder() != null) {</span>
+<span class="nc" id="L76">            section.setSortOrder(request.sortOrder());</span>
+        }
+
+<span class="fc" id="L79">        return BookSectionResponse.fromEntity(section);</span>
+    }
+
+    @Transactional
+    public void delete(UUID sectionId) {
+<span class="fc" id="L84">        BookSection section = getSection(sectionId);</span>
+<span class="fc" id="L85">        var scenes = sceneRepository.findBySectionIdForUpdate(sectionId);</span>
+<span class="fc" id="L86">        Book lockedBook = bookAccessService.requireBookEditAccessForUpdate(section.getBook().getId());</span>
+<span class="fc" id="L87">        sceneDeletionLedgerService.prepareSceneDeletes(scenes, lockedBook, UUID.randomUUID());</span>
+<span class="fc" id="L88">        sectionRepository.deleteById(sectionId);</span>
+<span class="fc" id="L89">    }</span>
+
+    @Transactional
+    public void reorder(UUID bookId, ReorderRequest request) {
+<span class="fc" id="L93">        bookAccessService.requireBookEditAccess(bookId);</span>
+<span class="fc" id="L94">        List&lt;BookSection&gt; sections = sectionRepository.findByBookIdOrderBySortOrderAsc(bookId);</span>
+<span class="nc" id="L95">        applyReorder(sections, request.orderedIds(), BookSection::getId, BookSection::setSortOrder, &quot;sections&quot;);</span>
+<span class="nc" id="L96">    }</span>
+
+    @Transactional(readOnly = true)
+    public BookSection getSection(UUID sectionId) {
+<span class="fc" id="L100">        BookSection section = sectionRepository.findByIdAndBook_Tenant_Id(sectionId, currentUserProvider.tenantId())</span>
+<span class="fc" id="L101">                .orElseThrow(() -&gt; sectionNotFound(sectionId));</span>
+<span class="fc" id="L102">        requireSectionBookEditAccess(section, sectionId);</span>
+<span class="fc" id="L103">        return section;</span>
+    }
+
+    private void requireSectionBookEditAccess(BookSection section, UUID sectionId) {
+        try {
+<span class="fc" id="L108">            bookAccessService.requireBookEditAccess(section.getBook().getId());</span>
+<span class="nc" id="L109">        } catch (ResourceNotFoundException exception) {</span>
+<span class="nc" id="L110">            throw sectionNotFound(sectionId);</span>
+<span class="fc" id="L111">        }</span>
+<span class="fc" id="L112">    }</span>
+
+    private ResourceNotFoundException sectionNotFound(UUID sectionId) {
+<span class="fc" id="L115">        return new ResourceNotFoundException(&quot;Section not found: &quot; + sectionId);</span>
+    }
+
+    private &lt;T&gt; void applyReorder(
+            List&lt;T&gt; children,
+            List&lt;UUID&gt; orderedIds,
+            Function&lt;T, UUID&gt; idGetter,
+            OrderSetter&lt;T&gt; orderSetter,
+            String childName
+    ) {
+<span class="pc bpc" id="L125" title="1 of 2 branches missed.">        if (orderedIds.size() != new HashSet&lt;&gt;(orderedIds).size()) {</span>
+<span class="nc" id="L126">            throw new BadRequestException(&quot;Duplicate IDs are not allowed&quot;);</span>
+        }
+<span class="pc bpc" id="L128" title="1 of 2 branches missed.">        if (orderedIds.size() != children.size()) {</span>
+<span class="nc" id="L129">            throw new BadRequestException(&quot;Reorder list must include all &quot; + childName + &quot; for the parent&quot;);</span>
+        }
+
+<span class="fc" id="L132">        Map&lt;UUID, T&gt; childrenById = children.stream()</span>
+<span class="fc" id="L133">                .collect(Collectors.toMap(idGetter, Function.identity()));</span>
+
+<span class="pc bpc" id="L135" title="1 of 2 branches missed.">        if (!childrenById.keySet().equals(new HashSet&lt;&gt;(orderedIds))) {</span>
+<span class="fc" id="L136">            throw new BadRequestException(&quot;All IDs must exist and belong to the parent&quot;);</span>
+        }
+
+<span class="nc bnc" id="L139" title="All 2 branches missed.">        for (int index = 0; index &lt; orderedIds.size(); index++) {</span>
+<span class="nc" id="L140">            T child = childrenById.get(orderedIds.get(index));</span>
+<span class="nc" id="L141">            orderSetter.setSortOrder(child, index);</span>
+        }
+<span class="nc" id="L143">    }</span>
+
+    @FunctionalInterface
+    private interface OrderSetter&lt;T&gt; {
+        void setSortOrder(T child, int sortOrder);
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

@@ -1,0 +1,356 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="pt"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>TipTapDocxRenderer.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">iwrite-backend</a> &gt; <a href="index.source.html" class="el_package">com.iwrite.export.service</a> &gt; <span class="el_source">TipTapDocxRenderer.java</span></div><h1>TipTapDocxRenderer.java</h1><pre class="source lang-java linenums">package com.iwrite.export.service;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.poi.xwpf.usermodel.Borders;
+import org.apache.poi.xwpf.usermodel.UnderlinePatterns;
+import org.apache.poi.xwpf.usermodel.XWPFDocument;
+import org.apache.poi.xwpf.usermodel.XWPFParagraph;
+import org.apache.poi.xwpf.usermodel.XWPFRun;
+import org.springframework.stereotype.Component;
+
+import java.util.Optional;
+
+@Component
+public class TipTapDocxRenderer {
+
+    private final ObjectMapper objectMapper;
+
+<span class="fc" id="L19">    public TipTapDocxRenderer(ObjectMapper objectMapper) {</span>
+<span class="fc" id="L20">        this.objectMapper = objectMapper;</span>
+<span class="fc" id="L21">    }</span>
+
+    public boolean renderInto(XWPFDocument document, String contentJson) {
+<span class="fc" id="L24">        Optional&lt;JsonNode&gt; renderableRoot = renderableRoot(contentJson);</span>
+<span class="pc bpc" id="L25" title="1 of 2 branches missed.">        if (renderableRoot.isEmpty()) {</span>
+<span class="nc" id="L26">            return false;</span>
+        }
+
+        try {
+<span class="fc" id="L30">            boolean renderedContent = false;</span>
+<span class="fc bfc" id="L31" title="All 2 branches covered.">            for (JsonNode node : renderableRoot.get().path(&quot;content&quot;)) {</span>
+<span class="pc bpc" id="L32" title="1 of 4 branches missed.">                renderedContent = renderBlock(document, node) || renderedContent;</span>
+<span class="fc" id="L33">            }</span>
+
+<span class="fc" id="L35">            return renderedContent;</span>
+<span class="nc" id="L36">        } catch (Exception exception) {</span>
+<span class="nc" id="L37">            return false;</span>
+        }
+    }
+
+    public boolean canRender(String contentJson) {
+<span class="fc" id="L42">        return renderableRoot(contentJson).isPresent();</span>
+    }
+
+    private Optional&lt;JsonNode&gt; renderableRoot(String contentJson) {
+<span class="pc bpc" id="L46" title="2 of 4 branches missed.">        if (contentJson == null || contentJson.isBlank()) {</span>
+<span class="nc" id="L47">            return Optional.empty();</span>
+        }
+
+        try {
+<span class="fc" id="L51">            JsonNode root = objectMapper.readTree(contentJson);</span>
+<span class="pc bpc" id="L52" title="2 of 6 branches missed.">            if (!&quot;doc&quot;.equals(root.path(&quot;type&quot;).asText()) || hasUnsupportedTextContent(root) || !hasRenderableContent(root)) {</span>
+<span class="fc" id="L53">                return Optional.empty();</span>
+            }
+<span class="fc" id="L55">            return Optional.of(root);</span>
+<span class="fc" id="L56">        } catch (Exception exception) {</span>
+<span class="fc" id="L57">            return Optional.empty();</span>
+        }
+    }
+
+    private boolean renderBlock(XWPFDocument document, JsonNode node) {
+<span class="fc" id="L62">        String type = node.path(&quot;type&quot;).asText();</span>
+
+<span class="fc bfc" id="L64" title="All 2 branches covered.">        if (&quot;paragraph&quot;.equals(type)) {</span>
+<span class="fc" id="L65">            return renderParagraph(document, node);</span>
+        }
+
+<span class="fc bfc" id="L68" title="All 2 branches covered.">        if (&quot;heading&quot;.equals(type)) {</span>
+<span class="fc" id="L69">            return renderHeading(document, node);</span>
+        }
+
+<span class="pc bpc" id="L72" title="1 of 2 branches missed.">        if (&quot;bulletList&quot;.equals(type)) {</span>
+<span class="fc" id="L73">            return renderList(document, node, &quot;- &quot;, 1);</span>
+        }
+
+<span class="nc bnc" id="L76" title="All 2 branches missed.">        if (&quot;orderedList&quot;.equals(type)) {</span>
+<span class="nc" id="L77">            return renderList(document, node, null, node.path(&quot;attrs&quot;).path(&quot;start&quot;).asInt(1));</span>
+        }
+
+<span class="nc bnc" id="L80" title="All 2 branches missed.">        if (&quot;blockquote&quot;.equals(type)) {</span>
+<span class="nc" id="L81">            return renderBlockquote(document, node);</span>
+        }
+
+<span class="nc bnc" id="L84" title="All 2 branches missed.">        if (&quot;codeBlock&quot;.equals(type)) {</span>
+<span class="nc" id="L85">            return renderCodeBlock(document, node);</span>
+        }
+
+<span class="nc bnc" id="L88" title="All 2 branches missed.">        if (&quot;horizontalRule&quot;.equals(type)) {</span>
+<span class="nc" id="L89">            XWPFParagraph paragraph = document.createParagraph();</span>
+<span class="nc" id="L90">            paragraph.setBorderBottom(Borders.SINGLE);</span>
+<span class="nc" id="L91">            return true;</span>
+        }
+
+<span class="nc" id="L94">        return false;</span>
+    }
+
+    private boolean renderParagraph(XWPFDocument document, JsonNode node) {
+<span class="fc" id="L98">        Optional&lt;String&gt; plainText = plainInlineText(node);</span>
+<span class="pc bpc" id="L99" title="1 of 2 branches missed.">        if (plainText.isEmpty()) {</span>
+<span class="nc" id="L100">            return false;</span>
+        }
+
+<span class="fc" id="L103">        XWPFParagraph paragraph = document.createParagraph();</span>
+<span class="fc" id="L104">        renderInlineContent(paragraph, node);</span>
+<span class="fc" id="L105">        return true;</span>
+    }
+
+    private boolean renderHeading(XWPFDocument document, JsonNode node) {
+<span class="fc" id="L109">        Optional&lt;String&gt; plainText = plainInlineText(node);</span>
+<span class="pc bpc" id="L110" title="1 of 2 branches missed.">        if (plainText.isEmpty()) {</span>
+<span class="nc" id="L111">            return false;</span>
+        }
+
+<span class="fc" id="L114">        int tipTapLevel = node.path(&quot;attrs&quot;).path(&quot;level&quot;).asInt(1);</span>
+<span class="fc" id="L115">        int headingLevel = internalHeadingLevel(tipTapLevel);</span>
+<span class="fc" id="L116">        XWPFParagraph paragraph = document.createParagraph();</span>
+<span class="fc" id="L117">        paragraph.setStyle(&quot;Heading&quot; + headingLevel);</span>
+<span class="fc" id="L118">        applyInternalHeadingParagraphFormat(paragraph, headingLevel);</span>
+<span class="fc" id="L119">        renderInlineContent(paragraph, node);</span>
+<span class="fc" id="L120">        applyInternalHeadingRunFormat(paragraph, headingLevel);</span>
+<span class="fc" id="L121">        return true;</span>
+    }
+
+    private boolean renderList(XWPFDocument document, JsonNode node, String unorderedMarker, int startNumber) {
+<span class="fc" id="L125">        boolean renderedContent = false;</span>
+<span class="fc" id="L126">        int number = startNumber;</span>
+
+<span class="fc bfc" id="L128" title="All 2 branches covered.">        for (JsonNode child : node.path(&quot;content&quot;)) {</span>
+<span class="pc bpc" id="L129" title="1 of 2 branches missed.">            if (!&quot;listItem&quot;.equals(child.path(&quot;type&quot;).asText())) {</span>
+<span class="fc" id="L130">                continue;</span>
+            }
+
+<span class="nc bnc" id="L133" title="All 2 branches missed.">            String marker = unorderedMarker == null ? number + &quot;. &quot; : unorderedMarker;</span>
+<span class="nc bnc" id="L134" title="All 4 branches missed.">            renderedContent = renderListItem(document, child, marker) || renderedContent;</span>
+<span class="nc" id="L135">            number++;</span>
+<span class="nc" id="L136">        }</span>
+
+<span class="fc" id="L138">        return renderedContent;</span>
+    }
+
+    private boolean renderListItem(XWPFDocument document, JsonNode node, String marker) {
+<span class="nc" id="L142">        boolean renderedContent = false;</span>
+<span class="nc" id="L143">        boolean usedMarker = false;</span>
+
+<span class="nc bnc" id="L145" title="All 2 branches missed.">        for (JsonNode child : node.path(&quot;content&quot;)) {</span>
+<span class="nc bnc" id="L146" title="All 2 branches missed.">            if (&quot;paragraph&quot;.equals(child.path(&quot;type&quot;).asText())) {</span>
+<span class="nc" id="L147">                Optional&lt;String&gt; plainText = plainInlineText(child);</span>
+<span class="nc bnc" id="L148" title="All 2 branches missed.">                if (plainText.isPresent()) {</span>
+<span class="nc" id="L149">                    XWPFParagraph paragraph = document.createParagraph();</span>
+<span class="nc bnc" id="L150" title="All 2 branches missed.">                    paragraph.createRun().setText(usedMarker ? &quot;  &quot; : marker);</span>
+<span class="nc" id="L151">                    renderInlineContent(paragraph, child);</span>
+<span class="nc" id="L152">                    usedMarker = true;</span>
+<span class="nc" id="L153">                    renderedContent = true;</span>
+<span class="nc" id="L154">                }</span>
+                continue;
+            }
+
+<span class="nc bnc" id="L158" title="All 4 branches missed.">            renderedContent = renderBlock(document, child) || renderedContent;</span>
+<span class="nc" id="L159">        }</span>
+
+<span class="nc" id="L161">        return renderedContent;</span>
+    }
+
+    private boolean renderBlockquote(XWPFDocument document, JsonNode node) {
+<span class="nc" id="L165">        boolean renderedContent = false;</span>
+
+<span class="nc bnc" id="L167" title="All 2 branches missed.">        for (JsonNode child : node.path(&quot;content&quot;)) {</span>
+<span class="nc" id="L168">            Optional&lt;String&gt; text = plainBlockText(child);</span>
+<span class="nc bnc" id="L169" title="All 2 branches missed.">            if (text.isEmpty()) {</span>
+<span class="nc" id="L170">                continue;</span>
+            }
+
+<span class="nc" id="L173">            XWPFParagraph paragraph = document.createParagraph();</span>
+<span class="nc" id="L174">            paragraph.setIndentationLeft(720);</span>
+<span class="nc bnc" id="L175" title="All 4 branches missed.">            if (&quot;paragraph&quot;.equals(child.path(&quot;type&quot;).asText()) || &quot;heading&quot;.equals(child.path(&quot;type&quot;).asText())) {</span>
+<span class="nc" id="L176">                renderInlineContent(paragraph, child);</span>
+            } else {
+<span class="nc" id="L178">                paragraph.createRun().setText(text.get());</span>
+            }
+<span class="nc" id="L180">            renderedContent = true;</span>
+<span class="nc" id="L181">        }</span>
+
+<span class="nc" id="L183">        return renderedContent;</span>
+    }
+
+    private boolean renderCodeBlock(XWPFDocument document, JsonNode node) {
+<span class="nc" id="L187">        String code = plainText(node);</span>
+<span class="nc bnc" id="L188" title="All 2 branches missed.">        if (code.isBlank()) {</span>
+<span class="nc" id="L189">            return false;</span>
+        }
+
+<span class="nc" id="L192">        XWPFParagraph paragraph = document.createParagraph();</span>
+<span class="nc" id="L193">        XWPFRun run = paragraph.createRun();</span>
+<span class="nc" id="L194">        run.setFontFamily(&quot;Courier New&quot;);</span>
+<span class="nc" id="L195">        run.setText(code.stripTrailing());</span>
+<span class="nc" id="L196">        return true;</span>
+    }
+
+    private void renderInlineContent(XWPFParagraph paragraph, JsonNode node) {
+<span class="fc bfc" id="L200" title="All 2 branches covered.">        for (JsonNode child : node.path(&quot;content&quot;)) {</span>
+<span class="fc" id="L201">            renderInlineNode(paragraph, child);</span>
+<span class="fc" id="L202">        }</span>
+<span class="fc" id="L203">    }</span>
+
+    private void renderInlineNode(XWPFParagraph paragraph, JsonNode node) {
+<span class="fc" id="L206">        String type = node.path(&quot;type&quot;).asText();</span>
+
+<span class="pc bpc" id="L208" title="1 of 2 branches missed.">        if (&quot;text&quot;.equals(type)) {</span>
+<span class="fc" id="L209">            XWPFRun run = paragraph.createRun();</span>
+<span class="fc" id="L210">            applyMarks(run, node.path(&quot;marks&quot;));</span>
+<span class="fc" id="L211">            run.setText(node.path(&quot;text&quot;).asText(&quot;&quot;));</span>
+        }
+
+<span class="pc bpc" id="L214" title="1 of 2 branches missed.">        if (&quot;hardBreak&quot;.equals(type)) {</span>
+<span class="nc" id="L215">            paragraph.createRun().addBreak();</span>
+        }
+<span class="fc" id="L217">    }</span>
+
+    private void applyMarks(XWPFRun run, JsonNode marks) {
+<span class="fc bfc" id="L220" title="All 2 branches covered.">        for (JsonNode mark : marks) {</span>
+<span class="fc" id="L221">            String markType = mark.path(&quot;type&quot;).asText();</span>
+<span class="fc bfc" id="L222" title="All 2 branches covered.">            if (&quot;bold&quot;.equals(markType)) {</span>
+<span class="fc" id="L223">                run.setBold(true);</span>
+            }
+<span class="fc bfc" id="L225" title="All 2 branches covered.">            if (&quot;italic&quot;.equals(markType)) {</span>
+<span class="fc" id="L226">                run.setItalic(true);</span>
+            }
+<span class="pc bpc" id="L228" title="1 of 2 branches missed.">            if (&quot;code&quot;.equals(markType)) {</span>
+<span class="nc" id="L229">                run.setFontFamily(&quot;Courier New&quot;);</span>
+            }
+<span class="pc bpc" id="L231" title="1 of 2 branches missed.">            if (&quot;strike&quot;.equals(markType)) {</span>
+<span class="nc" id="L232">                run.setStrikeThrough(true);</span>
+            }
+<span class="pc bpc" id="L234" title="1 of 2 branches missed.">            if (&quot;underline&quot;.equals(markType)) {</span>
+<span class="nc" id="L235">                run.setUnderline(UnderlinePatterns.SINGLE);</span>
+            }
+<span class="fc" id="L237">        }</span>
+<span class="fc" id="L238">    }</span>
+
+    private int internalHeadingLevel(int tipTapLevel) {
+<span class="fc bfc" id="L241" title="All 2 branches covered.">        if (tipTapLevel &lt;= 1) {</span>
+<span class="fc" id="L242">            return 3;</span>
+        }
+<span class="fc" id="L244">        return 4;</span>
+    }
+
+    private void applyInternalHeadingParagraphFormat(XWPFParagraph paragraph, int headingLevel) {
+<span class="fc bfc" id="L248" title="All 2 branches covered.">        if (headingLevel == 3) {</span>
+<span class="fc" id="L249">            paragraph.setSpacingBefore(160);</span>
+<span class="fc" id="L250">            paragraph.setSpacingAfter(80);</span>
+<span class="fc" id="L251">            return;</span>
+        }
+
+<span class="fc" id="L254">        paragraph.setSpacingBefore(120);</span>
+<span class="fc" id="L255">        paragraph.setSpacingAfter(60);</span>
+<span class="fc" id="L256">    }</span>
+
+    private void applyInternalHeadingRunFormat(XWPFParagraph paragraph, int headingLevel) {
+<span class="fc bfc" id="L259" title="All 2 branches covered.">        int fontSize = headingLevel == 3 ? 13 : 12;</span>
+<span class="fc bfc" id="L260" title="All 2 branches covered.">        for (XWPFRun run : paragraph.getRuns()) {</span>
+<span class="fc" id="L261">            run.setBold(true);</span>
+<span class="fc" id="L262">            run.setFontSize(fontSize);</span>
+<span class="fc" id="L263">        }</span>
+<span class="fc" id="L264">    }</span>
+
+    private Optional&lt;String&gt; plainInlineText(JsonNode node) {
+<span class="fc" id="L267">        String text = plainText(node);</span>
+<span class="pc bpc" id="L268" title="1 of 2 branches missed.">        return text.isBlank() ? Optional.empty() : Optional.of(text);</span>
+    }
+
+    private Optional&lt;String&gt; plainBlockText(JsonNode node) {
+<span class="nc" id="L272">        String text = plainText(node).strip();</span>
+<span class="nc bnc" id="L273" title="All 2 branches missed.">        return text.isBlank() ? Optional.empty() : Optional.of(text);</span>
+    }
+
+    private String plainText(JsonNode node) {
+<span class="fc" id="L277">        StringBuilder text = new StringBuilder();</span>
+<span class="fc" id="L278">        appendPlainText(node, text);</span>
+<span class="fc" id="L279">        return text.toString();</span>
+    }
+
+    private void appendPlainText(JsonNode node, StringBuilder text) {
+<span class="fc" id="L283">        String type = node.path(&quot;type&quot;).asText();</span>
+<span class="fc bfc" id="L284" title="All 2 branches covered.">        if (&quot;text&quot;.equals(type)) {</span>
+<span class="fc" id="L285">            text.append(node.path(&quot;text&quot;).asText(&quot;&quot;));</span>
+<span class="fc" id="L286">            return;</span>
+        }
+<span class="pc bpc" id="L288" title="1 of 2 branches missed.">        if (&quot;hardBreak&quot;.equals(type)) {</span>
+<span class="nc" id="L289">            text.append(&quot;\n&quot;);</span>
+<span class="nc" id="L290">            return;</span>
+        }
+
+<span class="fc bfc" id="L293" title="All 2 branches covered.">        for (JsonNode child : node.path(&quot;content&quot;)) {</span>
+<span class="fc" id="L294">            appendPlainText(child, text);</span>
+<span class="fc" id="L295">        }</span>
+<span class="fc" id="L296">    }</span>
+
+    private boolean hasUnsupportedTextContent(JsonNode node) {
+<span class="fc" id="L299">        String type = node.path(&quot;type&quot;).asText();</span>
+<span class="pc bpc" id="L300" title="3 of 4 branches missed.">        if (!isSupportedNode(type) &amp;&amp; hasTextContent(node)) {</span>
+<span class="nc" id="L301">            return true;</span>
+        }
+
+<span class="fc bfc" id="L304" title="All 2 branches covered.">        for (JsonNode child : node.path(&quot;content&quot;)) {</span>
+<span class="pc bpc" id="L305" title="1 of 2 branches missed.">            if (hasUnsupportedTextContent(child)) {</span>
+<span class="nc" id="L306">                return true;</span>
+            }
+<span class="fc" id="L308">        }</span>
+
+<span class="fc" id="L310">        return false;</span>
+    }
+
+    private boolean hasRenderableContent(JsonNode node) {
+<span class="fc" id="L314">        String type = node.path(&quot;type&quot;).asText();</span>
+<span class="pc bpc" id="L315" title="2 of 6 branches missed.">        if ((&quot;text&quot;.equals(type) &amp;&amp; !node.path(&quot;text&quot;).asText(&quot;&quot;).isBlank()) || &quot;horizontalRule&quot;.equals(type)) {</span>
+<span class="fc" id="L316">            return true;</span>
+        }
+
+<span class="fc bfc" id="L319" title="All 2 branches covered.">        for (JsonNode child : node.path(&quot;content&quot;)) {</span>
+<span class="pc bpc" id="L320" title="1 of 2 branches missed.">            if (hasRenderableContent(child)) {</span>
+<span class="fc" id="L321">                return true;</span>
+            }
+<span class="nc" id="L323">        }</span>
+
+<span class="fc" id="L325">        return false;</span>
+    }
+
+    private boolean isSupportedNode(String type) {
+<span class="fc bfc" id="L329" title="All 2 branches covered.">        return &quot;doc&quot;.equals(type)</span>
+<span class="fc bfc" id="L330" title="All 2 branches covered.">                || &quot;paragraph&quot;.equals(type)</span>
+<span class="fc bfc" id="L331" title="All 2 branches covered.">                || &quot;heading&quot;.equals(type)</span>
+<span class="fc bfc" id="L332" title="All 2 branches covered.">                || &quot;text&quot;.equals(type)</span>
+<span class="pc bpc" id="L333" title="1 of 2 branches missed.">                || &quot;hardBreak&quot;.equals(type)</span>
+<span class="pc bpc" id="L334" title="1 of 2 branches missed.">                || &quot;bulletList&quot;.equals(type)</span>
+<span class="nc bnc" id="L335" title="All 2 branches missed.">                || &quot;orderedList&quot;.equals(type)</span>
+<span class="nc bnc" id="L336" title="All 2 branches missed.">                || &quot;listItem&quot;.equals(type)</span>
+<span class="nc bnc" id="L337" title="All 2 branches missed.">                || &quot;blockquote&quot;.equals(type)</span>
+<span class="nc bnc" id="L338" title="All 2 branches missed.">                || &quot;codeBlock&quot;.equals(type)</span>
+<span class="pc bnc" id="L339" title="All 2 branches missed.">                || &quot;horizontalRule&quot;.equals(type);</span>
+    }
+
+    private boolean hasTextContent(JsonNode node) {
+<span class="nc bnc" id="L343" title="All 4 branches missed.">        if (&quot;text&quot;.equals(node.path(&quot;type&quot;).asText()) &amp;&amp; !node.path(&quot;text&quot;).asText(&quot;&quot;).isBlank()) {</span>
+<span class="nc" id="L344">            return true;</span>
+        }
+
+<span class="nc bnc" id="L347" title="All 2 branches missed.">        for (JsonNode child : node.path(&quot;content&quot;)) {</span>
+<span class="nc bnc" id="L348" title="All 2 branches missed.">            if (hasTextContent(child)) {</span>
+<span class="nc" id="L349">                return true;</span>
+            }
+<span class="nc" id="L351">        }</span>
+
+<span class="nc" id="L353">        return false;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { ErrorState, LoadingState } from "@/components/ui/feedback";
@@ -45,7 +45,7 @@ export function SceneVersionHistoryPanel({
     initialPageParam: 0,
     getNextPageParam: (lastPage) => (lastPage.hasNext ? lastPage.page + 1 : undefined),
   });
-  const versions = versionsQuery.data?.pages.flatMap((page) => page.items) ?? [];
+  const versions = useMemo(() => versionsQuery.data?.pages.flatMap((page) => page.items) ?? [], [versionsQuery.data]);
   const detailQuery = useQuery({
     queryKey: selectedVersionId ? queryKeys.sceneVersion(sceneId, selectedVersionId) : ["scenes", sceneId, "versions", "empty"],
     queryFn: () => getSceneVersion(sceneId, selectedVersionId as string),

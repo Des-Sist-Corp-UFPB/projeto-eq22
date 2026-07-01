@@ -1,0 +1,134 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="pt"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>Location.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">iwrite-backend</a> &gt; <a href="index.source.html" class="el_package">com.iwrite.location.entity</a> &gt; <span class="el_source">Location.java</span></div><h1>Location.java</h1><pre class="source lang-java linenums">package com.iwrite.location.entity;
+
+import com.iwrite.book.entity.Book;
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.FetchType;
+import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.GenerationType;
+import jakarta.persistence.Id;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.ManyToOne;
+import jakarta.persistence.PrePersist;
+import jakarta.persistence.PreUpdate;
+import jakarta.persistence.Table;
+
+import java.time.OffsetDateTime;
+import java.util.UUID;
+
+@Entity
+@Table(name = &quot;locations&quot;)
+<span class="fc" id="L21">public class Location {</span>
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.UUID)
+    private UUID id;
+
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @JoinColumn(name = &quot;book_id&quot;, nullable = false)
+    private Book book;
+
+    @Column(nullable = false)
+    private String name;
+
+    private String type;
+
+    @Column(columnDefinition = &quot;text&quot;)
+    private String description;
+
+    @Column(columnDefinition = &quot;text&quot;)
+    private String historyContext;
+
+    @Column(columnDefinition = &quot;text&quot;)
+    private String narrativeImportance;
+
+    @Column(columnDefinition = &quot;text&quot;)
+    private String notes;
+
+    @Column(nullable = false, updatable = false)
+    private OffsetDateTime createdAt;
+
+    @Column(nullable = false)
+    private OffsetDateTime updatedAt;
+
+    @PrePersist
+    void onCreate() {
+<span class="fc" id="L56">        OffsetDateTime now = OffsetDateTime.now();</span>
+<span class="fc" id="L57">        createdAt = now;</span>
+<span class="fc" id="L58">        updatedAt = now;</span>
+<span class="fc" id="L59">    }</span>
+
+    @PreUpdate
+    void onUpdate() {
+<span class="fc" id="L63">        updatedAt = OffsetDateTime.now();</span>
+<span class="fc" id="L64">    }</span>
+
+    public UUID getId() {
+<span class="fc" id="L67">        return id;</span>
+    }
+
+    public Book getBook() {
+<span class="fc" id="L71">        return book;</span>
+    }
+
+    public void setBook(Book book) {
+<span class="fc" id="L75">        this.book = book;</span>
+<span class="fc" id="L76">    }</span>
+
+    public String getName() {
+<span class="fc" id="L79">        return name;</span>
+    }
+
+    public void setName(String name) {
+<span class="fc" id="L83">        this.name = name;</span>
+<span class="fc" id="L84">    }</span>
+
+    public String getType() {
+<span class="fc" id="L87">        return type;</span>
+    }
+
+    public void setType(String type) {
+<span class="fc" id="L91">        this.type = type;</span>
+<span class="fc" id="L92">    }</span>
+
+    public String getDescription() {
+<span class="fc" id="L95">        return description;</span>
+    }
+
+    public void setDescription(String description) {
+<span class="fc" id="L99">        this.description = description;</span>
+<span class="fc" id="L100">    }</span>
+
+    public String getHistoryContext() {
+<span class="fc" id="L103">        return historyContext;</span>
+    }
+
+    public void setHistoryContext(String historyContext) {
+<span class="fc" id="L107">        this.historyContext = historyContext;</span>
+<span class="fc" id="L108">    }</span>
+
+    public String getNarrativeImportance() {
+<span class="fc" id="L111">        return narrativeImportance;</span>
+    }
+
+    public void setNarrativeImportance(String narrativeImportance) {
+<span class="fc" id="L115">        this.narrativeImportance = narrativeImportance;</span>
+<span class="fc" id="L116">    }</span>
+
+    public String getNotes() {
+<span class="fc" id="L119">        return notes;</span>
+    }
+
+    public void setNotes(String notes) {
+<span class="fc" id="L123">        this.notes = notes;</span>
+<span class="fc" id="L124">    }</span>
+
+    public OffsetDateTime getCreatedAt() {
+<span class="fc" id="L127">        return createdAt;</span>
+    }
+
+    public OffsetDateTime getUpdatedAt() {
+<span class="fc" id="L131">        return updatedAt;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

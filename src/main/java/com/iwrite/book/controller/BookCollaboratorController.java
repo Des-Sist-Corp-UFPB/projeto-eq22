@@ -1,5 +1,8 @@
 package com.iwrite.book.controller;
 
+import com.iwrite.audit.annotation.AuditedOperation;
+import com.iwrite.audit.entity.AuditAction;
+import com.iwrite.audit.entity.AuditResourceType;
 import com.iwrite.book.dto.AddBookCollaboratorRequest;
 import com.iwrite.book.dto.BookCollaboratorResponse;
 import com.iwrite.book.service.BookCollaboratorService;
@@ -34,6 +37,11 @@ public class BookCollaboratorController {
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
+    @AuditedOperation(
+            action = AuditAction.COLLABORATOR_ADDED,
+            resourceType = AuditResourceType.BOOK_COLLABORATOR,
+            resourceId = "#request.userId"
+    )
     public BookCollaboratorResponse add(
             @PathVariable UUID bookId,
             @Valid @RequestBody AddBookCollaboratorRequest request
@@ -43,6 +51,11 @@ public class BookCollaboratorController {
 
     @DeleteMapping("/{userId}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
+    @AuditedOperation(
+            action = AuditAction.COLLABORATOR_REMOVED,
+            resourceType = AuditResourceType.BOOK_COLLABORATOR,
+            resourceId = "#userId"
+    )
     public void remove(@PathVariable UUID bookId, @PathVariable UUID userId) {
         collaboratorService.remove(bookId, userId);
     }

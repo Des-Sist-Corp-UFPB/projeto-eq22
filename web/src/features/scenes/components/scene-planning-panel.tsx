@@ -1,6 +1,6 @@
 "use client";
 
-import { type FormEvent, useEffect, useState } from "react";
+import { type FormEvent, useEffect, useMemo, useState } from "react";
 import { FeedbackMessage } from "@/components/ui/feedback-message";
 import { Textarea } from "@/components/ui/textarea";
 import { useCharacters } from "@/features/characters/api/characters-hooks";
@@ -22,6 +22,7 @@ export function ScenePlanningPanel({ formId, bookId, scene }: ScenePlanningPanel
   const locationsQuery = useLocations(bookId);
   const itemsQuery = useItems(bookId);
   const planningMutation = useUpdateScenePlanning(bookId, scene.id);
+  const resetPlanningMutation = planningMutation.reset;
   const [goal, setGoal] = useState("");
   const [conflict, setConflict] = useState("");
   const [outcome, setOutcome] = useState("");
@@ -34,12 +35,15 @@ export function ScenePlanningPanel({ formId, bookId, scene }: ScenePlanningPanel
   const [itemIds, setItemIds] = useState<string[]>([]);
   const [itemSearch, setItemSearch] = useState("");
   const [itemsExpanded, setItemsExpanded] = useState(false);
-  const sceneParticipantIdsKey = scene.participantCharacters.map((character) => character.id).join("|");
-  const sceneItemIdsKey = scene.items.map((item) => item.id).join("|");
+  const sceneParticipantIds = useMemo(
+    () => scene.participantCharacters.map((character) => character.id),
+    [scene.participantCharacters]
+  );
+  const sceneItemIds = useMemo(() => scene.items.map((item) => item.id), [scene.items]);
 
   useEffect(() => {
-    planningMutation.reset();
-  }, [scene.id]);
+    resetPlanningMutation();
+  }, [resetPlanningMutation, scene.id]);
 
   useEffect(() => {
     setGoal(scene.goal ?? "");
@@ -48,10 +52,10 @@ export function ScenePlanningPanel({ formId, bookId, scene }: ScenePlanningPanel
     setPlanningNotes(scene.planningNotes ?? "");
     setPovCharacterId(scene.povCharacter?.id ?? "");
     setMainLocationId(scene.mainLocation?.id ?? "");
-    setParticipantCharacterIds(scene.participantCharacters.map((character) => character.id));
+    setParticipantCharacterIds(sceneParticipantIds);
     setParticipantSearch("");
     setParticipantsExpanded(false);
-    setItemIds(scene.items.map((item) => item.id));
+    setItemIds(sceneItemIds);
     setItemSearch("");
     setItemsExpanded(false);
   }, [
@@ -62,8 +66,8 @@ export function ScenePlanningPanel({ formId, bookId, scene }: ScenePlanningPanel
     scene.planningNotes,
     scene.povCharacter?.id,
     scene.mainLocation?.id,
-    sceneParticipantIdsKey,
-    sceneItemIdsKey,
+    sceneParticipantIds,
+    sceneItemIds,
   ]);
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {

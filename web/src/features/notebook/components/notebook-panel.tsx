@@ -1,6 +1,6 @@
 "use client";
 
-import { type FormEvent, useEffect, useMemo, useState } from "react";
+import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -701,12 +701,19 @@ function NotebookNoteForm({
 }) {
   const [form, setForm] = useState<NoteFormState>(emptyForm);
   const [validationMessage, setValidationMessage] = useState<string | null>(null);
+  const activeNoteIdRef = useRef<string | null | undefined>(undefined);
   const isEditing = Boolean(note);
 
   useEffect(() => {
+    const noteId = note?.id ?? null;
+    if (activeNoteIdRef.current === noteId) {
+      return;
+    }
+
+    activeNoteIdRef.current = noteId;
     setForm(note ? toFormState(note) : emptyForm);
     setValidationMessage(null);
-  }, [note?.id]);
+  }, [note]);
 
   useEffect(() => {
     if (!form.categoryId) {

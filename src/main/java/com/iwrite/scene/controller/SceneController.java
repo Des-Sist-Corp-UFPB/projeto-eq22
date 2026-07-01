@@ -1,5 +1,8 @@
 package com.iwrite.scene.controller;
 
+import com.iwrite.audit.annotation.AuditedOperation;
+import com.iwrite.audit.entity.AuditAction;
+import com.iwrite.audit.entity.AuditResourceType;
 import com.iwrite.common.dto.ReorderRequest;
 import com.iwrite.scene.dto.SceneAnalysisRequest;
 import com.iwrite.scene.dto.SceneAnalysisResponse;
@@ -38,6 +41,11 @@ public class SceneController {
 
     @PostMapping("/chapters/{chapterId}/scenes")
     @ResponseStatus(HttpStatus.CREATED)
+    @AuditedOperation(
+            action = AuditAction.SCENE_CREATED,
+            resourceType = AuditResourceType.SCENE,
+            resourceId = "#result?.id"
+    )
     public SceneResponse create(@PathVariable UUID chapterId, @Valid @RequestBody SceneRequest request) {
         return sceneService.create(chapterId, request);
     }
@@ -48,21 +56,41 @@ public class SceneController {
     }
 
     @PatchMapping("/scenes/{sceneId}")
+    @AuditedOperation(
+            action = AuditAction.SCENE_UPDATED,
+            resourceType = AuditResourceType.SCENE,
+            resourceId = "#sceneId"
+    )
     public SceneResponse update(@PathVariable UUID sceneId, @Valid @RequestBody SceneUpdateRequest request) {
         return sceneService.update(sceneId, request);
     }
 
     @PatchMapping("/scenes/{sceneId}/content")
+    @AuditedOperation(
+            action = AuditAction.SCENE_CONTENT_UPDATED,
+            resourceType = AuditResourceType.SCENE,
+            resourceId = "#sceneId"
+    )
     public SceneResponse updateContent(@PathVariable UUID sceneId, @Valid @RequestBody SceneContentRequest request) {
         return sceneService.updateContent(sceneId, request);
     }
 
     @PatchMapping("/scenes/{sceneId}/planning")
+    @AuditedOperation(
+            action = AuditAction.SCENE_PLANNING_UPDATED,
+            resourceType = AuditResourceType.SCENE,
+            resourceId = "#sceneId"
+    )
     public SceneResponse updatePlanning(@PathVariable UUID sceneId, @Valid @RequestBody ScenePlanningRequest request) {
         return sceneService.updatePlanning(sceneId, request);
     }
 
     @PostMapping("/scenes/{sceneId}/ai-analysis")
+    @AuditedOperation(
+            action = AuditAction.OPENAI_SCENE_ANALYSIS,
+            resourceType = AuditResourceType.SCENE,
+            resourceId = "#sceneId"
+    )
     public SceneAnalysisResponse analyze(
             @PathVariable UUID sceneId,
             @Valid @RequestBody(required = false) SceneAnalysisRequest request
@@ -78,6 +106,11 @@ public class SceneController {
 
     @DeleteMapping("/scenes/{sceneId}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
+    @AuditedOperation(
+            action = AuditAction.SCENE_DELETED,
+            resourceType = AuditResourceType.SCENE,
+            resourceId = "#sceneId"
+    )
     public void delete(@PathVariable UUID sceneId) {
         sceneService.delete(sceneId);
     }

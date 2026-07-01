@@ -808,7 +808,7 @@ function buildWritingProgressChartEntries(
 }
 
 function buildChartGeometryBuckets(entries: WritingProgressChartEntry[], chartReference: number): WritingProgressChartBucket[] {
-  return entries.map((entry, index) => {
+  return entries.map((entry) => {
     const positiveWordCount = Math.max(entry.productiveWordCountChange, 0);
     const progressPercent = chartReference > 0 ? clampPercent((positiveWordCount * 100) / chartReference) : 0;
     return {

@@ -1,0 +1,273 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="pt"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>DailyWritingProgressService.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">iwrite-backend</a> &gt; <a href="index.source.html" class="el_package">com.iwrite.writingprogress.service</a> &gt; <span class="el_source">DailyWritingProgressService.java</span></div><h1>DailyWritingProgressService.java</h1><pre class="source lang-java linenums">package com.iwrite.writingprogress.service;
+
+import com.iwrite.book.entity.Book;
+import com.iwrite.book.service.BookService;
+import com.iwrite.dashboard.dto.WritingConsistencyResponse;
+import com.iwrite.user.context.CurrentUserMembershipService;
+import com.iwrite.user.repository.UserRepository;
+import com.iwrite.writingprogress.entity.BookWritingSchedule;
+import com.iwrite.writingprogress.entity.DailyWritingProgress;
+import com.iwrite.writingprogress.repository.DailyWritingProgressRepository;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.time.LocalDate;
+import java.util.List;
+import java.util.Map;
+import java.util.function.Function;
+import java.util.stream.Collectors;
+import java.util.UUID;
+
+@Service
+public class DailyWritingProgressService {
+
+    private static final int WRITING_DAY_THRESHOLD = 0;
+    private final BookService bookService;
+    private final DailyWritingProgressRepository progressRepository;
+    private final WritingScheduleService writingScheduleService;
+    private final CurrentUserMembershipService currentUserMembershipService;
+    private final UserRepository userRepository;
+    private final WritingDayResolver writingDayResolver;
+
+    public DailyWritingProgressService(
+            BookService bookService,
+            DailyWritingProgressRepository progressRepository,
+            WritingScheduleService writingScheduleService,
+            CurrentUserMembershipService currentUserMembershipService,
+            UserRepository userRepository,
+            WritingDayResolver writingDayResolver
+<span class="fc" id="L39">    ) {</span>
+<span class="fc" id="L40">        this.bookService = bookService;</span>
+<span class="fc" id="L41">        this.progressRepository = progressRepository;</span>
+<span class="fc" id="L42">        this.writingScheduleService = writingScheduleService;</span>
+<span class="fc" id="L43">        this.currentUserMembershipService = currentUserMembershipService;</span>
+<span class="fc" id="L44">        this.userRepository = userRepository;</span>
+<span class="fc" id="L45">        this.writingDayResolver = writingDayResolver;</span>
+<span class="fc" id="L46">    }</span>
+
+    @Transactional
+    public void recordWordCountChange(UUID bookId, int totalBefore, int totalAfter) {
+<span class="nc bnc" id="L50" title="All 2 branches missed.">        if (totalBefore == totalAfter) {</span>
+<span class="nc" id="L51">            return;</span>
+        }
+
+<span class="nc" id="L54">        Book book = bookService.getBook(bookId);</span>
+<span class="nc" id="L55">        UUID userId = currentUserMembershipService.requireCurrentUserMemberId();</span>
+<span class="nc" id="L56">        LocalDate progressDate = today();</span>
+
+<span class="nc" id="L58">        DailyWritingProgress progress = progressRepository.findByUser_IdAndBookIdAndProgressDate(userId, bookId, progressDate)</span>
+<span class="nc" id="L59">                .orElseGet(() -&gt; createProgress(book, userId, progressDate, totalBefore));</span>
+
+<span class="nc" id="L61">        progress.setEndingManuscriptWordCount(totalAfter);</span>
+<span class="nc" id="L62">        progress.setProductiveWordCountChange(totalAfter - progress.getStartingManuscriptWordCount());</span>
+<span class="nc" id="L63">        progressRepository.save(progress);</span>
+<span class="nc" id="L64">    }</span>
+
+    @Transactional(readOnly = true)
+    public DailyWritingProgress getTodayProgressOrEmpty(UUID bookId, int currentTotalWordCount) {
+<span class="fc" id="L68">        Book book = bookService.getBook(bookId);</span>
+<span class="fc" id="L69">        UUID userId = currentUserMembershipService.requireCurrentUserMemberId();</span>
+<span class="fc" id="L70">        LocalDate progressDate = today();</span>
+<span class="fc" id="L71">        return progressRepository.findByUser_IdAndBookIdAndProgressDate(userId, bookId, progressDate)</span>
+<span class="fc" id="L72">                .orElseGet(() -&gt; emptyTodayProgress(book, userId, progressDate, currentTotalWordCount));</span>
+    }
+
+    @Transactional(readOnly = true)
+    public List&lt;DailyWritingProgress&gt; getRecentProgress(UUID bookId) {
+<span class="nc" id="L77">        return getRecentProgress(bookId, WritingProgressPeriod.DEFAULT);</span>
+    }
+
+    @Transactional(readOnly = true)
+    public List&lt;DailyWritingProgress&gt; getRecentProgress(UUID bookId, WritingProgressPeriod period) {
+<span class="fc" id="L82">        bookService.getBook(bookId);</span>
+<span class="fc" id="L83">        UUID userId = currentUserMembershipService.requireCurrentUserMemberId();</span>
+<span class="fc" id="L84">        LocalDate endDate = today();</span>
+<span class="fc" id="L85">        LocalDate startDate = period.startDateInclusive(endDate);</span>
+<span class="fc" id="L86">        return progressRepository.findByUser_IdAndBookIdAndProgressDateBetweenOrderByProgressDateDesc(userId, bookId, startDate, endDate);</span>
+    }
+
+    @Transactional
+    public WritingConsistencyResponse getWritingConsistency(UUID bookId) {
+<span class="nc" id="L91">        return getWritingConsistency(bookId, WritingProgressPeriod.DEFAULT);</span>
+    }
+
+    @Transactional
+    public WritingConsistencyResponse getWritingConsistency(UUID bookId, WritingProgressPeriod period) {
+<span class="fc" id="L96">        Book book = bookService.getBook(bookId);</span>
+<span class="fc" id="L97">        UUID userId = currentUserMembershipService.requireCurrentUserMemberId();</span>
+<span class="fc" id="L98">        LocalDate today = today();</span>
+<span class="fc" id="L99">        LocalDate earliestScheduleDate = writingScheduleService.getEarliestEffectiveFrom(book);</span>
+<span class="fc" id="L100">        LocalDate calculationStartDate = progressRepository.findFirstByUser_IdAndBookIdOrderByProgressDateAsc(userId, bookId)</span>
+<span class="fc" id="L101">                .map(DailyWritingProgress::getProgressDate)</span>
+<span class="fc" id="L102">                .filter(progressDate -&gt; progressDate.isBefore(earliestScheduleDate))</span>
+<span class="fc" id="L103">                .orElse(earliestScheduleDate);</span>
+<span class="fc" id="L104">        LocalDate recentStartDate = period.startDateInclusive(today);</span>
+<span class="fc" id="L105">        List&lt;DailyWritingProgress&gt; progressHistory = progressRepository</span>
+<span class="fc" id="L106">                .findByUser_IdAndBookIdAndProgressDateBetweenOrderByProgressDateAsc(userId, bookId, calculationStartDate, today);</span>
+<span class="fc" id="L107">        Map&lt;LocalDate, DailyWritingProgress&gt; progressByDate = progressHistory.stream()</span>
+<span class="fc" id="L108">                .collect(Collectors.toMap(DailyWritingProgress::getProgressDate, Function.identity()));</span>
+<span class="fc" id="L109">        List&lt;BookWritingSchedule&gt; fullScheduleHistory =</span>
+<span class="fc" id="L110">                writingScheduleService.getSchedulesForRange(book, calculationStartDate, today);</span>
+<span class="fc" id="L111">        List&lt;BookWritingSchedule&gt; recentScheduleHistory =</span>
+<span class="fc" id="L112">                writingScheduleService.getSchedulesForRange(book, recentStartDate, today);</span>
+
+<span class="fc" id="L114">        int recentWritingDays = countPositiveProgressBetween(userId, bookId, recentStartDate, today);</span>
+<span class="fc" id="L115">        int recentWindowDays = Math.toIntExact(java.time.temporal.ChronoUnit.DAYS.between(recentStartDate, today) + 1);</span>
+<span class="fc" id="L116">        int recentPlannedWritingDays = countPlannedDays(recentStartDate, today, recentScheduleHistory);</span>
+<span class="fc" id="L117">        int recentSuccessfulPlannedWritingDays = countSuccessfulPlannedDays(recentStartDate, today, progressByDate, recentScheduleHistory);</span>
+
+<span class="fc" id="L119">        return new WritingConsistencyResponse(</span>
+<span class="fc" id="L120">                currentStreakDays(calculationStartDate, today, progressByDate, fullScheduleHistory),</span>
+<span class="fc" id="L121">                bestStreakDays(calculationStartDate, today, progressByDate, fullScheduleHistory),</span>
+<span class="fc" id="L122">                countPositiveProgressBetween(userId, bookId, today.withDayOfMonth(1), today),</span>
+                recentWindowDays,
+                recentWritingDays,
+<span class="pc bpc" id="L125" title="1 of 2 branches missed.">                recentWindowDays == 0 ? 0.0 : (recentWritingDays * 100.0) / recentWindowDays,</span>
+                recentPlannedWritingDays,
+                recentSuccessfulPlannedWritingDays,
+<span class="pc bpc" id="L128" title="1 of 2 branches missed.">                recentPlannedWritingDays == 0 ? 0.0 : (recentSuccessfulPlannedWritingDays * 100.0) / recentPlannedWritingDays</span>
+        );
+    }
+
+    private int currentStreakDays(
+            LocalDate earliestScheduleDate,
+            LocalDate today,
+            Map&lt;LocalDate, DailyWritingProgress&gt; progressByDate,
+            List&lt;BookWritingSchedule&gt; schedules
+    ) {
+<span class="fc" id="L138">        int streakDays = 0;</span>
+<span class="fc" id="L139">        LocalDate progressDate = today;</span>
+
+<span class="fc bfc" id="L141" title="All 2 branches covered.">        while (!progressDate.isBefore(earliestScheduleDate)) {</span>
+<span class="fc bfc" id="L142" title="All 2 branches covered.">            if (!writingScheduleService.isPlannedWritingDay(progressDate, schedules)) {</span>
+<span class="fc" id="L143">                progressDate = progressDate.minusDays(1);</span>
+<span class="fc" id="L144">                continue;</span>
+            }
+
+<span class="fc" id="L147">            DailyWritingProgress progress = progressByDate.get(progressDate);</span>
+<span class="fc bfc" id="L148" title="All 4 branches covered.">            if (progressDate.equals(today) &amp;&amp; !isProductiveWritingDay(progress)) {</span>
+<span class="fc" id="L149">                progressDate = progressDate.minusDays(1);</span>
+<span class="fc" id="L150">                continue;</span>
+            }
+<span class="fc bfc" id="L152" title="All 2 branches covered.">            if (isProductiveWritingDay(progress)) {</span>
+<span class="fc" id="L153">                streakDays++;</span>
+<span class="fc" id="L154">                progressDate = progressDate.minusDays(1);</span>
+<span class="fc" id="L155">                continue;</span>
+            }
+
+            break;
+        }
+
+<span class="fc" id="L161">        return streakDays;</span>
+    }
+
+    private int bestStreakDays(
+            LocalDate earliestScheduleDate,
+            LocalDate today,
+            Map&lt;LocalDate, DailyWritingProgress&gt; progressByDate,
+            List&lt;BookWritingSchedule&gt; schedules
+    ) {
+<span class="fc" id="L170">        int bestStreakDays = 0;</span>
+<span class="fc" id="L171">        int currentStreakDays = 0;</span>
+<span class="fc" id="L172">        LocalDate progressDate = earliestScheduleDate;</span>
+
+<span class="fc bfc" id="L174" title="All 2 branches covered.">        while (!progressDate.isAfter(today)) {</span>
+<span class="fc bfc" id="L175" title="All 2 branches covered.">            if (!writingScheduleService.isPlannedWritingDay(progressDate, schedules)) {</span>
+<span class="fc" id="L176">                progressDate = progressDate.plusDays(1);</span>
+<span class="fc" id="L177">                continue;</span>
+            }
+
+<span class="fc" id="L180">            DailyWritingProgress progress = progressByDate.get(progressDate);</span>
+<span class="fc bfc" id="L181" title="All 2 branches covered.">            if (isProductiveWritingDay(progress)) {</span>
+<span class="fc" id="L182">                currentStreakDays++;</span>
+<span class="fc" id="L183">                bestStreakDays = Math.max(bestStreakDays, currentStreakDays);</span>
+            } else {
+<span class="fc" id="L185">                currentStreakDays = 0;</span>
+            }
+
+<span class="fc" id="L188">            progressDate = progressDate.plusDays(1);</span>
+<span class="fc" id="L189">        }</span>
+
+<span class="fc" id="L191">        return bestStreakDays;</span>
+    }
+
+    private int countPlannedDays(
+            LocalDate startDate,
+            LocalDate endDate,
+            List&lt;BookWritingSchedule&gt; schedules
+    ) {
+<span class="fc" id="L199">        int plannedDays = 0;</span>
+<span class="fc" id="L200">        LocalDate progressDate = startDate;</span>
+<span class="fc bfc" id="L201" title="All 2 branches covered.">        while (!progressDate.isAfter(endDate)) {</span>
+<span class="fc bfc" id="L202" title="All 2 branches covered.">            if (writingScheduleService.isPlannedWritingDay(progressDate, schedules)) {</span>
+<span class="fc" id="L203">                plannedDays++;</span>
+            }
+<span class="fc" id="L205">            progressDate = progressDate.plusDays(1);</span>
+        }
+<span class="fc" id="L207">        return plannedDays;</span>
+    }
+
+    private int countSuccessfulPlannedDays(
+            LocalDate startDate,
+            LocalDate endDate,
+            Map&lt;LocalDate, DailyWritingProgress&gt; progressByDate,
+            List&lt;BookWritingSchedule&gt; schedules
+    ) {
+<span class="fc" id="L216">        int successfulPlannedDays = 0;</span>
+<span class="fc" id="L217">        LocalDate progressDate = startDate;</span>
+<span class="fc bfc" id="L218" title="All 2 branches covered.">        while (!progressDate.isAfter(endDate)) {</span>
+<span class="fc" id="L219">            DailyWritingProgress progress = progressByDate.get(progressDate);</span>
+<span class="fc bfc" id="L220" title="All 2 branches covered.">            if (writingScheduleService.isPlannedWritingDay(progressDate, schedules)</span>
+<span class="fc bfc" id="L221" title="All 2 branches covered.">                    &amp;&amp; isProductiveWritingDay(progress)) {</span>
+<span class="fc" id="L222">                successfulPlannedDays++;</span>
+            }
+<span class="fc" id="L224">            progressDate = progressDate.plusDays(1);</span>
+<span class="fc" id="L225">        }</span>
+<span class="fc" id="L226">        return successfulPlannedDays;</span>
+    }
+
+    private int countPositiveProgressBetween(UUID userId, UUID bookId, LocalDate startDate, LocalDate endDate) {
+<span class="fc" id="L230">        return Math.toIntExact(progressRepository.countByUser_IdAndBookIdAndProgressDateBetweenAndProductiveWordCountChangeGreaterThan(</span>
+                userId,
+                bookId,
+                startDate,
+                endDate,
+                WRITING_DAY_THRESHOLD
+        ));
+    }
+
+    private boolean isProductiveWritingDay(DailyWritingProgress progress) {
+<span class="fc bfc" id="L240" title="All 4 branches covered.">        return progress != null &amp;&amp; progress.getProductiveWordCountChange() &gt; WRITING_DAY_THRESHOLD;</span>
+    }
+
+    private DailyWritingProgress createProgress(Book book, UUID userId, LocalDate progressDate, int totalBefore) {
+<span class="nc" id="L244">        DailyWritingProgress progress = new DailyWritingProgress();</span>
+<span class="nc" id="L245">        progress.setBook(book);</span>
+<span class="nc" id="L246">        progress.setUser(userRepository.getReferenceById(userId));</span>
+<span class="nc" id="L247">        progress.setProgressDate(progressDate);</span>
+<span class="nc" id="L248">        progress.setDailyTargetWordCount(book.getDailyTargetWordCount());</span>
+<span class="nc" id="L249">        progress.setStartingManuscriptWordCount(totalBefore);</span>
+<span class="nc" id="L250">        progress.setEndingManuscriptWordCount(totalBefore);</span>
+<span class="nc" id="L251">        progress.setProductiveWordCountChange(0);</span>
+<span class="nc" id="L252">        progress.setManuscriptAdjustmentWordCount(0);</span>
+<span class="nc" id="L253">        return progress;</span>
+    }
+
+    private DailyWritingProgress emptyTodayProgress(Book book, UUID userId, LocalDate progressDate, int currentTotalWordCount) {
+<span class="fc" id="L257">        DailyWritingProgress progress = new DailyWritingProgress();</span>
+<span class="fc" id="L258">        progress.setBook(book);</span>
+<span class="fc" id="L259">        progress.setUser(userRepository.getReferenceById(userId));</span>
+<span class="fc" id="L260">        progress.setProgressDate(progressDate);</span>
+<span class="fc" id="L261">        progress.setDailyTargetWordCount(book.getDailyTargetWordCount());</span>
+<span class="fc" id="L262">        progress.setStartingManuscriptWordCount(currentTotalWordCount);</span>
+<span class="fc" id="L263">        progress.setEndingManuscriptWordCount(currentTotalWordCount);</span>
+<span class="fc" id="L264">        progress.setProductiveWordCountChange(0);</span>
+<span class="fc" id="L265">        progress.setManuscriptAdjustmentWordCount(0);</span>
+<span class="fc" id="L266">        return progress;</span>
+    }
+
+    public LocalDate today() {
+<span class="fc" id="L270">        return writingDayResolver.currentWritingDate();</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

@@ -1,4 +1,8 @@
 spring:
+  http:
+    client:
+      connect-timeout: ${OPENAI_CONNECT_TIMEOUT:5s}
+      read-timeout: ${OPENAI_READ_TIMEOUT:60s}
   ai:
     model:
       chat: ${SPRING_AI_MODEL_CHAT:none}

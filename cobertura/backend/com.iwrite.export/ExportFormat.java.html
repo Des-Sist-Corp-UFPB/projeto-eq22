@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="pt"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ExportFormat.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">iwrite-backend</a> &gt; <a href="index.source.html" class="el_package">com.iwrite.export</a> &gt; <span class="el_source">ExportFormat.java</span></div><h1>ExportFormat.java</h1><pre class="source lang-java linenums">package com.iwrite.export;
+
+import com.iwrite.common.exception.BadRequestException;
+import org.springframework.http.MediaType;
+
+import java.util.Locale;
+
+<span class="fc" id="L8">public enum ExportFormat {</span>
+<span class="fc" id="L9">    TXT(&quot;txt&quot;, MediaType.parseMediaType(&quot;text/plain; charset=UTF-8&quot;)),</span>
+<span class="fc" id="L10">    MD(&quot;md&quot;, MediaType.parseMediaType(&quot;text/markdown; charset=UTF-8&quot;)),</span>
+<span class="fc" id="L11">    DOCX(&quot;docx&quot;, MediaType.parseMediaType(&quot;application/vnd.openxmlformats-officedocument.wordprocessingml.document&quot;));</span>
+
+    private final String extension;
+    private final MediaType contentType;
+
+<span class="fc" id="L16">    ExportFormat(String extension, MediaType contentType) {</span>
+<span class="fc" id="L17">        this.extension = extension;</span>
+<span class="fc" id="L18">        this.contentType = contentType;</span>
+<span class="fc" id="L19">    }</span>
+
+    public static ExportFormat parse(String value) {
+<span class="pc bpc" id="L22" title="2 of 4 branches missed.">        if (value == null || value.isBlank()) {</span>
+<span class="nc" id="L23">            return MD;</span>
+        }
+
+<span class="fc" id="L26">        String normalizedValue = value.trim().toLowerCase(Locale.ROOT);</span>
+<span class="fc bfc" id="L27" title="All 4 branches covered.">        return switch (normalizedValue) {</span>
+<span class="fc" id="L28">            case &quot;txt&quot; -&gt; TXT;</span>
+<span class="fc" id="L29">            case &quot;md&quot; -&gt; MD;</span>
+<span class="fc" id="L30">            case &quot;docx&quot; -&gt; DOCX;</span>
+<span class="fc" id="L31">            default -&gt; throw new BadRequestException(&quot;Unsupported export format: &quot; + value);</span>
+        };
+    }
+
+    public String extension() {
+<span class="fc" id="L36">        return extension;</span>
+    }
+
+    public MediaType contentType() {
+<span class="fc" id="L40">        return contentType;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

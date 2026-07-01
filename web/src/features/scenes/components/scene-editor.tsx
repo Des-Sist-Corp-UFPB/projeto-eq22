@@ -129,6 +129,7 @@ export function SceneEditor({
       void queryClient.invalidateQueries({ queryKey: queryKeys.outline(bookId) });
     },
   });
+  const resetMetadataMutation = metadataMutation.reset;
 
   const contentMutation = useMutation({
     mutationFn: ({ targetSceneId, contentJson, contentText, source, expectedContentRevision, operationId }: SaveContentVariables) =>
@@ -149,6 +150,7 @@ export function SceneEditor({
         operationId,
       }),
   });
+  const resetRestoreMutation = restoreMutation.reset;
 
   const deleteMutation = useMutation({
     mutationFn: () => deleteScene(sceneId as string),
@@ -311,9 +313,9 @@ export function SceneEditor({
     lastSavedContentTextRef.current = "";
     contentRevisionRef.current = 0;
     pendingRemoteContentRef.current = null;
-    metadataMutation.reset();
-    contentMutation.reset();
-    restoreMutation.reset();
+    resetMetadataMutation();
+    resetContentMutation();
+    resetRestoreMutation();
     setRestoreError(null);
     setRestoreWorkflowPending(false);
     setTitle("");
@@ -328,7 +330,7 @@ export function SceneEditor({
     setLoadedSceneId(null);
     setIsHistoryOpen(false);
     setEditorContentVersion((version) => version + 1);
-  }, [cancelQueuedAutosaves, sceneId]);
+  }, [cancelQueuedAutosaves, resetContentMutation, resetMetadataMutation, resetRestoreMutation, sceneId]);
 
   useEffect(() => {
     const queriedScene = sceneQuery.data;

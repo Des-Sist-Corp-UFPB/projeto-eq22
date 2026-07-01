@@ -177,7 +177,7 @@ export function TiptapEditor({
 }: TiptapEditorProps) {
   const initialContent = useMemo(
     () => parseContentJson(initialContentJson) ?? plainTextToDocument(initialContentText ?? ""),
-    [contentKey, initialContentJson, initialContentText]
+    [initialContentJson, initialContentText]
   );
 
   const editor = useEditor({
@@ -203,7 +203,7 @@ export function TiptapEditor({
     }
 
     editor.commands.setContent(initialContent, { emitUpdate: false });
-  }, [contentKey, editor]);
+  }, [contentKey, editor, initialContent]);
 
   return (
     <div>

@@ -1,5 +1,8 @@
 package com.iwrite.sceneversion.controller;
 
+import com.iwrite.audit.annotation.AuditedOperation;
+import com.iwrite.audit.entity.AuditAction;
+import com.iwrite.audit.entity.AuditResourceType;
 import com.iwrite.scene.dto.SceneResponse;
 import com.iwrite.scene.service.SceneService;
 import com.iwrite.sceneversion.dto.SceneVersionDetailResponse;
@@ -44,6 +47,11 @@ public class SceneVersionController {
     }
 
     @PostMapping("/scenes/{sceneId}/versions/{versionId}/restore")
+    @AuditedOperation(
+            action = AuditAction.SCENE_VERSION_RESTORED,
+            resourceType = AuditResourceType.SCENE,
+            resourceId = "#sceneId"
+    )
     public SceneResponse restoreVersion(
             @PathVariable UUID sceneId,
             @PathVariable UUID versionId,

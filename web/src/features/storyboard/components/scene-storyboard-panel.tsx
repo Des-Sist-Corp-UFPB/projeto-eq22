@@ -8,7 +8,6 @@ import type { BookOutline } from "@/features/outline/types";
 import {
   buildStoryboardModel,
   NO_POV_LANE_ID,
-  type StoryboardChapter,
   type StoryboardLane,
   type StoryboardModel,
   type StoryboardScenePlacement,
