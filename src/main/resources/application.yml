@@ -54,6 +54,10 @@ logging:
 
 iwrite:
   ai:
+    audit:
+      pricing:
+        enabled: ${IWRITE_AI_PRICING_ENABLED:false}
+        currency: ${IWRITE_AI_PRICING_CURRENCY:USD}
     openai:
       chat:
         options:
