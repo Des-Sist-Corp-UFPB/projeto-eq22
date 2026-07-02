@@ -86,7 +86,7 @@ public class LlmExecutionGateway {
                 throw failure;
             }
 
-            String effectiveModel = result.model() != null ? result.model() : spec.model();
+            String effectiveModel = effectiveModel(result.model(), spec.model(), traceId);
             LlmExecutionCompletion completion = LlmExecutionCompletion.success(
                     effectiveModel,
                     OffsetDateTime.now(clock),
@@ -194,6 +194,17 @@ public class LlmExecutionGateway {
             );
             return null;
         }
+    }
+
+    private String effectiveModel(String reportedModel, String specModel, UUID traceId) {
+        if (reportedModel == null) {
+            return specModel;
+        }
+        if (LlmExecutionSpec.isValidModel(reportedModel)) {
+            return reportedModel;
+        }
+        LOGGER.warn("Ignoring invalid provider-reported model metadata traceId={}", traceId);
+        return specModel;
     }
 
     private void requireNoActiveTransaction() {

@@ -115,6 +115,54 @@ class LlmExecutionGatewayTest {
     }
 
     @Test
+    void valid128CharacterProviderModelIsAccepted() {
+        UUID auditId = stubStartedAudit();
+        when(auditRecorder.complete(eq(auditId), any())).thenReturn(true);
+        String providerModel = "m".repeat(128);
+
+        gateway.execute(spec(), context -> LlmCallResult.of("analysis").withModel(providerModel));
+
+        LlmExecutionCompletion completion = capturedCompletion(auditId);
+        assertThat(completion.status()).isEqualTo(LlmExecutionStatus.SUCCEEDED);
+        assertThat(completion.model()).isEqualTo(providerModel);
+    }
+
+    @Test
+    void providerModelAbove128CharactersFallsBackToSpecModelAndCompletesAudit() {
+        UUID auditId = stubStartedAudit();
+        when(auditRecorder.complete(eq(auditId), any())).thenReturn(true);
+
+        gateway.execute(spec(), context -> LlmCallResult.of("analysis").withModel("m".repeat(129)));
+
+        LlmExecutionCompletion completion = capturedCompletion(auditId);
+        assertThat(completion.status()).isEqualTo(LlmExecutionStatus.SUCCEEDED);
+        assertThat(completion.status()).isNotEqualTo(LlmExecutionStatus.STARTED);
+        assertThat(completion.model()).isEqualTo(spec().model());
+    }
+
+    @Test
+    void invalidFormatProviderModelFallsBackToSpecModel() {
+        UUID auditId = stubStartedAudit();
+        when(auditRecorder.complete(eq(auditId), any())).thenReturn(true);
+
+        gateway.execute(spec(), context -> LlmCallResult.of("analysis").withModel("invalid model"));
+
+        LlmExecutionCompletion completion = capturedCompletion(auditId);
+        assertThat(completion.status()).isEqualTo(LlmExecutionStatus.SUCCEEDED);
+        assertThat(completion.model()).isEqualTo(spec().model());
+    }
+
+    @Test
+    void nullProviderModelUsesSpecModel() {
+        UUID auditId = stubStartedAudit();
+        when(auditRecorder.complete(eq(auditId), any())).thenReturn(true);
+
+        gateway.execute(spec(), context -> LlmCallResult.of("analysis"));
+
+        assertThat(capturedCompletion(auditId).model()).isEqualTo(spec().model());
+    }
+
+    @Test
     void fallbackIndicatorIsPersisted() {
         UUID auditId = stubStartedAudit();
         when(auditRecorder.complete(eq(auditId), any())).thenReturn(true);

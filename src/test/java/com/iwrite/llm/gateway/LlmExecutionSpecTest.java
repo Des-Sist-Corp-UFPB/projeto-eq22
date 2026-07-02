@@ -55,6 +55,46 @@ class LlmExecutionSpecTest {
     }
 
     @Test
+    void acceptsPromptVersionAt64CharacterBoundary() {
+        String promptVersion = "a".repeat(54) + ":v" + "1".repeat(8);
+
+        LlmExecutionSpec spec = LlmExecutionSpec.of(
+                LlmFeature.SCENE_ANALYSIS,
+                "openai",
+                "gpt-4o-mini",
+                promptVersion
+        );
+
+        assertThat(spec.promptVersion()).hasSize(64).isEqualTo(promptVersion);
+    }
+
+    @Test
+    void rejectsPromptVersionAbove64CharacterBoundary() {
+        String promptVersion = "a".repeat(55) + ":v" + "1".repeat(8);
+
+        assertThatThrownBy(() -> LlmExecutionSpec.of(
+                LlmFeature.SCENE_ANALYSIS,
+                "openai",
+                "gpt-4o-mini",
+                promptVersion
+        ))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("promptVersion");
+    }
+
+    @Test
+    void acceptsExistingSceneAnalysisPromptVersion() {
+        LlmExecutionSpec spec = LlmExecutionSpec.of(
+                LlmFeature.SCENE_ANALYSIS,
+                "openai",
+                "gpt-4o-mini",
+                "scene-analysis:v1"
+        );
+
+        assertThat(spec.promptVersion()).isEqualTo("scene-analysis:v1");
+    }
+
+    @Test
     void rejectsFreeTextProviderAndModel() {
         assertThatThrownBy(() -> LlmExecutionSpec.of(
                 LlmFeature.SCENE_ANALYSIS,

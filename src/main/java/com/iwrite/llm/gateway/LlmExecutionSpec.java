@@ -27,13 +27,13 @@ public record LlmExecutionSpec(
 
     private static final Pattern PROVIDER_PATTERN = Pattern.compile("[a-z0-9][a-z0-9._-]{0,63}");
     private static final Pattern MODEL_PATTERN = Pattern.compile("[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}");
-    private static final Pattern PROMPT_VERSION_PATTERN = Pattern.compile("[a-z0-9][a-z0-9._-]{0,54}:v[0-9]{1,8}");
+    private static final Pattern PROMPT_VERSION_PATTERN = Pattern.compile("[a-z0-9][a-z0-9._-]{0,53}:v[0-9]{1,8}");
 
     public LlmExecutionSpec {
         Objects.requireNonNull(feature, "feature is required");
         require(PROVIDER_PATTERN, provider, "provider");
-        if (model != null) {
-            require(MODEL_PATTERN, model, "model");
+        if (model != null && !isValidModel(model)) {
+            throw new IllegalArgumentException("model must be a short identifier without whitespace.");
         }
         require(PROMPT_VERSION_PATTERN, promptVersion, "promptVersion");
         if (resourceId != null && resourceType == null) {
@@ -47,6 +47,10 @@ public record LlmExecutionSpec(
 
     public LlmExecutionSpec withResource(AuditResourceType resourceType, UUID resourceId) {
         return new LlmExecutionSpec(feature, provider, model, promptVersion, resourceType, resourceId);
+    }
+
+    static boolean isValidModel(String model) {
+        return model != null && MODEL_PATTERN.matcher(model).matches();
     }
 
     private static void require(Pattern pattern, String value, String field) {
