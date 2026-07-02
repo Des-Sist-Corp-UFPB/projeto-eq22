@@ -1,6 +1,7 @@
 package com.iwrite.writingprogress.migration;
 
 import com.iwrite.support.PostgresIntegrationTest;
+import com.iwrite.support.TestDatabaseInitializer;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.MigrationVersion;
 import org.flywaydb.core.api.FlywayException;
@@ -51,7 +52,7 @@ class V22WritingOwnershipMigrationIntegrationTest extends PostgresIntegrationTes
             insertLegacyWritingRows(schema);
             migrate(schema, null);
 
-            try (Connection connection = dataSource.getConnection()) {
+            try (Connection connection = TestDatabaseInitializer.openDirectConnection()) {
                 assertEquals(LEGACY_USER_ID.toString(), scalar(connection, schema,
                         "select user_id::text from book_writing_schedules where id = '" + SCHEDULE_ID + "'"));
                 assertEquals(LEGACY_USER_ID.toString(), scalar(connection, schema,
@@ -93,7 +94,7 @@ class V22WritingOwnershipMigrationIntegrationTest extends PostgresIntegrationTes
 
         try {
             migrate(schema, MigrationVersion.fromVersion("21"));
-            try (Connection connection = dataSource.getConnection()) {
+            try (Connection connection = TestDatabaseInitializer.openDirectConnection()) {
                 insertTenant(connection, schema, NON_LEGACY_TENANT_ID, "Single owner tenant");
                 insertUser(connection, schema, NON_LEGACY_OWNER_ID, "Single owner", "single.owner@iwrite.local");
                 insertMembership(connection, schema, NON_LEGACY_MEMBERSHIP_ID, NON_LEGACY_TENANT_ID, NON_LEGACY_OWNER_ID);
@@ -111,7 +112,7 @@ class V22WritingOwnershipMigrationIntegrationTest extends PostgresIntegrationTes
 
             migrate(schema, null);
 
-            try (Connection connection = dataSource.getConnection()) {
+            try (Connection connection = TestDatabaseInitializer.openDirectConnection()) {
                 assertWritingRowsAttributedTo(connection, schema, NON_LEGACY_OWNER_ID, NON_LEGACY_BOOK_ID);
                 assertNoNullWritingAttribution(connection, schema);
                 assertWritingAttributionBelongsToBookTenant(connection, schema);
@@ -128,7 +129,7 @@ class V22WritingOwnershipMigrationIntegrationTest extends PostgresIntegrationTes
 
         try {
             migrate(schema, MigrationVersion.fromVersion("21"));
-            try (Connection connection = dataSource.getConnection()) {
+            try (Connection connection = TestDatabaseInitializer.openDirectConnection()) {
                 insertTenant(connection, schema, NON_LEGACY_TENANT_ID, "Ambiguous owner tenant");
                 insertUser(connection, schema, NON_LEGACY_OWNER_ID, "First owner", "first.owner@iwrite.local");
                 insertUser(connection, schema, NON_LEGACY_SECOND_OWNER_ID, "Second owner", "second.owner@iwrite.local");
@@ -160,7 +161,7 @@ class V22WritingOwnershipMigrationIntegrationTest extends PostgresIntegrationTes
 
         try {
             migrate(schema, MigrationVersion.fromVersion("21"));
-            try (Connection connection = dataSource.getConnection()) {
+            try (Connection connection = TestDatabaseInitializer.openDirectConnection()) {
                 insertTenant(connection, schema, NON_LEGACY_TENANT_ID, "No owner tenant");
                 insertWritingRows(
                         connection,
@@ -194,7 +195,7 @@ class V22WritingOwnershipMigrationIntegrationTest extends PostgresIntegrationTes
     }
 
     private void insertLegacyWritingRows(String schema) throws SQLException {
-        try (Connection connection = dataSource.getConnection(); var statement = connection.createStatement()) {
+        try (Connection connection = TestDatabaseInitializer.openDirectConnection(); var statement = connection.createStatement()) {
             statement.execute("set search_path to " + schema);
             statement.executeUpdate("insert into books (id, tenant_id, title, status, created_at, updated_at) values ('" + BOOK_ID + "', '" + LEGACY_TENANT_ID + "', 'Legacy writing ownership', 'PLANNING', current_timestamp, current_timestamp)");
             statement.executeUpdate("insert into book_writing_schedules (id, book_id, effective_from, created_at, updated_at) values ('" + SCHEDULE_ID + "', '" + BOOK_ID + "', date '2026-06-01', current_timestamp, current_timestamp)");
@@ -315,13 +316,13 @@ class V22WritingOwnershipMigrationIntegrationTest extends PostgresIntegrationTes
     }
 
     private void createSchema(String schema) throws SQLException {
-        try (Connection connection = dataSource.getConnection(); var statement = connection.createStatement()) {
+        try (Connection connection = TestDatabaseInitializer.openDirectConnection(); var statement = connection.createStatement()) {
             statement.execute("create schema " + schema);
         }
     }
 
     private void dropSchema(String schema) throws SQLException {
-        try (Connection connection = dataSource.getConnection(); var statement = connection.createStatement()) {
+        try (Connection connection = TestDatabaseInitializer.openDirectConnection(); var statement = connection.createStatement()) {
             statement.execute("drop schema if exists " + schema + " cascade");
         }
     }

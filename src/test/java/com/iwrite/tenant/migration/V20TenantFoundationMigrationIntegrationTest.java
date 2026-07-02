@@ -1,6 +1,7 @@
 package com.iwrite.tenant.migration;
 
 import com.iwrite.support.PostgresIntegrationTest;
+import com.iwrite.support.TestDatabaseInitializer;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.MigrationVersion;
 import org.junit.jupiter.api.Test;
@@ -33,7 +34,7 @@ class V20TenantFoundationMigrationIntegrationTest extends PostgresIntegrationTes
             insertLegacyManuscript(schema);
             migrate(schema, null);
 
-            try (Connection connection = dataSource.getConnection()) {
+            try (Connection connection = TestDatabaseInitializer.openDirectConnection()) {
                 assertEquals("Personal", scalar(connection, schema, "select name from tenants where id = '" + LEGACY_TENANT_ID + "'"));
                 assertEquals("America/Sao_Paulo", scalar(connection, schema, "select default_time_zone_id from tenants where id = '" + LEGACY_TENANT_ID + "'"));
                 assertEquals("Carlos", scalar(connection, schema, "select display_name from users where id = '" + LEGACY_USER_ID + "'"));
@@ -72,7 +73,7 @@ class V20TenantFoundationMigrationIntegrationTest extends PostgresIntegrationTes
     }
 
     private void insertLegacyManuscript(String schema) throws SQLException {
-        try (Connection connection = dataSource.getConnection(); var statement = connection.createStatement()) {
+        try (Connection connection = TestDatabaseInitializer.openDirectConnection(); var statement = connection.createStatement()) {
             statement.execute("set search_path to " + schema);
             statement.executeUpdate("insert into books (id, title, status, created_at, updated_at) values ('20000000-0000-0000-0000-000000000001', 'Preserved manuscript', 'PLANNING', current_timestamp, current_timestamp)");
             statement.executeUpdate("insert into sections (id, book_id, title, type, sort_order, created_at, updated_at) values ('20000000-0000-0000-0000-000000000002', '20000000-0000-0000-0000-000000000001', 'Preserved section', 'PART', 0, current_timestamp, current_timestamp)");
@@ -107,13 +108,13 @@ class V20TenantFoundationMigrationIntegrationTest extends PostgresIntegrationTes
     }
 
     private void createSchema(String schema) throws SQLException {
-        try (Connection connection = dataSource.getConnection(); var statement = connection.createStatement()) {
+        try (Connection connection = TestDatabaseInitializer.openDirectConnection(); var statement = connection.createStatement()) {
             statement.execute("create schema " + schema);
         }
     }
 
     private void dropSchema(String schema) throws SQLException {
-        try (Connection connection = dataSource.getConnection(); var statement = connection.createStatement()) {
+        try (Connection connection = TestDatabaseInitializer.openDirectConnection(); var statement = connection.createStatement()) {
             statement.execute("drop schema if exists " + schema + " cascade");
         }
     }

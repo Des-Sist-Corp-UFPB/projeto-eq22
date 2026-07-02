@@ -1,6 +1,7 @@
 package com.iwrite.writingprogress.migration;
 
 import com.iwrite.support.PostgresIntegrationTest;
+import com.iwrite.support.TestDatabaseInitializer;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.MigrationVersion;
 import org.junit.jupiter.api.Test;
@@ -50,7 +51,7 @@ class V24DailyProgressDashboardIndexesMigrationIntegrationTest extends PostgresI
         try {
             migrate(schema, MigrationVersion.fromVersion("23"));
 
-            try (Connection connection = dataSource.getConnection()) {
+            try (Connection connection = TestDatabaseInitializer.openDirectConnection()) {
                 insertTenant(connection, schema);
                 insertUser(connection, schema);
                 insertMembership(connection, schema);
@@ -63,7 +64,7 @@ class V24DailyProgressDashboardIndexesMigrationIntegrationTest extends PostgresI
 
             migrate(schema, null);
 
-            try (Connection connection = dataSource.getConnection()) {
+            try (Connection connection = TestDatabaseInitializer.openDirectConnection()) {
                 assertIndexMetadata(connection, schema, "idx_daily_progress_user_date_book", "user_id,progress_date,book_id");
                 assertIndexMetadata(connection, schema, "idx_daily_progress_book_date_user", "book_id,progress_date,user_id");
                 assertUniqueConstraintColumns(connection, schema, "uk_book_daily_writing_progress_user_book_date", "user_id,book_id,progress_date");
@@ -88,7 +89,7 @@ class V24DailyProgressDashboardIndexesMigrationIntegrationTest extends PostgresI
     }
 
     private void assertIndexDefinition(String indexName, String expectedDefinition) throws Exception {
-        try (Connection connection = dataSource.getConnection();
+        try (Connection connection = TestDatabaseInitializer.openDirectConnection();
              var statement = connection.prepareStatement("""
                      select indexdef
                      from pg_indexes
@@ -106,7 +107,7 @@ class V24DailyProgressDashboardIndexesMigrationIntegrationTest extends PostgresI
     }
 
     private void assertUniqueConstraintColumns(String constraintName, String expectedColumns) throws Exception {
-        try (Connection connection = dataSource.getConnection()) {
+        try (Connection connection = TestDatabaseInitializer.openDirectConnection()) {
             assertUniqueConstraintColumns(connection, "public", constraintName, expectedColumns);
         }
     }
@@ -249,13 +250,13 @@ class V24DailyProgressDashboardIndexesMigrationIntegrationTest extends PostgresI
     }
 
     private void createSchema(String schema) throws SQLException {
-        try (Connection connection = dataSource.getConnection(); var statement = connection.createStatement()) {
+        try (Connection connection = TestDatabaseInitializer.openDirectConnection(); var statement = connection.createStatement()) {
             statement.execute("create schema " + schema);
         }
     }
 
     private void dropSchema(String schema) throws SQLException {
-        try (Connection connection = dataSource.getConnection(); var statement = connection.createStatement()) {
+        try (Connection connection = TestDatabaseInitializer.openDirectConnection(); var statement = connection.createStatement()) {
             statement.execute("drop schema if exists " + schema + " cascade");
         }
     }

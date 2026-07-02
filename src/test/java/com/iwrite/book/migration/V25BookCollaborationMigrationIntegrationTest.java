@@ -1,6 +1,7 @@
 package com.iwrite.book.migration;
 
 import com.iwrite.support.PostgresIntegrationTest;
+import com.iwrite.support.TestDatabaseInitializer;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.MigrationVersion;
 import org.junit.jupiter.api.Test;
@@ -41,14 +42,14 @@ class V25BookCollaborationMigrationIntegrationTest extends PostgresIntegrationTe
         try {
             migrate(schema, MigrationVersion.fromVersion("24"));
 
-            try (Connection connection = dataSource.getConnection()) {
+            try (Connection connection = TestDatabaseInitializer.openDirectConnection()) {
                 seedLegacyData(connection, schema);
                 assertEquals("0", scalar(connection, schema, "select count(*)::text from information_schema.columns where table_schema = current_schema() and table_name = 'books' and column_name = 'owner_user_id'"));
             }
 
             migrate(schema, null);
 
-            try (Connection connection = dataSource.getConnection()) {
+            try (Connection connection = TestDatabaseInitializer.openDirectConnection()) {
                 assertEquals(USER_A_EARLY.toString(), scalar(connection, schema, "select owner_user_id::text from books where id = '" + BOOK_A + "'"));
                 assertEquals(USER_B_LOW.toString(), scalar(connection, schema, "select owner_user_id::text from books where id = '" + BOOK_B + "'"));
                 assertEquals("0", scalar(connection, schema, "select count(*)::text from books where owner_user_id is null"));
@@ -192,13 +193,13 @@ class V25BookCollaborationMigrationIntegrationTest extends PostgresIntegrationTe
     }
 
     private void createSchema(String schema) throws SQLException {
-        try (Connection connection = dataSource.getConnection(); var statement = connection.createStatement()) {
+        try (Connection connection = TestDatabaseInitializer.openDirectConnection(); var statement = connection.createStatement()) {
             statement.execute("create schema " + schema);
         }
     }
 
     private void dropSchema(String schema) throws SQLException {
-        try (Connection connection = dataSource.getConnection(); var statement = connection.createStatement()) {
+        try (Connection connection = TestDatabaseInitializer.openDirectConnection(); var statement = connection.createStatement()) {
             statement.execute("drop schema if exists " + schema + " cascade");
         }
     }

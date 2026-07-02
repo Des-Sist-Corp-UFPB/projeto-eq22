@@ -1,6 +1,7 @@
 package com.iwrite.writingprogress.migration;
 
 import com.iwrite.support.PostgresIntegrationTest;
+import com.iwrite.support.TestDatabaseInitializer;
 import com.iwrite.writingprogress.ledger.service.WordCountRequestFingerprint;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.MigrationVersion;
@@ -41,7 +42,7 @@ class V23WordCountEventRequestFingerprintMigrationIntegrationTest extends Postgr
         try {
             migrate(schema, MigrationVersion.fromVersion("22"));
 
-            try (Connection connection = dataSource.getConnection()) {
+            try (Connection connection = TestDatabaseInitializer.openDirectConnection()) {
                 assertFalse(columnExists(connection, schema, "request_fingerprint"));
                 insertTenant(connection, schema);
                 insertUser(connection, schema);
@@ -52,7 +53,7 @@ class V23WordCountEventRequestFingerprintMigrationIntegrationTest extends Postgr
 
             migrate(schema, null);
 
-            try (Connection connection = dataSource.getConnection()) {
+            try (Connection connection = TestDatabaseInitializer.openDirectConnection()) {
                 assertEquals("character varying", scalar(connection, schema, """
                         select data_type
                         from information_schema.columns
@@ -190,13 +191,13 @@ class V23WordCountEventRequestFingerprintMigrationIntegrationTest extends Postgr
     }
 
     private void createSchema(String schema) throws SQLException {
-        try (Connection connection = dataSource.getConnection(); var statement = connection.createStatement()) {
+        try (Connection connection = TestDatabaseInitializer.openDirectConnection(); var statement = connection.createStatement()) {
             statement.execute("create schema " + schema);
         }
     }
 
     private void dropSchema(String schema) throws SQLException {
-        try (Connection connection = dataSource.getConnection(); var statement = connection.createStatement()) {
+        try (Connection connection = TestDatabaseInitializer.openDirectConnection(); var statement = connection.createStatement()) {
             statement.execute("drop schema if exists " + schema + " cascade");
         }
     }
