@@ -1,15 +1,18 @@
 package com.iwrite.scene.service;
 
 import com.iwrite.common.exception.BadRequestException;
-import com.iwrite.common.exception.ServiceUnavailableException;
 import com.iwrite.export.service.TipTapPlainTextRenderer;
+import com.iwrite.audit.entity.AuditResourceType;
+import com.iwrite.llm.LlmFeature;
+import com.iwrite.llm.gateway.LlmCallResult;
+import com.iwrite.llm.gateway.LlmExecutionGateway;
+import com.iwrite.llm.gateway.LlmExecutionSpec;
+import com.iwrite.llm.gateway.LlmInvalidResponseException;
 import com.iwrite.scene.ai.SceneAnalysisPrompt;
 import com.iwrite.scene.ai.WritingAssistant;
 import com.iwrite.scene.dto.SceneAnalysisRequest;
 import com.iwrite.scene.dto.SceneAnalysisResponse;
 import com.iwrite.scene.entity.Scene;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -20,7 +23,7 @@ import java.util.UUID;
 @Service
 public class SceneAnalysisService {
 
-    private static final Logger LOGGER = LoggerFactory.getLogger(SceneAnalysisService.class);
+    private static final String PROMPT_VERSION = "scene-analysis:v1";
     private static final int MAX_SCENE_TEXT_CHARS = 12_000;
     private static final int MAX_LIST_ITEMS = 5;
 
@@ -28,35 +31,33 @@ public class SceneAnalysisService {
     private final WritingAssistant writingAssistant;
     private final TipTapPlainTextRenderer tipTapPlainTextRenderer;
     private final TransactionTemplate readOnlyTransactionTemplate;
+    private final LlmExecutionGateway llmExecutionGateway;
 
     public SceneAnalysisService(
             SceneService sceneService,
             WritingAssistant writingAssistant,
             TipTapPlainTextRenderer tipTapPlainTextRenderer,
-            PlatformTransactionManager transactionManager
+            PlatformTransactionManager transactionManager,
+            LlmExecutionGateway llmExecutionGateway
     ) {
         this.sceneService = sceneService;
         this.writingAssistant = writingAssistant;
         this.tipTapPlainTextRenderer = tipTapPlainTextRenderer;
         this.readOnlyTransactionTemplate = new TransactionTemplate(transactionManager);
         this.readOnlyTransactionTemplate.setReadOnly(true);
+        this.llmExecutionGateway = llmExecutionGateway;
     }
 
     public SceneAnalysisResponse analyze(UUID sceneId, SceneAnalysisRequest request) {
         SceneAnalysisPrompt prompt = readOnlyTransactionTemplate.execute(status -> loadPrompt(sceneId, request));
-
-        long startedAt = System.nanoTime();
-        try {
-            SceneAnalysisResponse response = sanitize(writingAssistant.analyzeScene(prompt));
-            logResult(sceneId, startedAt, "success", "none");
-            return response;
-        } catch (ServiceUnavailableException exception) {
-            logResult(sceneId, startedAt, "failure", "assistant_unavailable");
-            throw exception;
-        } catch (RuntimeException exception) {
-            logResult(sceneId, startedAt, "failure", "assistant_failure");
-            throw new ServiceUnavailableException("AI scene analysis could not be completed.", exception);
-        }
+        LlmExecutionSpec spec = LlmExecutionSpec.of(
+                        LlmFeature.SCENE_ANALYSIS,
+                        writingAssistant.provider(),
+                        writingAssistant.model(),
+                        PROMPT_VERSION
+                )
+                .withResource(AuditResourceType.SCENE, sceneId);
+        return llmExecutionGateway.execute(spec, context -> sanitize(writingAssistant.analyzeScene(prompt)));
     }
 
     private SceneAnalysisPrompt loadPrompt(UUID sceneId, SceneAnalysisRequest request) {
@@ -98,11 +99,12 @@ public class SceneAnalysisService {
         return sceneText.substring(0, MAX_SCENE_TEXT_CHARS);
     }
 
-    private SceneAnalysisResponse sanitize(SceneAnalysisResponse response) {
-        if (response == null) {
+    private LlmCallResult<SceneAnalysisResponse> sanitize(LlmCallResult<SceneAnalysisResponse> result) {
+        if (result == null || result.value() == null) {
             throw malformedResponse();
         }
 
+        SceneAnalysisResponse response = result.value();
         SceneAnalysisResponse sanitized = new SceneAnalysisResponse(
                 scalar(response.summary()),
                 scalar(response.tone()),
@@ -114,7 +116,12 @@ public class SceneAnalysisService {
         if (isEmpty(sanitized)) {
             throw malformedResponse();
         }
-        return sanitized;
+        return new LlmCallResult<>(
+                sanitized,
+                result.tokenUsage(),
+                result.model(),
+                result.fallbackUsed()
+        );
     }
 
     private String scalar(String value) {
@@ -141,18 +148,7 @@ public class SceneAnalysisService {
                 && response.suggestions().isEmpty();
     }
 
-    private ServiceUnavailableException malformedResponse() {
-        return new ServiceUnavailableException("AI scene analysis returned an invalid response. Please try again later.");
-    }
-
-    private void logResult(UUID sceneId, long startedAt, String outcome, String category) {
-        long elapsedMs = (System.nanoTime() - startedAt) / 1_000_000;
-        LOGGER.info(
-                "AI scene analysis sceneId={} elapsedMs={} outcome={} category={}",
-                sceneId,
-                elapsedMs,
-                outcome,
-                category
-        );
+    private LlmInvalidResponseException malformedResponse() {
+        return new LlmInvalidResponseException(null);
     }
 }

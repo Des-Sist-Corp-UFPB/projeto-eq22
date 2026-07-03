@@ -1,5 +1,6 @@
 package com.iwrite.common.exception;
 
+import com.iwrite.llm.gateway.LlmExecutionException;
 import jakarta.validation.ConstraintViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -40,6 +41,14 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(ServiceUnavailableException.class)
     public ResponseEntity<ApiErrorResponse> handleServiceUnavailable(ServiceUnavailableException exception) {
         return buildResponse(HttpStatus.SERVICE_UNAVAILABLE, List.of(exception.getMessage()));
+    }
+
+    @ExceptionHandler(LlmExecutionException.class)
+    public ResponseEntity<ApiErrorResponse> handleLlmExecution(LlmExecutionException exception) {
+        return buildResponse(
+                HttpStatus.SERVICE_UNAVAILABLE,
+                List.of("AI scene analysis could not be completed.")
+        );
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
