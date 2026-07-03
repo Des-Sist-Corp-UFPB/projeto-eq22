@@ -12,6 +12,8 @@ import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMock
 import org.springframework.http.MediaType;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.Map;
@@ -334,6 +336,7 @@ class ControllerContractIntegrationTest extends PostgresIntegrationTest {
     }
 
     @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     void postSceneAiAnalysisReturnsUnavailableWhenAiIsDisabled() throws Exception {
         StoryWorld world = createStoryWorld("HTTP AI disabled");
 
@@ -341,7 +344,7 @@ class ControllerContractIntegrationTest extends PostgresIntegrationTest {
 
         mockMvc.perform(post("/api/scenes/{sceneId}/ai-analysis", world.scene().id()))
                 .andExpect(status().isServiceUnavailable())
-                .andExpect(jsonPath("$.messages", hasItem(containsString("AI scene analysis is not available"))));
+                .andExpect(jsonPath("$.messages", hasItem("AI scene analysis could not be completed.")));
     }
 
     @Test

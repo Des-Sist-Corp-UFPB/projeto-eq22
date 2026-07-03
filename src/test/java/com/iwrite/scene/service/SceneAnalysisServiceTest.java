@@ -3,8 +3,17 @@ package com.iwrite.scene.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.iwrite.common.exception.BadRequestException;
 import com.iwrite.common.exception.ResourceNotFoundException;
-import com.iwrite.common.exception.ServiceUnavailableException;
 import com.iwrite.export.service.TipTapPlainTextRenderer;
+import com.iwrite.audit.entity.AuditResourceType;
+import com.iwrite.llm.LlmFeature;
+import com.iwrite.llm.audit.LlmExecutionStatus;
+import com.iwrite.llm.gateway.LlmCallContext;
+import com.iwrite.llm.gateway.LlmCallResult;
+import com.iwrite.llm.gateway.LlmErrorClassifier;
+import com.iwrite.llm.gateway.LlmExecutionException;
+import com.iwrite.llm.gateway.LlmExecutionGateway;
+import com.iwrite.llm.gateway.LlmExecutionSpec;
+import com.iwrite.llm.gateway.LlmProviderCall;
 import com.iwrite.scene.ai.SceneAnalysisPrompt;
 import com.iwrite.scene.ai.WritingAssistant;
 import com.iwrite.scene.dto.SceneAnalysisRequest;
@@ -29,6 +38,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -40,15 +50,38 @@ class SceneAnalysisServiceTest {
     @Mock
     private WritingAssistant writingAssistant;
 
+    @Mock
+    private LlmExecutionGateway llmExecutionGateway;
+
     private SceneAnalysisService service;
 
     @BeforeEach
+    @SuppressWarnings("unchecked")
     void setUp() {
+        lenient().when(writingAssistant.provider()).thenReturn("openai");
+        lenient().when(writingAssistant.model()).thenReturn("gpt-4o-mini");
+        lenient().when(llmExecutionGateway.execute(any(), any())).thenAnswer(invocation -> {
+            LlmProviderCall<SceneAnalysisResponse> providerCall = invocation.getArgument(1);
+            try {
+                return providerCall.call(new LlmCallContext(UUID.randomUUID())).value();
+            } catch (LlmExecutionException exception) {
+                throw exception;
+            } catch (Exception exception) {
+                var classification = new LlmErrorClassifier().classify(exception);
+                throw new LlmExecutionException(
+                        classification.status(),
+                        classification.category(),
+                        UUID.randomUUID(),
+                        exception
+                );
+            }
+        });
         service = new SceneAnalysisService(
                 sceneService,
                 writingAssistant,
                 new TipTapPlainTextRenderer(new ObjectMapper()),
-                new TestTransactionManager()
+                new TestTransactionManager(),
+                llmExecutionGateway
         );
     }
 
@@ -58,14 +91,14 @@ class SceneAnalysisServiceTest {
         Scene scene = sceneWithText("The door opened. The room held its breath.");
         when(sceneService.getScene(sceneId)).thenReturn(scene);
         when(writingAssistant.analyzeScene(any()))
-                .thenReturn(new SceneAnalysisResponse(
+                .thenReturn(LlmCallResult.of(new SceneAnalysisResponse(
                         "A tense entrance.",
                         "Suspenseful",
                         "Measured",
                         List.of("Clear mood"),
                         List.of("Conflict is still implied"),
                         List.of("Clarify what is at stake")
-                ));
+                )));
 
         SceneAnalysisResponse response = service.analyze(
                 sceneId,
@@ -79,6 +112,14 @@ class SceneAnalysisServiceTest {
         assertThat(prompt.getValue().sceneText()).isEqualTo(scene.getContentText());
         assertThat(prompt.getValue().focus()).isEqualTo("pacing");
         assertThat(prompt.getValue().truncated()).isFalse();
+        ArgumentCaptor<LlmExecutionSpec> spec = ArgumentCaptor.forClass(LlmExecutionSpec.class);
+        verify(llmExecutionGateway).execute(spec.capture(), any());
+        assertThat(spec.getValue().feature()).isEqualTo(LlmFeature.SCENE_ANALYSIS);
+        assertThat(spec.getValue().provider()).isEqualTo("openai");
+        assertThat(spec.getValue().model()).isEqualTo("gpt-4o-mini");
+        assertThat(spec.getValue().promptVersion()).isEqualTo("scene-analysis:v1");
+        assertThat(spec.getValue().resourceType()).isEqualTo(AuditResourceType.SCENE);
+        assertThat(spec.getValue().resourceId()).isEqualTo(sceneId);
     }
 
     @Test
@@ -134,14 +175,14 @@ class SceneAnalysisServiceTest {
         UUID sceneId = UUID.randomUUID();
         when(sceneService.getScene(sceneId)).thenReturn(sceneWithText("Some scene words."));
         when(writingAssistant.analyzeScene(any()))
-                .thenReturn(new SceneAnalysisResponse(
+                .thenReturn(LlmCallResult.of(new SceneAnalysisResponse(
                         null,
                         "  gentle ",
                         null,
                         null,
                         Arrays.asList(" one ", null, " ", "two", "three", "four", "five", "six"),
                         List.of("try a sharper turn")
-                ));
+                )));
 
         SceneAnalysisResponse response = service.analyze(sceneId, null);
 
@@ -233,11 +274,12 @@ class SceneAnalysisServiceTest {
         UUID sceneId = UUID.randomUUID();
         when(sceneService.getScene(sceneId)).thenReturn(sceneWithText("Some scene words."));
         when(writingAssistant.analyzeScene(any()))
-                .thenReturn(new SceneAnalysisResponse(null, null, null, null, null, null));
+                .thenReturn(LlmCallResult.of(new SceneAnalysisResponse(null, null, null, null, null, null)));
 
         assertThatThrownBy(() -> service.analyze(sceneId, null))
-                .isInstanceOf(ServiceUnavailableException.class)
-                .hasMessageContaining("invalid response");
+                .isInstanceOf(LlmExecutionException.class)
+                .satisfies(exception -> assertThat(((LlmExecutionException) exception).getStatus())
+                        .isEqualTo(LlmExecutionStatus.INVALID_RESPONSE));
     }
 
     @Test
@@ -248,8 +290,9 @@ class SceneAnalysisServiceTest {
                 .thenThrow(new IllegalStateException("raw upstream body"));
 
         assertThatThrownBy(() -> service.analyze(sceneId, null))
-                .isInstanceOf(ServiceUnavailableException.class)
-                .hasMessage("AI scene analysis could not be completed.");
+                .isInstanceOf(LlmExecutionException.class)
+                .hasMessage("The AI execution failed.")
+                .hasMessageNotContaining("raw upstream body");
     }
 
     private Scene sceneWithText(String contentText) {
@@ -269,15 +312,15 @@ class SceneAnalysisServiceTest {
                 """.formatted(text);
     }
 
-    private SceneAnalysisResponse validAnalysis() {
-        return new SceneAnalysisResponse(
+    private LlmCallResult<SceneAnalysisResponse> validAnalysis() {
+        return LlmCallResult.of(new SceneAnalysisResponse(
                 "Summary",
                 "Tone",
                 "Pacing",
                 List.of("Strength"),
                 List.of("Issue"),
                 List.of("Suggestion")
-        );
+        ));
     }
 
     private static class TestTransactionManager extends AbstractPlatformTransactionManager {

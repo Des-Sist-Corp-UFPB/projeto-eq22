@@ -4,6 +4,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.iwrite.common.exception.GlobalExceptionHandler;
 import com.iwrite.common.exception.ResourceNotFoundException;
 import com.iwrite.common.exception.ServiceUnavailableException;
+import com.iwrite.llm.audit.LlmErrorCategory;
+import com.iwrite.llm.audit.LlmExecutionStatus;
+import com.iwrite.llm.gateway.LlmExecutionException;
 import com.iwrite.scene.dto.SceneAnalysisRequest;
 import com.iwrite.scene.dto.SceneAnalysisResponse;
 import com.iwrite.scene.service.SceneAnalysisService;
@@ -95,6 +98,24 @@ class SceneAnalysisControllerTest {
         mockMvc.perform(post("/api/scenes/{sceneId}/ai-analysis", sceneId))
                 .andExpect(status().isServiceUnavailable())
                 .andExpect(jsonPath("$.messages", hasItem("AI scene analysis is not available.")));
+    }
+
+    @Test
+    void postAiAnalysisMapsLlmFailureToExistingSafeUnavailableResponse() throws Exception {
+        UUID sceneId = UUID.randomUUID();
+        when(sceneAnalysisService.analyze(sceneId, null)).thenThrow(new LlmExecutionException(
+                LlmExecutionStatus.FAILED,
+                LlmErrorCategory.INTERNAL_EXECUTION_ERROR,
+                UUID.randomUUID(),
+                new RuntimeException("raw provider body with secret credential")
+        ));
+
+        mockMvc.perform(post("/api/scenes/{sceneId}/ai-analysis", sceneId))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.messages", hasItem("AI scene analysis could not be completed.")))
+                .andExpect(jsonPath("$.messages", hasItem(org.hamcrest.Matchers.not(
+                        containsString("secret credential")
+                ))));
     }
 
     @Test

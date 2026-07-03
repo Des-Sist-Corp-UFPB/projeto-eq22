@@ -1,9 +1,16 @@
 package com.iwrite.scene.ai;
 
-import com.iwrite.common.exception.ServiceUnavailableException;
+import com.iwrite.llm.LlmTokenUsage;
+import com.iwrite.llm.gateway.LlmCallResult;
+import com.iwrite.llm.gateway.LlmInvalidResponseException;
 import com.iwrite.scene.dto.SceneAnalysisResponse;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.client.ResponseEntity;
+import org.springframework.ai.chat.metadata.ChatResponseMetadata;
+import org.springframework.ai.chat.metadata.DefaultUsage;
+import org.springframework.ai.chat.model.ChatResponse;
+import org.springframework.ai.converter.StructuredOutputConverter;
 import org.springframework.ai.model.openai.autoconfigure.OpenAiChatProperties;
 import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.beans.factory.config.BeanPostProcessor;
@@ -45,8 +52,11 @@ class OpenAiWritingAssistantTest {
         when(requestSpec.user(any(Consumer.class))).thenReturn(requestSpec);
         when(requestSpec.options(any(OpenAiChatOptions.class))).thenReturn(requestSpec);
         when(requestSpec.call()).thenReturn(responseSpec);
-        when(responseSpec.entity(SceneAnalysisResponse.class))
-                .thenThrow(new IllegalArgumentException("partial provider response body"));
+        when(responseSpec.responseEntity(any(StructuredOutputConverter.class))).thenAnswer(invocation -> {
+            StructuredOutputConverter<SceneAnalysisResponse> converter = invocation.getArgument(0);
+            converter.convert("partial provider response body");
+            return null;
+        });
 
         OpenAiWritingAssistant assistant = new OpenAiWritingAssistant(
                 builder,
@@ -58,9 +68,44 @@ class OpenAiWritingAssistantTest {
                 "pacing",
                 false
         )))
-                .isInstanceOf(ServiceUnavailableException.class)
-                .hasMessage("AI scene analysis could not be completed.")
+                .isInstanceOf(LlmInvalidResponseException.class)
                 .hasMessageNotContaining("partial provider response body");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void preservesUsageAndEffectiveModelFromProviderResponse() {
+        ChatClient.Builder builder = mock(ChatClient.Builder.class);
+        ChatClient chatClient = mock(ChatClient.class);
+        ChatClient.ChatClientRequestSpec requestSpec = mock(ChatClient.ChatClientRequestSpec.class);
+        ChatClient.CallResponseSpec responseSpec = mock(ChatClient.CallResponseSpec.class);
+
+        when(builder.build()).thenReturn(chatClient);
+        when(chatClient.prompt()).thenReturn(requestSpec);
+        when(requestSpec.system(any(String.class))).thenReturn(requestSpec);
+        when(requestSpec.user(any(Consumer.class))).thenReturn(requestSpec);
+        when(requestSpec.options(any(OpenAiChatOptions.class))).thenReturn(requestSpec);
+        when(requestSpec.call()).thenReturn(responseSpec);
+        when(responseSpec.responseEntity(any(StructuredOutputConverter.class)))
+                .thenReturn(providerResponse(response(), new DefaultUsage(120, 30, 150), "gemini-2.5-flash-002"));
+
+        OpenAiWritingAssistant assistant = new OpenAiWritingAssistant(
+                builder,
+                chatProperties("gemini-2.5-flash"),
+                generationProperties(null, null, null, null));
+
+        LlmCallResult<SceneAnalysisResponse> result = assistant.analyzeScene(new SceneAnalysisPrompt(
+                "O quarto ficou silencioso.",
+                null,
+                false
+        ));
+
+        assertThat(result.value()).isEqualTo(response());
+        assertThat(result.tokenUsage()).isEqualTo(new LlmTokenUsage(120, 30, 150));
+        assertThat(result.model()).isEqualTo("gemini-2.5-flash-002");
+        assertThat(result.fallbackUsed()).isFalse();
+        assertThat(assistant.provider()).isEqualTo("openai");
+        assertThat(assistant.model()).isEqualTo("gemini-2.5-flash");
     }
 
     @Test
@@ -159,7 +204,8 @@ class OpenAiWritingAssistantTest {
         when(requestSpec.user(any(Consumer.class))).thenReturn(requestSpec);
         when(requestSpec.options(any(OpenAiChatOptions.class))).thenReturn(requestSpec);
         when(requestSpec.call()).thenReturn(responseSpec);
-        when(responseSpec.entity(SceneAnalysisResponse.class)).thenReturn(response());
+        when(responseSpec.responseEntity(any(StructuredOutputConverter.class)))
+                .thenReturn(providerResponse(response(), null, "gpt-4o-mini"));
 
         OpenAiWritingAssistant assistant = new OpenAiWritingAssistant(
                 builder,
@@ -204,5 +250,18 @@ class OpenAiWritingAssistantTest {
                 List.of("issue"),
                 List.of("suggestion")
         );
+    }
+
+    private ResponseEntity<ChatResponse, SceneAnalysisResponse> providerResponse(
+            SceneAnalysisResponse entity,
+            DefaultUsage usage,
+            String model
+    ) {
+        ChatResponseMetadata.Builder metadataBuilder = ChatResponseMetadata.builder().model(model);
+        if (usage != null) {
+            metadataBuilder.usage(usage);
+        }
+        ChatResponseMetadata metadata = metadataBuilder.build();
+        return new ResponseEntity<>(new ChatResponse(List.of(), metadata), entity);
     }
 }
