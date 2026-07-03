@@ -1,5 +1,6 @@
 package com.iwrite.support;
 
+import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.sql.Statement;
@@ -26,6 +27,17 @@ public final class TestDatabaseInitializer {
 
     public static String testDbUrl() {
         return env("TEST_DB_URL", DEFAULT_TEST_DB_URL);
+    }
+
+    /**
+     * Opens a dedicated, non-pooled connection for raw schema-scoped JDBC work
+     * (for example {@code set search_path to ...} in migration tests). Pooled
+     * connections must not be used for that: an altered search_path survives
+     * the return to the pool and poisons unrelated tests that later borrow the
+     * same connection.
+     */
+    public static Connection openDirectConnection() throws SQLException {
+        return DriverManager.getConnection(testDbUrl(), username(), password());
     }
 
     public static String username() {
