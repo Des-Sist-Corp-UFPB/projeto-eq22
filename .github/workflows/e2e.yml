@@ -8,8 +8,7 @@ on:
 jobs:
   e2e:
     name: Playwright E2E
-    runs-on: [self-hosted, dsc-selfhosted]
-
+    runs-on: ubuntu-latest
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
