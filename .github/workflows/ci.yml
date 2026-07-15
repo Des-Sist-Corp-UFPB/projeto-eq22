@@ -11,7 +11,7 @@ on:
 jobs:
   backend:
     name: Backend tests
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, dsc-selfhosted]
 
     services:
       postgres:
@@ -51,7 +51,7 @@ jobs:
 
   frontend:
     name: Frontend tests and build
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, dsc-selfhosted]
 
     defaults:
       run:
