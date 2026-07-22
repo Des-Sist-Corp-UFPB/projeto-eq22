@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="pt"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>User.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">iwrite-backend</a> &gt; <a href="index.source.html" class="el_package">com.iwrite.user.entity</a> &gt; <span class="el_source">User.java</span></div><h1>User.java</h1><pre class="source lang-java linenums">package com.iwrite.user.entity;
+
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.GenerationType;
+import jakarta.persistence.Id;
+import jakarta.persistence.PrePersist;
+import jakarta.persistence.PreUpdate;
+import jakarta.persistence.Table;
+import jakarta.persistence.UniqueConstraint;
+
+import java.time.OffsetDateTime;
+import java.util.UUID;
+
+@Entity
+@Table(name = &quot;users&quot;, uniqueConstraints = @UniqueConstraint(name = &quot;uk_users_email&quot;, columnNames = &quot;email&quot;))
+<span class="fc" id="L18">public class User {</span>
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.UUID)
+    private UUID id;
+
+    @Column(nullable = false)
+    private String displayName;
+
+    @Column(nullable = false)
+    private String email;
+
+    @Column(nullable = false, length = 64)
+    private String timeZoneId;
+
+    @Column(nullable = false, updatable = false)
+    private OffsetDateTime createdAt;
+
+    @Column(nullable = false)
+    private OffsetDateTime updatedAt;
+
+    @PrePersist
+    void onCreate() {
+<span class="fc" id="L41">        OffsetDateTime now = OffsetDateTime.now();</span>
+<span class="fc" id="L42">        createdAt = now;</span>
+<span class="fc" id="L43">        updatedAt = now;</span>
+<span class="fc" id="L44">    }</span>
+
+    @PreUpdate
+    void onUpdate() {
+<span class="fc" id="L48">        updatedAt = OffsetDateTime.now();</span>
+<span class="fc" id="L49">    }</span>
+
+    public UUID getId() {
+<span class="fc" id="L52">        return id;</span>
+    }
+
+    public String getDisplayName() {
+<span class="fc" id="L56">        return displayName;</span>
+    }
+
+    public void setDisplayName(String displayName) {
+<span class="fc" id="L60">        this.displayName = displayName;</span>
+<span class="fc" id="L61">    }</span>
+
+    public String getEmail() {
+<span class="nc" id="L64">        return email;</span>
+    }
+
+    public void setEmail(String email) {
+<span class="fc" id="L68">        this.email = email;</span>
+<span class="fc" id="L69">    }</span>
+
+    public String getTimeZoneId() {
+<span class="nc" id="L72">        return timeZoneId;</span>
+    }
+
+    public void setTimeZoneId(String timeZoneId) {
+<span class="fc" id="L76">        this.timeZoneId = timeZoneId;</span>
+<span class="fc" id="L77">    }</span>
+
+    public OffsetDateTime getCreatedAt() {
+<span class="nc" id="L80">        return createdAt;</span>
+    }
+
+    public OffsetDateTime getUpdatedAt() {
+<span class="nc" id="L84">        return updatedAt;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

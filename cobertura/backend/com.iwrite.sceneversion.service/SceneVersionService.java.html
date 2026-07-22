@@ -1,0 +1,207 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="pt"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>SceneVersionService.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">iwrite-backend</a> &gt; <a href="index.source.html" class="el_package">com.iwrite.sceneversion.service</a> &gt; <span class="el_source">SceneVersionService.java</span></div><h1>SceneVersionService.java</h1><pre class="source lang-java linenums">package com.iwrite.sceneversion.service;
+
+import com.iwrite.book.service.BookAccessService;
+import com.iwrite.common.exception.ResourceNotFoundException;
+import com.iwrite.scene.entity.Scene;
+import com.iwrite.scene.repository.SceneRepository;
+import com.iwrite.sceneversion.dto.SceneVersionDetailResponse;
+import com.iwrite.sceneversion.dto.SceneVersionPageResponse;
+import com.iwrite.sceneversion.dto.SceneVersionSummaryResponse;
+import com.iwrite.sceneversion.entity.SceneVersion;
+import com.iwrite.sceneversion.entity.SceneVersionSource;
+import com.iwrite.sceneversion.repository.SceneVersionRepository;
+import com.iwrite.user.context.CurrentUserProvider;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.time.Duration;
+import java.time.OffsetDateTime;
+import java.util.HexFormat;
+import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
+
+@Service
+public class SceneVersionService {
+
+<span class="fc" id="L34">    private static final Duration AUTOSAVE_CHECKPOINT_INTERVAL = Duration.ofMinutes(5);</span>
+    private static final int DEFAULT_PAGE_SIZE = 20;
+    private static final int MAX_PAGE_SIZE = 100;
+    private static final String UNTITLED_SCENE_TITLE = &quot;Cena sem titulo&quot;;
+
+    private final SceneVersionRepository versionRepository;
+    private final SceneRepository sceneRepository;
+    private final CurrentUserProvider currentUserProvider;
+    private final BookAccessService bookAccessService;
+
+    @PersistenceContext
+    private EntityManager entityManager;
+
+    public SceneVersionService(
+            SceneVersionRepository versionRepository,
+            SceneRepository sceneRepository,
+            CurrentUserProvider currentUserProvider,
+            BookAccessService bookAccessService
+<span class="fc" id="L52">    ) {</span>
+<span class="fc" id="L53">        this.versionRepository = versionRepository;</span>
+<span class="fc" id="L54">        this.sceneRepository = sceneRepository;</span>
+<span class="fc" id="L55">        this.currentUserProvider = currentUserProvider;</span>
+<span class="fc" id="L56">        this.bookAccessService = bookAccessService;</span>
+<span class="fc" id="L57">    }</span>
+
+    @Transactional(readOnly = true)
+    public SceneVersionPageResponse listVersions(UUID sceneId, int page, int size) {
+<span class="fc" id="L61">        requireCurrentScene(sceneId);</span>
+<span class="fc" id="L62">        int safePage = Math.max(page, 0);</span>
+<span class="pc bpc" id="L63" title="1 of 2 branches missed.">        int safeSize = Math.max(1, Math.min(size &lt;= 0 ? DEFAULT_PAGE_SIZE : size, MAX_PAGE_SIZE));</span>
+<span class="fc" id="L64">        var versions = versionRepository.findBySceneIdOrderByCreatedAtDesc(</span>
+                sceneId,
+<span class="fc" id="L66">                PageRequest.of(safePage, safeSize, Sort.by(Sort.Direction.DESC, &quot;createdAt&quot;))</span>
+        );
+
+<span class="fc" id="L69">        List&lt;SceneVersionSummaryResponse&gt; items = versions.getContent()</span>
+<span class="fc" id="L70">                .stream()</span>
+<span class="fc" id="L71">                .map(SceneVersionSummaryResponse::fromEntity)</span>
+<span class="fc" id="L72">                .toList();</span>
+
+<span class="fc" id="L74">        return new SceneVersionPageResponse(items, safePage, safeSize, versions.hasNext());</span>
+    }
+
+    @Transactional(readOnly = true)
+    public SceneVersionDetailResponse findVersion(UUID sceneId, UUID versionId) {
+<span class="fc" id="L79">        requireCurrentScene(sceneId);</span>
+<span class="fc" id="L80">        return SceneVersionDetailResponse.fromEntity(getCurrentSceneVersion(sceneId, versionId));</span>
+    }
+
+    @Transactional(readOnly = true)
+    public SceneVersion getCurrentSceneVersion(UUID sceneId, UUID versionId) {
+<span class="fc" id="L85">        return versionRepository.findByIdAndSceneIdAndTenantId(</span>
+                        versionId,
+                        sceneId,
+<span class="fc" id="L88">                        currentUserProvider.tenantId()</span>
+                )
+<span class="fc" id="L90">                .orElseThrow(() -&gt; new ResourceNotFoundException(&quot;Scene version not found: &quot; + versionId));</span>
+    }
+
+    public void checkpointBeforeContentOverwrite(Scene scene, SceneVersionSource source) {
+<span class="fc bfc" id="L94" title="All 4 branches covered.">        if (source == SceneVersionSource.AUTO_SAVE &amp;&amp; isAutosaveThrottled(scene)) {</span>
+<span class="fc" id="L95">            return;</span>
+        }
+
+<span class="fc" id="L98">        createSnapshotIfRecoverable(scene, source);</span>
+<span class="fc" id="L99">    }</span>
+
+    public void checkpointAfterManualContentSave(Scene scene) {
+<span class="fc" id="L102">        createSnapshotIfRecoverable(scene, SceneVersionSource.MANUAL_SAVE);</span>
+<span class="fc" id="L103">    }</span>
+
+    public void checkpointBeforeRestore(Scene scene) {
+<span class="fc" id="L106">        createSnapshotIfRecoverable(scene, SceneVersionSource.RESTORE_SAFETY);</span>
+<span class="fc" id="L107">    }</span>
+
+    public void checkpointBeforeDelete(Scene scene) {
+<span class="fc" id="L110">        createSnapshotIfRecoverable(scene, SceneVersionSource.DELETE_SAFETY);</span>
+<span class="fc" id="L111">    }</span>
+
+    public void checkpointBeforeDelete(List&lt;Scene&gt; scenes) {
+<span class="fc" id="L114">        scenes.forEach(this::checkpointBeforeDelete);</span>
+<span class="fc" id="L115">        versionRepository.flush();</span>
+<span class="fc" id="L116">        entityManager.clear();</span>
+<span class="fc" id="L117">    }</span>
+
+    public String hash(String contentJson, String contentText) {
+        try {
+<span class="fc" id="L121">            MessageDigest digest = MessageDigest.getInstance(&quot;SHA-256&quot;);</span>
+<span class="fc" id="L122">            digest.update(normalize(contentJson).getBytes(StandardCharsets.UTF_8));</span>
+<span class="fc" id="L123">            digest.update((byte) 0);</span>
+<span class="fc" id="L124">            digest.update(normalize(contentText).getBytes(StandardCharsets.UTF_8));</span>
+<span class="fc" id="L125">            return HexFormat.of().formatHex(digest.digest());</span>
+<span class="nc" id="L126">        } catch (NoSuchAlgorithmException exception) {</span>
+<span class="nc" id="L127">            throw new IllegalStateException(&quot;SHA-256 is not available&quot;, exception);</span>
+        }
+    }
+
+    private void createSnapshotIfRecoverable(Scene scene, SceneVersionSource source) {
+<span class="fc bfc" id="L132" title="All 2 branches covered.">        if (isEmptyContent(scene.getContentJson(), scene.getContentText())) {</span>
+<span class="fc" id="L133">            return;</span>
+        }
+
+<span class="fc" id="L136">        String contentHash = hash(scene.getContentJson(), scene.getContentText());</span>
+<span class="fc" id="L137">        boolean latestHasSameHash = latestContentHash(scene, source)</span>
+<span class="fc" id="L138">                .filter(contentHash::equals)</span>
+<span class="fc" id="L139">                .isPresent();</span>
+<span class="fc bfc" id="L140" title="All 2 branches covered.">        if (latestHasSameHash) {</span>
+<span class="fc" id="L141">            return;</span>
+        }
+
+<span class="fc" id="L144">        SceneVersion version = new SceneVersion();</span>
+<span class="fc" id="L145">        version.setBook(scene.getBook());</span>
+<span class="fc bfc" id="L146" title="All 2 branches covered.">        version.setScene(source == SceneVersionSource.DELETE_SAFETY ? null : scene);</span>
+<span class="fc" id="L147">        version.setOriginalSceneId(scene.getId());</span>
+<span class="fc" id="L148">        version.setSceneTitleSnapshot(snapshotTitle(scene.getTitle()));</span>
+<span class="fc" id="L149">        version.setContentJson(scene.getContentJson());</span>
+<span class="fc" id="L150">        version.setContentText(scene.getContentText());</span>
+<span class="pc bpc" id="L151" title="1 of 2 branches missed.">        version.setWordCount(scene.getWordCount() == null ? 0 : scene.getWordCount());</span>
+<span class="fc" id="L152">        version.setSource(source);</span>
+<span class="fc" id="L153">        version.setContentHash(contentHash);</span>
+<span class="fc" id="L154">        versionRepository.save(version);</span>
+<span class="fc" id="L155">    }</span>
+
+    private Optional&lt;String&gt; latestContentHash(Scene scene, SceneVersionSource source) {
+<span class="fc" id="L158">        PageRequest latestOnly = PageRequest.of(0, 1);</span>
+<span class="fc bfc" id="L159" title="All 2 branches covered.">        if (source == SceneVersionSource.DELETE_SAFETY) {</span>
+<span class="fc" id="L160">            return versionRepository.findContentHashesByOriginalSceneId(scene.getId(), latestOnly)</span>
+<span class="fc" id="L161">                    .stream()</span>
+<span class="fc" id="L162">                    .findFirst();</span>
+        }
+<span class="fc bfc" id="L164" title="All 2 branches covered.">        if (source == SceneVersionSource.RESTORE_SAFETY) {</span>
+<span class="fc" id="L165">            return versionRepository.findTopBySceneIdAndSourceOrderByCreatedAtDesc(scene.getId(), source)</span>
+<span class="fc" id="L166">                    .map(SceneVersion::getContentHash);</span>
+        }
+
+<span class="fc" id="L169">        return versionRepository.findContentHashesBySceneId(scene.getId(), latestOnly)</span>
+<span class="fc" id="L170">                .stream()</span>
+<span class="fc" id="L171">                .findFirst();</span>
+    }
+
+    private boolean isAutosaveThrottled(Scene scene) {
+<span class="fc" id="L175">        return versionRepository.findTopBySceneIdAndSourceOrderByCreatedAtDesc(scene.getId(), SceneVersionSource.AUTO_SAVE)</span>
+<span class="fc" id="L176">                .map(SceneVersion::getCreatedAt)</span>
+<span class="fc" id="L177">                .map(createdAt -&gt; createdAt.plus(AUTOSAVE_CHECKPOINT_INTERVAL).isAfter(OffsetDateTime.now()))</span>
+<span class="fc" id="L178">                .orElse(false);</span>
+    }
+
+    private void requireCurrentScene(UUID sceneId) {
+<span class="fc" id="L182">        Scene scene = sceneRepository.findByIdAndTenantId(sceneId, currentUserProvider.tenantId())</span>
+<span class="fc" id="L183">                .orElseThrow(() -&gt; new ResourceNotFoundException(&quot;Scene not found: &quot; + sceneId));</span>
+        try {
+<span class="fc" id="L185">            bookAccessService.requireBookReadAccess(scene.getBook().getId());</span>
+<span class="nc" id="L186">        } catch (ResourceNotFoundException exception) {</span>
+<span class="nc" id="L187">            throw new ResourceNotFoundException(&quot;Scene not found: &quot; + sceneId);</span>
+<span class="fc" id="L188">        }</span>
+<span class="fc" id="L189">    }</span>
+
+    private boolean isEmptyContent(String contentJson, String contentText) {
+<span class="pc bpc" id="L192" title="1 of 4 branches missed.">        return normalize(contentJson).isBlank() &amp;&amp; normalize(contentText).isBlank();</span>
+    }
+
+    private String normalize(String value) {
+<span class="fc bfc" id="L196" title="All 2 branches covered.">        return value == null ? &quot;&quot; : value;</span>
+    }
+
+    private String snapshotTitle(String title) {
+<span class="pc bpc" id="L200" title="2 of 4 branches missed.">        if (title == null || title.isBlank()) {</span>
+<span class="nc" id="L201">            return UNTITLED_SCENE_TITLE;</span>
+        }
+
+<span class="fc" id="L204">        return title.trim();</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

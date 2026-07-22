@@ -1,0 +1,104 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="pt"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AuditLog.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">iwrite-backend</a> &gt; <a href="index.source.html" class="el_package">com.iwrite.audit.entity</a> &gt; <span class="el_source">AuditLog.java</span></div><h1>AuditLog.java</h1><pre class="source lang-java linenums">package com.iwrite.audit.entity;
+
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
+import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.GenerationType;
+import jakarta.persistence.Id;
+import jakarta.persistence.PrePersist;
+import jakarta.persistence.Table;
+
+import java.time.OffsetDateTime;
+import java.util.UUID;
+
+@Entity
+@Table(name = &quot;audit_logs&quot;)
+public class AuditLog {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.UUID)
+    private UUID id;
+
+    @Column(nullable = false, updatable = false)
+    private UUID tenantId;
+
+    @Column(nullable = false, updatable = false)
+    private UUID userId;
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, updatable = false, length = 64)
+    private AuditAction action;
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, updatable = false, length = 64)
+    private AuditResourceType resourceType;
+
+    @Column(updatable = false)
+    private UUID resourceId;
+
+    @Column(nullable = false, updatable = false)
+    private OffsetDateTime occurredAt;
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, updatable = false, length = 16)
+    private AuditResult result;
+
+<span class="fc" id="L48">    protected AuditLog() {</span>
+<span class="fc" id="L49">    }</span>
+
+    public AuditLog(
+            UUID tenantId,
+            UUID userId,
+            AuditAction action,
+            AuditResourceType resourceType,
+            UUID resourceId,
+            AuditResult result
+<span class="fc" id="L58">    ) {</span>
+<span class="fc" id="L59">        this.tenantId = tenantId;</span>
+<span class="fc" id="L60">        this.userId = userId;</span>
+<span class="fc" id="L61">        this.action = action;</span>
+<span class="fc" id="L62">        this.resourceType = resourceType;</span>
+<span class="fc" id="L63">        this.resourceId = resourceId;</span>
+<span class="fc" id="L64">        this.result = result;</span>
+<span class="fc" id="L65">    }</span>
+
+    @PrePersist
+    void onCreate() {
+<span class="fc" id="L69">        occurredAt = OffsetDateTime.now();</span>
+<span class="fc" id="L70">    }</span>
+
+    public UUID getId() {
+<span class="nc" id="L73">        return id;</span>
+    }
+
+    public UUID getTenantId() {
+<span class="fc" id="L77">        return tenantId;</span>
+    }
+
+    public UUID getUserId() {
+<span class="fc" id="L81">        return userId;</span>
+    }
+
+    public AuditAction getAction() {
+<span class="nc" id="L85">        return action;</span>
+    }
+
+    public AuditResourceType getResourceType() {
+<span class="fc" id="L89">        return resourceType;</span>
+    }
+
+    public UUID getResourceId() {
+<span class="nc" id="L93">        return resourceId;</span>
+    }
+
+    public OffsetDateTime getOccurredAt() {
+<span class="fc" id="L97">        return occurredAt;</span>
+    }
+
+    public AuditResult getResult() {
+<span class="fc" id="L101">        return result;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

@@ -1,0 +1,183 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="pt"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>CharacterService.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">iwrite-backend</a> &gt; <a href="index.source.html" class="el_package">com.iwrite.character.service</a> &gt; <span class="el_source">CharacterService.java</span></div><h1>CharacterService.java</h1><pre class="source lang-java linenums">package com.iwrite.character.service;
+
+import com.iwrite.book.entity.Book;
+import com.iwrite.book.service.BookAccessService;
+import com.iwrite.character.dto.CharacterRequest;
+import com.iwrite.character.dto.CharacterResponse;
+import com.iwrite.character.dto.CharacterUpdateRequest;
+import com.iwrite.character.entity.Character;
+import com.iwrite.character.repository.CharacterRepository;
+import com.iwrite.common.exception.ConflictException;
+import com.iwrite.common.exception.ResourceNotFoundException;
+import com.iwrite.common.validation.RequestValidation;
+import com.iwrite.item.repository.ItemRepository;
+import com.iwrite.scene.repository.SceneRepository;
+import com.iwrite.user.context.CurrentUserProvider;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.List;
+import java.util.UUID;
+
+@Service
+public class CharacterService {
+
+    private final CharacterRepository characterRepository;
+    private final BookAccessService bookAccessService;
+    private final CurrentUserProvider currentUserProvider;
+    private final SceneRepository sceneRepository;
+    private final ItemRepository itemRepository;
+
+    public CharacterService(
+            CharacterRepository characterRepository,
+            BookAccessService bookAccessService,
+            CurrentUserProvider currentUserProvider,
+            SceneRepository sceneRepository,
+            ItemRepository itemRepository
+<span class="fc" id="L38">    ) {</span>
+<span class="fc" id="L39">        this.characterRepository = characterRepository;</span>
+<span class="fc" id="L40">        this.bookAccessService = bookAccessService;</span>
+<span class="fc" id="L41">        this.currentUserProvider = currentUserProvider;</span>
+<span class="fc" id="L42">        this.sceneRepository = sceneRepository;</span>
+<span class="fc" id="L43">        this.itemRepository = itemRepository;</span>
+<span class="fc" id="L44">    }</span>
+
+    @Transactional(readOnly = true)
+    public List&lt;CharacterResponse&gt; findByBook(UUID bookId) {
+<span class="fc" id="L48">        bookAccessService.requireBookReadAccess(bookId);</span>
+<span class="fc" id="L49">        return characterRepository.findByBook_IdAndBook_Tenant_IdOrderByNameAscIdAsc(</span>
+                        bookId,
+<span class="fc" id="L51">                        currentUserProvider.tenantId()</span>
+                )
+<span class="fc" id="L53">                .stream()</span>
+<span class="fc" id="L54">                .map(CharacterResponse::fromEntity)</span>
+<span class="fc" id="L55">                .toList();</span>
+    }
+
+    @Transactional(readOnly = true)
+    public CharacterResponse findById(UUID characterId) {
+<span class="fc" id="L60">        return CharacterResponse.fromEntity(getCharacter(characterId));</span>
+    }
+
+    @Transactional
+    public CharacterResponse create(UUID bookId, CharacterRequest request) {
+<span class="fc" id="L65">        Book book = bookAccessService.requireBookEditAccess(bookId);</span>
+
+<span class="fc" id="L67">        Character character = new Character();</span>
+<span class="fc" id="L68">        character.setBook(book);</span>
+<span class="fc" id="L69">        character.setName(request.name());</span>
+<span class="fc" id="L70">        character.setNickname(request.nickname());</span>
+<span class="fc" id="L71">        character.setAge(request.age());</span>
+<span class="fc" id="L72">        character.setSex(request.sex());</span>
+<span class="fc" id="L73">        character.setNarrativeFunction(request.narrativeFunction());</span>
+<span class="fc" id="L74">        character.setGoal(request.goal());</span>
+<span class="fc" id="L75">        character.setConflict(request.conflict());</span>
+<span class="fc" id="L76">        character.setArc(request.arc());</span>
+<span class="fc" id="L77">        character.setPhysicalDescription(request.physicalDescription());</span>
+<span class="fc" id="L78">        character.setPersonality(request.personality());</span>
+<span class="fc" id="L79">        character.setBiography(request.biography());</span>
+<span class="fc" id="L80">        character.setNotes(request.notes());</span>
+
+<span class="fc" id="L82">        return CharacterResponse.fromEntity(characterRepository.save(character));</span>
+    }
+
+    @Transactional
+    public CharacterResponse update(UUID characterId, CharacterUpdateRequest request) {
+<span class="fc" id="L87">        Character character = getCharacter(characterId);</span>
+<span class="fc" id="L88">        RequestValidation.rejectBlankWhenPresent(&quot;name&quot;, request.name());</span>
+
+<span class="fc bfc" id="L90" title="All 2 branches covered.">        if (request.name() != null) {</span>
+<span class="fc" id="L91">            character.setName(request.name());</span>
+        }
+<span class="fc bfc" id="L93" title="All 2 branches covered.">        if (request.nickname() != null) {</span>
+<span class="fc" id="L94">            character.setNickname(request.nickname());</span>
+        }
+<span class="pc bpc" id="L96" title="1 of 2 branches missed.">        if (request.age() != null) {</span>
+<span class="nc" id="L97">            character.setAge(request.age());</span>
+        }
+<span class="pc bpc" id="L99" title="1 of 2 branches missed.">        if (request.sex() != null) {</span>
+<span class="nc" id="L100">            character.setSex(request.sex());</span>
+        }
+<span class="pc bpc" id="L102" title="1 of 2 branches missed.">        if (request.narrativeFunction() != null) {</span>
+<span class="nc" id="L103">            character.setNarrativeFunction(request.narrativeFunction());</span>
+        }
+<span class="pc bpc" id="L105" title="1 of 2 branches missed.">        if (request.goal() != null) {</span>
+<span class="nc" id="L106">            character.setGoal(request.goal());</span>
+        }
+<span class="pc bpc" id="L108" title="1 of 2 branches missed.">        if (request.conflict() != null) {</span>
+<span class="nc" id="L109">            character.setConflict(request.conflict());</span>
+        }
+<span class="pc bpc" id="L111" title="1 of 2 branches missed.">        if (request.arc() != null) {</span>
+<span class="nc" id="L112">            character.setArc(request.arc());</span>
+        }
+<span class="pc bpc" id="L114" title="1 of 2 branches missed.">        if (request.physicalDescription() != null) {</span>
+<span class="nc" id="L115">            character.setPhysicalDescription(request.physicalDescription());</span>
+        }
+<span class="pc bpc" id="L117" title="1 of 2 branches missed.">        if (request.personality() != null) {</span>
+<span class="nc" id="L118">            character.setPersonality(request.personality());</span>
+        }
+<span class="pc bpc" id="L120" title="1 of 2 branches missed.">        if (request.biography() != null) {</span>
+<span class="nc" id="L121">            character.setBiography(request.biography());</span>
+        }
+<span class="pc bpc" id="L123" title="1 of 2 branches missed.">        if (request.notes() != null) {</span>
+<span class="nc" id="L124">            character.setNotes(request.notes());</span>
+        }
+
+<span class="fc" id="L127">        return CharacterResponse.fromEntity(character);</span>
+    }
+
+    @Transactional
+    public void delete(UUID characterId) {
+<span class="fc" id="L132">        UUID tenantId = currentUserProvider.tenantId();</span>
+<span class="fc" id="L133">        Character character = getCharacterForUpdate(characterId, tenantId);</span>
+<span class="fc bfc" id="L134" title="All 2 branches covered.">        if (sceneRepository.existsByPovCharacter_Id(characterId)</span>
+<span class="fc bfc" id="L135" title="All 2 branches covered.">                || sceneRepository.existsByParticipantCharacterId(characterId)</span>
+<span class="fc bfc" id="L136" title="All 2 branches covered.">                || itemRepository.existsByCurrentOwnerCharacter_Id(characterId)) {</span>
+<span class="fc" id="L137">            throw characterReferencedConflict();</span>
+        }
+
+        try {
+<span class="fc" id="L141">            characterRepository.delete(character);</span>
+<span class="fc" id="L142">            characterRepository.flush();</span>
+<span class="nc" id="L143">        } catch (DataIntegrityViolationException exception) {</span>
+<span class="nc" id="L144">            throw characterReferencedConflict();</span>
+<span class="fc" id="L145">        }</span>
+<span class="fc" id="L146">    }</span>
+
+    @Transactional(readOnly = true)
+    public Character getCharacter(UUID characterId) {
+<span class="fc" id="L150">        Character character = characterRepository.findByIdAndBook_Tenant_Id(characterId, currentUserProvider.tenantId())</span>
+<span class="fc" id="L151">                .orElseThrow(() -&gt; characterNotFound(characterId));</span>
+<span class="fc" id="L152">        requireCharacterBookAccess(character, characterId, false);</span>
+<span class="fc" id="L153">        return character;</span>
+    }
+
+    private Character getCharacterForUpdate(UUID characterId, UUID tenantId) {
+<span class="fc" id="L157">        Character character = characterRepository.findByIdAndBookTenantIdForUpdate(characterId, tenantId)</span>
+<span class="fc" id="L158">                .orElseThrow(() -&gt; characterNotFound(characterId));</span>
+<span class="fc" id="L159">        requireCharacterBookAccess(character, characterId, true);</span>
+<span class="fc" id="L160">        return character;</span>
+    }
+
+    private void requireCharacterBookAccess(Character character, UUID characterId, boolean edit) {
+        try {
+<span class="fc bfc" id="L165" title="All 2 branches covered.">            if (edit) {</span>
+<span class="fc" id="L166">                bookAccessService.requireBookEditAccess(character.getBook().getId());</span>
+            } else {
+<span class="fc" id="L168">                bookAccessService.requireBookReadAccess(character.getBook().getId());</span>
+            }
+<span class="nc" id="L170">        } catch (ResourceNotFoundException exception) {</span>
+<span class="nc" id="L171">            throw characterNotFound(characterId);</span>
+<span class="fc" id="L172">        }</span>
+<span class="fc" id="L173">    }</span>
+
+    private ResourceNotFoundException characterNotFound(UUID characterId) {
+<span class="fc" id="L176">        return new ResourceNotFoundException(&quot;Character not found: &quot; + characterId);</span>
+    }
+
+    private ConflictException characterReferencedConflict() {
+<span class="fc" id="L180">        return new ConflictException(&quot;Character cannot be deleted while it is referenced.&quot;);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

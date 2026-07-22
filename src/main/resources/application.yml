@@ -1,18 +1,69 @@
 spring:
-  application:
-    name: mercado
-  profiles:
-    active: dev
+  http:
+    client:
+      connect-timeout: ${OPENAI_CONNECT_TIMEOUT:5s}
+      read-timeout: ${OPENAI_READ_TIMEOUT:60s}
+  ai:
+    model:
+      chat: ${SPRING_AI_MODEL_CHAT:none}
+      embedding: none
+      image: none
+      moderation: none
+      audio:
+        speech: none
+        transcription: none
 
-# Actuator - monitoramento da aplicação
-# Acesse: http://localhost:8080/actuator/health
-management:
-  endpoints:
-    web:
-      exposure:
-        # Expõe apenas os endpoints necessários (não exponha todos em produção!)
-        include: health,info,metrics
-  endpoint:
-    health:
-      # Detalhes do health só são exibidos para usuários autenticados
-      show-details: when-authorized
+    retry:
+      max-attempts: 2
+
+    openai:
+      base-url: ${OPENAI_BASE_URL:https://api.openai.com}
+      api-key: ${OPENAI_API_KEY:}
+
+      chat:
+        completions-path: ${OPENAI_COMPLETIONS_PATH:/v1/chat/completions}
+        options:
+          model: ${OPENAI_MODEL:gpt-4o-mini}
+  application:
+    name: iwrite-backend
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5435/iwrite}
+    username: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD:postgres}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 5
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        format_sql: true
+    open-in-view: false
+
+server:
+  port: ${SERVER_PORT:8085}
+
+logging:
+  level:
+    org.springframework.ai.converter.BeanOutputConverter: OFF
+    org.springframework.ai.retry.autoconfigure.SpringAiRetryAutoConfiguration: OFF
+
+iwrite:
+  ai:
+    openai:
+      chat:
+        options:
+          temperature: ${OPENAI_TEMPERATURE:}
+          max-tokens: ${OPENAI_MAX_TOKENS:}
+          max-completion-tokens: ${OPENAI_MAX_COMPLETION_TOKENS:}
+          reasoning-effort: ${OPENAI_REASONING_EFFORT:}
+  current-user:
+    development:
+      enabled: ${IWRITE_DEVELOPMENT_CURRENT_USER_ENABLED:false}
+      user-id: ${IWRITE_DEVELOPMENT_CURRENT_USER_ID:00000000-0000-0000-0000-000000000002}
+      tenant-id: ${IWRITE_DEVELOPMENT_TENANT_ID:00000000-0000-0000-0000-000000000001}
+      time-zone-id: ${IWRITE_DEVELOPMENT_TIME_ZONE_ID:America/Sao_Paulo}

@@ -1,0 +1,422 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="pt"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>BookDashboardService.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">iwrite-backend</a> &gt; <a href="index.source.html" class="el_package">com.iwrite.dashboard.service</a> &gt; <span class="el_source">BookDashboardService.java</span></div><h1>BookDashboardService.java</h1><pre class="source lang-java linenums">package com.iwrite.dashboard.service;
+
+import com.iwrite.book.entity.Book;
+import com.iwrite.book.service.BookAccessService;
+import com.iwrite.chapter.entity.Chapter;
+import com.iwrite.chapter.repository.ChapterRepository;
+import com.iwrite.character.entity.Character;
+import com.iwrite.dashboard.dto.BookDashboardResponse;
+import com.iwrite.dashboard.dto.BookMyWritingResponse;
+import com.iwrite.dashboard.dto.DashboardSceneSummaryResponse;
+import com.iwrite.dashboard.dto.DailyWritingProgressResponse;
+import com.iwrite.dashboard.dto.EntityUsageResponse;
+import com.iwrite.dashboard.dto.NarrativeGapsResponse;
+import com.iwrite.dashboard.dto.PlanningProgressResponse;
+import com.iwrite.dashboard.dto.PovStatsResponse;
+import com.iwrite.dashboard.dto.StatusCountResponse;
+import com.iwrite.dashboard.dto.WritingConsistencyResponse;
+import com.iwrite.dashboard.dto.WritingProgressDashboardResponse;
+import com.iwrite.dashboard.dto.WritingScheduleResponse;
+import com.iwrite.item.entity.Item;
+import com.iwrite.location.entity.Location;
+import com.iwrite.scene.entity.Scene;
+import com.iwrite.scene.entity.SceneStatus;
+import com.iwrite.scene.repository.SceneRepository;
+import com.iwrite.scene.service.ScenePlanningCompletenessService;
+import com.iwrite.section.entity.BookSection;
+import com.iwrite.section.repository.BookSectionRepository;
+import com.iwrite.writingprogress.entity.DailyWritingProgress;
+import com.iwrite.writingprogress.service.DailyWritingProgressService;
+import com.iwrite.writingprogress.service.WritingScheduleService;
+import com.iwrite.writingprogress.service.WritingProgressPeriod;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.time.LocalDate;
+import java.util.Comparator;
+import java.util.EnumMap;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+
+@Service
+public class BookDashboardService {
+
+    private final BookAccessService bookAccessService;
+    private final BookSectionRepository sectionRepository;
+    private final ChapterRepository chapterRepository;
+    private final SceneRepository sceneRepository;
+    private final DailyWritingProgressService dailyWritingProgressService;
+    private final WritingScheduleService writingScheduleService;
+    private final ScenePlanningCompletenessService planningCompletenessService;
+
+    public BookDashboardService(
+            BookAccessService bookAccessService,
+            BookSectionRepository sectionRepository,
+            ChapterRepository chapterRepository,
+            SceneRepository sceneRepository,
+            DailyWritingProgressService dailyWritingProgressService,
+            WritingScheduleService writingScheduleService,
+            ScenePlanningCompletenessService planningCompletenessService
+<span class="fc" id="L62">    ) {</span>
+<span class="fc" id="L63">        this.bookAccessService = bookAccessService;</span>
+<span class="fc" id="L64">        this.sectionRepository = sectionRepository;</span>
+<span class="fc" id="L65">        this.chapterRepository = chapterRepository;</span>
+<span class="fc" id="L66">        this.sceneRepository = sceneRepository;</span>
+<span class="fc" id="L67">        this.dailyWritingProgressService = dailyWritingProgressService;</span>
+<span class="fc" id="L68">        this.writingScheduleService = writingScheduleService;</span>
+<span class="fc" id="L69">        this.planningCompletenessService = planningCompletenessService;</span>
+<span class="fc" id="L70">    }</span>
+
+    @Transactional
+    public BookDashboardResponse getDashboard(UUID bookId) {
+<span class="fc" id="L74">        return getDashboard(bookId, WritingProgressPeriod.DEFAULT);</span>
+    }
+
+    @Transactional
+    public BookDashboardResponse getDashboard(UUID bookId, WritingProgressPeriod progressPeriod) {
+<span class="fc" id="L79">        Book book = bookAccessService.requireBookReadAccess(bookId);</span>
+<span class="fc" id="L80">        List&lt;Scene&gt; scenes = sceneRepository.findByBookIdOrderBySortOrderAsc(bookId);</span>
+
+<span class="fc" id="L82">        int totalScenes = scenes.size();</span>
+<span class="fc" id="L83">        int totalWordCount = scenes.stream()</span>
+<span class="fc" id="L84">                .mapToInt(this::wordCount)</span>
+<span class="fc" id="L85">                .sum();</span>
+<span class="fc" id="L86">        int plannedScenesCount = (int) scenes.stream()</span>
+<span class="fc" id="L87">                .filter(this::isPlanned)</span>
+<span class="fc" id="L88">                .count();</span>
+
+<span class="fc" id="L90">        return new BookDashboardResponse(</span>
+<span class="fc" id="L91">                book.getId(),</span>
+<span class="fc" id="L92">                book.getTitle(),</span>
+                totalWordCount,
+<span class="fc" id="L94">                book.getTargetWordCount(),</span>
+<span class="fc" id="L95">                book.getDailyTargetWordCount(),</span>
+<span class="fc" id="L96">                remainingWordCount(totalWordCount, book.getTargetWordCount()),</span>
+<span class="fc" id="L97">                wordCountProgressPercent(totalWordCount, book.getTargetWordCount()),</span>
+<span class="fc" id="L98">                exceededTargetWordCount(totalWordCount, book.getTargetWordCount()),</span>
+<span class="fc" id="L99">                sectionRepository.countByBookId(bookId),</span>
+<span class="fc" id="L100">                chapterRepository.countByBookId(bookId),</span>
+                totalScenes,
+                new BookMyWritingResponse(
+<span class="fc" id="L103">                        buildWritingProgress(bookId, totalWordCount, progressPeriod),</span>
+<span class="fc" id="L104">                        buildWritingSchedule(book)</span>
+                ),
+<span class="fc" id="L106">                new PlanningProgressResponse(plannedScenesCount, totalScenes, plannedScenesPercent(plannedScenesCount, totalScenes)),</span>
+<span class="fc" id="L107">                buildStatusCounts(scenes),</span>
+<span class="fc" id="L108">                buildPovStats(scenes),</span>
+<span class="fc" id="L109">                buildNarrativeGaps(scenes),</span>
+<span class="fc" id="L110">                buildCharacterUsage(scenes),</span>
+<span class="fc" id="L111">                buildLocationUsage(scenes),</span>
+<span class="fc" id="L112">                buildItemUsage(scenes)</span>
+        );
+    }
+
+    private WritingProgressDashboardResponse buildWritingProgress(UUID bookId, int totalWordCount, WritingProgressPeriod progressPeriod) {
+<span class="fc" id="L117">        DailyWritingProgress today = dailyWritingProgressService.getTodayProgressOrEmpty(bookId, totalWordCount);</span>
+<span class="fc" id="L118">        List&lt;DailyWritingProgressResponse&gt; recentDays = dailyWritingProgressService.getRecentProgress(bookId, progressPeriod)</span>
+<span class="fc" id="L119">                .stream()</span>
+<span class="fc" id="L120">                .map(this::toDailyWritingProgressResponse)</span>
+<span class="fc" id="L121">                .toList();</span>
+<span class="fc" id="L122">        WritingConsistencyResponse consistency = dailyWritingProgressService.getWritingConsistency(bookId, progressPeriod);</span>
+
+<span class="fc" id="L124">        return new WritingProgressDashboardResponse(toDailyWritingProgressResponse(today), recentDays, consistency);</span>
+    }
+
+    private WritingScheduleResponse buildWritingSchedule(Book book) {
+<span class="fc" id="L128">        UUID bookId = book.getId();</span>
+<span class="fc" id="L129">        var activeSchedule = writingScheduleService.getOrCreateActiveScheduleForCurrentUser(book);</span>
+<span class="fc" id="L130">        List&lt;java.time.DayOfWeek&gt; plannedWritingDays = writingScheduleService.orderedDays(activeSchedule.getPlannedDays());</span>
+<span class="fc" id="L131">        LocalDate today = dailyWritingProgressService.today();</span>
+<span class="fc" id="L132">        boolean todayPlannedWritingDay = writingScheduleService.getScheduleForDate(book, today)</span>
+<span class="fc" id="L133">                .getPlannedDays()</span>
+<span class="fc" id="L134">                .contains(today.getDayOfWeek());</span>
+
+<span class="fc" id="L136">        return new WritingScheduleResponse(</span>
+                plannedWritingDays,
+<span class="fc" id="L138">                plannedWritingDays.size(),</span>
+<span class="fc" id="L139">                writingScheduleService.restDays(plannedWritingDays),</span>
+                todayPlannedWritingDay,
+<span class="fc" id="L141">                activeSchedule.getEffectiveFrom()</span>
+        );
+    }
+
+    private DailyWritingProgressResponse toDailyWritingProgressResponse(DailyWritingProgress progress) {
+<span class="fc" id="L146">        return new DailyWritingProgressResponse(</span>
+<span class="fc" id="L147">                progress.getProgressDate(),</span>
+<span class="fc" id="L148">                progress.getDailyTargetWordCount(),</span>
+<span class="fc" id="L149">                progress.getStartingManuscriptWordCount(),</span>
+<span class="fc" id="L150">                progress.getEndingManuscriptWordCount(),</span>
+<span class="fc" id="L151">                progress.getProductiveWordCountChange(),</span>
+<span class="fc" id="L152">                progress.getManuscriptAdjustmentWordCount(),</span>
+<span class="fc" id="L153">                dailyProgressPercent(progress.getProductiveWordCountChange(), progress.getDailyTargetWordCount())</span>
+        );
+    }
+
+    private List&lt;StatusCountResponse&gt; buildStatusCounts(List&lt;Scene&gt; scenes) {
+<span class="fc" id="L158">        Map&lt;SceneStatus, CountStats&gt; statsByStatus = new EnumMap&lt;&gt;(SceneStatus.class);</span>
+<span class="fc bfc" id="L159" title="All 2 branches covered.">        for (SceneStatus status : SceneStatus.values()) {</span>
+<span class="fc" id="L160">            statsByStatus.put(status, new CountStats());</span>
+        }
+
+<span class="fc bfc" id="L163" title="All 2 branches covered.">        for (Scene scene : scenes) {</span>
+<span class="fc" id="L164">            CountStats stats = statsByStatus.get(scene.getStatus());</span>
+<span class="fc" id="L165">            stats.add(scene);</span>
+<span class="fc" id="L166">        }</span>
+
+<span class="fc" id="L168">        return statsByStatus.entrySet()</span>
+<span class="fc" id="L169">                .stream()</span>
+<span class="fc" id="L170">                .map(entry -&gt; new StatusCountResponse(</span>
+<span class="fc" id="L171">                        entry.getKey(),</span>
+<span class="fc" id="L172">                        entry.getValue().scenesCount,</span>
+<span class="fc" id="L173">                        entry.getValue().wordCount,</span>
+<span class="fc" id="L174">                        entry.getValue().scenes</span>
+                ))
+<span class="fc" id="L176">                .toList();</span>
+    }
+
+    private List&lt;PovStatsResponse&gt; buildPovStats(List&lt;Scene&gt; scenes) {
+<span class="fc" id="L180">        Map&lt;UUID, NamedCountStats&gt; statsByCharacterId = new HashMap&lt;&gt;();</span>
+
+<span class="fc bfc" id="L182" title="All 2 branches covered.">        for (Scene scene : scenes) {</span>
+<span class="fc" id="L183">            Character povCharacter = scene.getPovCharacter();</span>
+<span class="fc bfc" id="L184" title="All 2 branches covered.">            if (povCharacter == null) {</span>
+<span class="fc" id="L185">                continue;</span>
+            }
+
+<span class="fc" id="L188">            statsByCharacterId</span>
+<span class="fc" id="L189">                    .computeIfAbsent(povCharacter.getId(), id -&gt; new NamedCountStats(id, povCharacter.getName()))</span>
+<span class="fc" id="L190">                    .add(wordCount(scene));</span>
+<span class="fc" id="L191">        }</span>
+
+<span class="fc" id="L193">        return statsByCharacterId.values()</span>
+<span class="fc" id="L194">                .stream()</span>
+<span class="fc" id="L195">                .sorted(namedStatsComparator())</span>
+<span class="fc" id="L196">                .map(stats -&gt; new PovStatsResponse(stats.id, stats.name, stats.scenesCount, stats.wordCount))</span>
+<span class="fc" id="L197">                .toList();</span>
+    }
+
+    private NarrativeGapsResponse buildNarrativeGaps(List&lt;Scene&gt; scenes) {
+<span class="fc" id="L201">        int scenesWithoutPov = 0;</span>
+<span class="fc" id="L202">        int scenesWithoutGoal = 0;</span>
+<span class="fc" id="L203">        int scenesWithoutConflict = 0;</span>
+<span class="fc" id="L204">        int scenesWithoutOutcome = 0;</span>
+<span class="fc" id="L205">        int scenesWithoutMainLocation = 0;</span>
+<span class="fc" id="L206">        int scenesWithoutParticipants = 0;</span>
+
+<span class="fc bfc" id="L208" title="All 2 branches covered.">        for (Scene scene : scenes) {</span>
+<span class="fc bfc" id="L209" title="All 2 branches covered.">            if (scene.getPovCharacter() == null) {</span>
+<span class="fc" id="L210">                scenesWithoutPov++;</span>
+            }
+<span class="fc bfc" id="L212" title="All 2 branches covered.">            if (!hasText(scene.getGoal())) {</span>
+<span class="fc" id="L213">                scenesWithoutGoal++;</span>
+            }
+<span class="fc bfc" id="L215" title="All 2 branches covered.">            if (!hasText(scene.getConflict())) {</span>
+<span class="fc" id="L216">                scenesWithoutConflict++;</span>
+            }
+<span class="fc bfc" id="L218" title="All 2 branches covered.">            if (!hasText(scene.getOutcome())) {</span>
+<span class="fc" id="L219">                scenesWithoutOutcome++;</span>
+            }
+<span class="fc bfc" id="L221" title="All 2 branches covered.">            if (scene.getMainLocation() == null) {</span>
+<span class="fc" id="L222">                scenesWithoutMainLocation++;</span>
+            }
+<span class="fc bfc" id="L224" title="All 2 branches covered.">            if (scene.getParticipantCharacters().isEmpty()) {</span>
+<span class="fc" id="L225">                scenesWithoutParticipants++;</span>
+            }
+<span class="fc" id="L227">        }</span>
+
+<span class="fc" id="L229">        return new NarrativeGapsResponse(</span>
+                scenesWithoutPov,
+                scenesWithoutGoal,
+                scenesWithoutConflict,
+                scenesWithoutOutcome,
+                scenesWithoutMainLocation,
+                scenesWithoutParticipants
+        );
+    }
+
+    private List&lt;EntityUsageResponse&gt; buildCharacterUsage(List&lt;Scene&gt; scenes) {
+<span class="fc" id="L240">        Map&lt;UUID, NamedCountStats&gt; statsByCharacterId = new HashMap&lt;&gt;();</span>
+
+<span class="fc bfc" id="L242" title="All 2 branches covered.">        for (Scene scene : scenes) {</span>
+<span class="fc bfc" id="L243" title="All 2 branches covered.">            for (Character character : scene.getParticipantCharacters()) {</span>
+<span class="fc" id="L244">                statsByCharacterId</span>
+<span class="fc" id="L245">                        .computeIfAbsent(character.getId(), id -&gt; new NamedCountStats(id, character.getName()))</span>
+<span class="fc" id="L246">                        .addScene();</span>
+<span class="fc" id="L247">            }</span>
+<span class="fc" id="L248">        }</span>
+
+<span class="fc" id="L250">        return toEntityUsage(statsByCharacterId);</span>
+    }
+
+    private List&lt;EntityUsageResponse&gt; buildLocationUsage(List&lt;Scene&gt; scenes) {
+<span class="fc" id="L254">        Map&lt;UUID, NamedCountStats&gt; statsByLocationId = new HashMap&lt;&gt;();</span>
+
+<span class="fc bfc" id="L256" title="All 2 branches covered.">        for (Scene scene : scenes) {</span>
+<span class="fc" id="L257">            Location location = scene.getMainLocation();</span>
+<span class="fc bfc" id="L258" title="All 2 branches covered.">            if (location == null) {</span>
+<span class="fc" id="L259">                continue;</span>
+            }
+
+<span class="fc" id="L262">            statsByLocationId</span>
+<span class="fc" id="L263">                    .computeIfAbsent(location.getId(), id -&gt; new NamedCountStats(id, location.getName()))</span>
+<span class="fc" id="L264">                    .addScene();</span>
+<span class="fc" id="L265">        }</span>
+
+<span class="fc" id="L267">        return toEntityUsage(statsByLocationId);</span>
+    }
+
+    private List&lt;EntityUsageResponse&gt; buildItemUsage(List&lt;Scene&gt; scenes) {
+<span class="fc" id="L271">        Map&lt;UUID, NamedCountStats&gt; statsByItemId = new HashMap&lt;&gt;();</span>
+
+<span class="fc bfc" id="L273" title="All 2 branches covered.">        for (Scene scene : scenes) {</span>
+<span class="fc bfc" id="L274" title="All 2 branches covered.">            for (Item item : scene.getItems()) {</span>
+<span class="fc" id="L275">                statsByItemId</span>
+<span class="fc" id="L276">                        .computeIfAbsent(item.getId(), id -&gt; new NamedCountStats(id, item.getName()))</span>
+<span class="fc" id="L277">                        .addScene();</span>
+<span class="fc" id="L278">            }</span>
+<span class="fc" id="L279">        }</span>
+
+<span class="fc" id="L281">        return toEntityUsage(statsByItemId);</span>
+    }
+
+    private List&lt;EntityUsageResponse&gt; toEntityUsage(Map&lt;UUID, NamedCountStats&gt; statsById) {
+<span class="fc" id="L285">        return statsById.values()</span>
+<span class="fc" id="L286">                .stream()</span>
+<span class="fc" id="L287">                .sorted(namedStatsComparator())</span>
+<span class="fc" id="L288">                .map(stats -&gt; new EntityUsageResponse(stats.id, stats.name, stats.scenesCount))</span>
+<span class="fc" id="L289">                .toList();</span>
+    }
+
+    private Comparator&lt;NamedCountStats&gt; namedStatsComparator() {
+<span class="fc" id="L293">        return Comparator</span>
+<span class="fc" id="L294">                .comparingInt((NamedCountStats stats) -&gt; stats.scenesCount)</span>
+<span class="fc" id="L295">                .reversed()</span>
+<span class="fc" id="L296">                .thenComparing(stats -&gt; stats.name)</span>
+<span class="pc" id="L297">                .thenComparing(stats -&gt; stats.id);</span>
+    }
+
+    private boolean isPlanned(Scene scene) {
+<span class="fc" id="L301">        return planningCompletenessService.isComplete(scene);</span>
+    }
+
+    private boolean hasText(String value) {
+<span class="pc bpc" id="L305" title="1 of 4 branches missed.">        return value != null &amp;&amp; !value.trim().isEmpty();</span>
+    }
+
+    private int wordCount(Scene scene) {
+<span class="pc bpc" id="L309" title="1 of 2 branches missed.">        return scene.getWordCount() == null ? 0 : scene.getWordCount();</span>
+    }
+
+    private DashboardSceneSummaryResponse toSceneSummary(Scene scene) {
+<span class="fc" id="L313">        Chapter chapter = scene.getChapter();</span>
+<span class="fc" id="L314">        BookSection section = chapter.getSection();</span>
+
+<span class="fc" id="L316">        return new DashboardSceneSummaryResponse(</span>
+<span class="fc" id="L317">                scene.getId(),</span>
+<span class="fc" id="L318">                scene.getTitle(),</span>
+<span class="fc" id="L319">                scene.getSummary(),</span>
+<span class="fc" id="L320">                scene.getStatus(),</span>
+<span class="fc" id="L321">                wordCount(scene),</span>
+<span class="fc" id="L322">                chapter.getId(),</span>
+<span class="fc" id="L323">                chapter.getTitle(),</span>
+<span class="fc" id="L324">                section.getId(),</span>
+<span class="fc" id="L325">                section.getTitle(),</span>
+<span class="fc bfc" id="L326" title="All 2 branches covered.">                scene.getPovCharacter() == null ? null : scene.getPovCharacter().getName(),</span>
+<span class="fc bfc" id="L327" title="All 2 branches covered.">                scene.getMainLocation() == null ? null : scene.getMainLocation().getName(),</span>
+<span class="fc" id="L328">                scene.getParticipantCharacters()</span>
+<span class="fc" id="L329">                        .stream()</span>
+<span class="fc" id="L330">                        .map(Character::getName)</span>
+<span class="fc" id="L331">                        .sorted()</span>
+<span class="fc" id="L332">                        .toList(),</span>
+<span class="fc" id="L333">                scene.getItems()</span>
+<span class="fc" id="L334">                        .stream()</span>
+<span class="fc" id="L335">                        .map(Item::getName)</span>
+<span class="fc" id="L336">                        .sorted()</span>
+<span class="fc" id="L337">                        .toList(),</span>
+<span class="fc" id="L338">                scene.getGoal(),</span>
+<span class="fc" id="L339">                scene.getConflict(),</span>
+<span class="fc" id="L340">                scene.getOutcome(),</span>
+<span class="fc" id="L341">                scene.getPlanningNotes()</span>
+        );
+    }
+
+    private double plannedScenesPercent(int plannedScenesCount, int totalScenes) {
+<span class="fc bfc" id="L346" title="All 2 branches covered.">        if (totalScenes == 0) {</span>
+<span class="fc" id="L347">            return 0.0;</span>
+        }
+
+<span class="fc" id="L350">        return (plannedScenesCount * 100.0) / totalScenes;</span>
+    }
+
+    private Integer remainingWordCount(int totalWordCount, Integer targetWordCount) {
+<span class="fc bfc" id="L354" title="All 2 branches covered.">        if (!hasValidTargetWordCount(targetWordCount)) {</span>
+<span class="fc" id="L355">            return null;</span>
+        }
+
+<span class="fc" id="L358">        return Math.max(targetWordCount - totalWordCount, 0);</span>
+    }
+
+    private Double wordCountProgressPercent(int totalWordCount, Integer targetWordCount) {
+<span class="fc bfc" id="L362" title="All 2 branches covered.">        if (!hasValidTargetWordCount(targetWordCount)) {</span>
+<span class="fc" id="L363">            return null;</span>
+        }
+
+<span class="fc" id="L366">        return (totalWordCount * 100.0) / targetWordCount;</span>
+    }
+
+    private Integer exceededTargetWordCount(int totalWordCount, Integer targetWordCount) {
+<span class="fc bfc" id="L370" title="All 2 branches covered.">        if (!hasValidTargetWordCount(targetWordCount)) {</span>
+<span class="fc" id="L371">            return null;</span>
+        }
+
+<span class="fc" id="L374">        return Math.max(totalWordCount - targetWordCount, 0);</span>
+    }
+
+    private Double dailyProgressPercent(int productiveWordCountChange, Integer dailyTargetWordCount) {
+<span class="fc bfc" id="L378" title="All 2 branches covered.">        if (!hasValidTargetWordCount(dailyTargetWordCount)) {</span>
+<span class="fc" id="L379">            return null;</span>
+        }
+
+<span class="fc" id="L382">        return (productiveWordCountChange * 100.0) / dailyTargetWordCount;</span>
+    }
+
+    private boolean hasValidTargetWordCount(Integer targetWordCount) {
+<span class="pc bpc" id="L386" title="1 of 4 branches missed.">        return targetWordCount != null &amp;&amp; targetWordCount &gt; 0;</span>
+    }
+
+<span class="fc" id="L389">    private class CountStats {</span>
+        private int scenesCount;
+        private int wordCount;
+<span class="fc" id="L392">        private final List&lt;DashboardSceneSummaryResponse&gt; scenes = new java.util.ArrayList&lt;&gt;();</span>
+
+        void add(Scene scene) {
+<span class="fc" id="L395">            scenesCount++;</span>
+<span class="fc" id="L396">            wordCount += wordCount(scene);</span>
+<span class="fc" id="L397">            scenes.add(toSceneSummary(scene));</span>
+<span class="fc" id="L398">        }</span>
+    }
+
+    private static class NamedCountStats {
+        private final UUID id;
+        private final String name;
+        private int scenesCount;
+        private int wordCount;
+
+<span class="fc" id="L407">        NamedCountStats(UUID id, String name) {</span>
+<span class="fc" id="L408">            this.id = id;</span>
+<span class="fc" id="L409">            this.name = name;</span>
+<span class="fc" id="L410">        }</span>
+
+        void add(int sceneWordCount) {
+<span class="fc" id="L413">            scenesCount++;</span>
+<span class="fc" id="L414">            wordCount += sceneWordCount;</span>
+<span class="fc" id="L415">        }</span>
+
+        void addScene() {
+<span class="fc" id="L418">            scenesCount++;</span>
+<span class="fc" id="L419">        }</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

@@ -1,343 +1,200 @@
-# Sistema Mercado — Projeto Base DSC/UFPB
+# IWrite
 
-Projeto base (boilerplate) para a disciplina **Desenvolvimento de Sistemas Corporativos**.
-
-**Professor**: Rodrigo Rebouças | **UFPB — Campus IV**
-
----
+IWrite é uma aplicação web para escrita e organização narrativa. O modelo principal é `Livro -> Seção -> Capítulo -> Cena`; a cena concentra o texto TipTap, o autosave, o planejamento, o histórico de versões e a análise opcional com OpenAI.
 
 ## Tecnologias
 
-| Camada | Tecnologia |
-|--------|-----------|
-| Backend | Java 21 + Spring Boot 3.4.5 |
-| Templates | Thymeleaf + HTMX 2.0 |
-| Frontend | Bootstrap 5.3 |
-| Banco | PostgreSQL 16 |
-| Migrações | Flyway 11 |
-| Segurança | Spring Security 6 |
-| Build | Maven 3.9 |
-| CI/CD | GitHub Actions |
+- Backend: Java 21, Spring Boot 3.4.1, Spring Data JPA, Flyway e PostgreSQL 16.
+- Frontend: Next.js 15, React 19, TypeScript, Tailwind CSS, TanStack Query e TipTap.
+- Qualidade: JUnit/Spring Boot Test, JaCoCo, Vitest, Testing Library e V8 Coverage.
+- Infraestrutura local: Docker Compose com `db`, `backend` e `frontend`.
 
----
+## Estrutura do projeto
 
-## Guia de Instalação para Alunos
+- `src/main/java/com/iwrite/`: controllers, services, repositories, entidades e DTOs do backend.
+- `src/main/resources/db/migration/`: migrations Flyway.
+- `src/test/java/com/iwrite/`: testes unitários e de integração do backend.
+- `web/src/app/`: rotas Next.js.
+- `web/src/features/`: funcionalidades e testes do frontend.
+- `cobertura/`: relatórios HTML de cobertura versionados.
 
-### Passo 1 — Instale o Java 21
+## Execução local com Docker Compose
 
-O projeto requer Java 21. Recomendamos o **Eclipse Temurin** (distribuição gratuita da Adoptium).
-
-**Windows / macOS / Linux:**
-1. Acesse https://adoptium.net/temurin/releases/?version=21
-2. Baixe o instalador para seu sistema operacional
-3. Execute o instalador e siga as instruções
-
-**Verificar se está correto:**
-```bash
-java -version
-# Esperado: openjdk version "21.x.x" ...
-```
-
-> **Dica para Windows:** durante a instalação, marque a opção *"Add to PATH"* e *"Set JAVA_HOME"*.
-
----
-
-### Passo 2 — Instale o Maven
-
-O Maven é a ferramenta de build do projeto.
-
-**macOS (com Homebrew):**
-```bash
-brew install maven
-```
-
-**Windows:**
-1. Acesse https://maven.apache.org/download.cgi
-2. Baixe o arquivo `apache-maven-3.x.x-bin.zip`
-3. Extraia para uma pasta (ex.: `C:\maven`)
-4. Adicione `C:\maven\bin` à variável de ambiente `PATH`
-
-**Linux (Ubuntu/Debian):**
-```bash
-sudo apt install maven
-```
-
-**Verificar:**
-```bash
-mvn -version
-# Esperado: Apache Maven 3.x.x
-```
-
----
-
-### Passo 3 — Instale o Docker Desktop
-
-O Docker sobe o banco de dados PostgreSQL sem precisar instalar nada manualmente.
-
-1. Acesse https://www.docker.com/products/docker-desktop/
-2. Baixe e instale o Docker Desktop para seu sistema
-3. Abra o Docker Desktop e aguarde ele inicializar (ícone na barra de tarefas)
-
-**Verificar:**
-```bash
-docker -v
-# Esperado: Docker version 27.x.x ...
-```
-
-> **Importante:** o Docker Desktop deve estar **em execução** sempre que você for rodar o projeto.
-
----
-
-### Passo 4 — Clone o repositório
+Suba o projeto inteiro:
 
 ```bash
-git clone <URL-DO-REPOSITÓRIO>
-cd base_projeto
+docker compose up -d --build
 ```
 
-> Substitua `<URL-DO-REPOSITÓRIO>` pela URL fornecida pelo professor.
+Serviços:
 
----
+- Frontend: `http://localhost:3000`
+- Backend: `http://localhost:8085`
+- PostgreSQL host local: `localhost:5435`
+- PostgreSQL host interno Docker: `db:5432`
+- Database: `iwrite`
+- User: `postgres`
+- Password local: `postgres`
 
-### Passo 5 — Execute o projeto
-
-Você tem duas opções. **Recomendamos a Opção A para a primeira execução.**
-
-#### Opção A: Tudo com Docker (mais simples)
-
-Um único comando sobe o banco, a aplicação e o Adminer (interface web do banco):
+Para parar:
 
 ```bash
-docker compose -f docker/docker-compose.dev.yml up --build
+docker compose down
 ```
 
-Aguarde as mensagens de inicialização. Quando aparecer algo como:
-```
-Started MercadoApplication in X.XXX seconds
-```
-...a aplicação está pronta.
+## Execução local sem Docker
 
-#### Opção B: Banco no Docker + aplicação local (recomendado para desenvolvimento)
-
-Esta opção permite editar o código e ver as mudanças mais rápido:
+Suba apenas o PostgreSQL local:
 
 ```bash
-# Terminal 1 — sobe o banco de dados
-docker compose -f docker/docker-compose.dev.yml up postgres adminer
-
-# Terminal 2 — roda a aplicação (em outro terminal, na mesma pasta)
-mvn spring-boot:run
+docker compose up -d db
 ```
 
----
+Configuração padrão:
 
-### Passo 6 — Acesse no browser
+- API: `http://localhost:8085`
+- PostgreSQL host: `localhost:5435`
+- Database: `iwrite`
+- User: `postgres`
+- Password local: `postgres`
 
-| O que | Endereço |
-|-------|----------|
-| Aplicação | http://localhost:8080 |
-| Login | usuário: `admin` / senha: `admin123` |
-| Adminer (banco) | http://localhost:8888 |
-| Health check | http://localhost:8080/actuator/health |
+Compile o backend no Windows:
 
----
+```powershell
+.\mvnw.cmd -s .mvn/local-settings.xml -DskipTests compile
+```
 
-### Parando o projeto
+Execute o backend no Windows com o perfil de desenvolvimento, que habilita explicitamente a identidade temporária local:
+
+```powershell
+.\mvnw.cmd spring-boot:run -Dspring-boot.run.profiles=development
+```
+
+Compile o backend no Linux/macOS:
 
 ```bash
-# Parar a aplicação: Ctrl+C no terminal onde está rodando
-
-# Parar os containers Docker:
-docker compose -f docker/docker-compose.dev.yml down
+./mvnw -s .mvn/local-settings.xml -DskipTests compile
 ```
 
----
-
-## Solução de Problemas Comuns
-
-### "Port 8080 already in use"
-Outra aplicação está usando a porta 8080. Para liberar:
-```bash
-# macOS / Linux
-lsof -ti:8080 | xargs kill
-
-# Windows (PowerShell)
-netstat -ano | findstr :8080
-# Anote o PID da última coluna e execute:
-taskkill /PID <número-do-pid> /F
-```
-
-### "Cannot connect to the Docker daemon"
-O Docker Desktop não está em execução. Abra o aplicativo Docker Desktop e aguarde inicializar.
-
-### "Connection refused" ao banco de dados
-O container do PostgreSQL ainda não subiu. Aguarde alguns segundos e tente novamente. Você pode verificar com:
-```bash
-docker compose -f docker/docker-compose.dev.yml ps
-# O container "mercado-postgres-dev" deve estar com status "healthy"
-```
-
-### Erro de compilação Java
-Verifique se o Java 21 está sendo usado pelo Maven:
-```bash
-mvn -version
-# A linha "Java version:" deve mostrar 21.x.x
-```
-Se mostrar outra versão, configure a variável `JAVA_HOME` apontando para o Java 21.
-
-### Flyway: "Found non-empty schema(s) with no schema history table"
-O banco existe mas foi criado sem as migrations. Apague os dados e recomece:
-```bash
-docker compose -f docker/docker-compose.dev.yml down -v
-docker compose -f docker/docker-compose.dev.yml up postgres
-```
-
----
-
-## Testes
+Execute o backend no Linux/macOS com o perfil de desenvolvimento:
 
 ```bash
-# Rodar todos os testes (requer Docker em execução — usa Testcontainers)
-mvn test
-
-# Rodar com relatório de cobertura (JaCoCo)
-mvn verify
-# Relatório: abra o arquivo target/site/jacoco/index.html no browser
+./mvnw spring-boot:run -Dspring-boot.run.profiles=development
 ```
 
----
+## Frontend local
 
-## Análise de Segurança (SAST)
+O app Next.js fica em `web/` e usa `NEXT_PUBLIC_API_URL=http://localhost:8085` por padrão.
 
 ```bash
-# SpotBugs + FindSecBugs + OWASP Dependency Check
-mvn verify -Psecurity
-
-# Trivy: scan de vulnerabilidades no filesystem
-docker compose -f docker/docker-compose.dev.yml --profile scan up trivy
-
-# Verificar dependências desatualizadas
-mvn versions:display-dependency-updates -Pversions
+cd web
+npm ci
+npm run dev
 ```
 
-Veja `docs/SECURITY.md` para detalhes.
+## Variáveis de ambiente
 
----
+Banco e runtime:
 
-## Configurando o Deploy Automático (GitHub Actions)
+- `DB_URL`, `DB_USERNAME`, `DB_PASSWORD`: conexão PostgreSQL.
+- `SERVER_PORT`: porta do backend; padrão `8085`.
+- `NEXT_PUBLIC_API_URL`: URL pública da API para o frontend.
+- `IWRITE_DEVELOPMENT_CURRENT_USER_ENABLED`: habilita somente a identidade temporária de desenvolvimento.
+- `IWRITE_DEVELOPMENT_CURRENT_USER_ID`, `IWRITE_DEVELOPMENT_TENANT_ID`, `IWRITE_DEVELOPMENT_TIME_ZONE_ID`: identidade temporária local.
 
-O projeto inclui um pipeline de CI/CD em `.github/workflows/deploy.yml` que:
-- roda os testes automaticamente a cada `push` na branch `main`
-- executa análise de segurança (SAST) no código e nas dependências
-- constrói a imagem Docker de produção e faz o deploy no servidor da disciplina
+As variáveis da integração OpenAI estão descritas na seção de serviço externo. Não versione valores secretos.
 
-Para ativar o deploy, você precisa configurar **dois secrets** e uma **variável** no seu repositório GitHub.
+## Validação local
 
----
+Backend no Windows:
 
-### Secret 1 — Chave SSH de deploy (`SSH_DEPLOY_KEY`)
-
-O servidor da disciplina (`dsc.rodrigor.com`) já está preparado para receber deploys.
-A chave SSH que autoriza o acesso está disponível na página da disciplina:
-
-**Acesse: https://gd.dsc.rodrigor.com** e copie a chave SSH privada disponibilizada pelo professor.
-
-Depois, adicione no seu repositório:
-
-1. No GitHub, acesse seu repositório → **Settings**
-2. No menu lateral: **Secrets and variables → Actions**
-3. Clique em **New repository secret**
-4. Nome: `SSH_DEPLOY_KEY`
-5. Valor: cole a chave privada copiada do portal (o texto completo, incluindo as linhas `-----BEGIN...` e `-----END...`)
-6. Clique em **Add secret**
-
----
-
-### Secret 2 — Chave da API do NVD (`NVD_API_KEY`)
-
-#### O que é o NVD?
-
-**NVD** significa *National Vulnerability Database* — é o banco de dados oficial do governo americano (NIST) que cataloga todas as vulnerabilidades de segurança conhecidas em softwares. Cada vulnerabilidade recebe um identificador chamado **CVE** (ex.: CVE-2024-12345) e uma nota de gravidade chamada **CVSS** (de 0 a 10).
-
-O **OWASP Dependency Check** (uma das ferramentas de segurança do projeto) consulta esse banco para verificar se as bibliotecas que o seu projeto usa possuem vulnerabilidades conhecidas.
-
-#### Por que preciso de uma chave?
-
-Sem a chave, o download do banco de dados NVD é muito lento (pode levar 20+ minutos no CI/CD, ou até falhar por timeout). Com a chave gratuita, o download é feito via API e leva menos de 2 minutos.
-
-#### Como obter (gratuito, leva ~1 minuto)
-
-1. Acesse https://nvd.nist.gov/developers/request-an-api-key
-2. Preencha seu e-mail institucional (use o e-mail da UFPB se possível)
-3. Marque a caixa de uso não-comercial
-4. Clique em **Submit**
-5. Acesse seu e-mail — você receberá a chave em segundos
-
-#### Adicionando ao repositório
-
-1. No GitHub: **Settings → Secrets and variables → Actions**
-2. Clique em **New repository secret**
-3. Nome: `NVD_API_KEY`
-4. Valor: cole a chave recebida por e-mail
-5. Clique em **Add secret**
-
-> **Sem a chave ainda?** O pipeline funciona mesmo sem ela, mas o OWASP Dependency Check
-> pode demorar muito ou falhar por timeout. Configure assim que possível.
-
----
-
-### Variável — Nome da imagem Docker (`APP_IMAGE`)
-
-O pipeline publica a imagem Docker no GitHub Container Registry (GHCR) com o nome do seu repositório. Você não precisa configurar isso manualmente — o workflow usa `${{ github.repository }}` para montar o nome automaticamente.
-
-Mas o arquivo `.env` no servidor precisa saber qual imagem usar. O script de deploy atualiza isso automaticamente na primeira execução.
-
----
-
-### Verificando se o deploy funcionou
-
-Após configurar os secrets e fazer um `push` na branch `main`:
-
-1. No GitHub, clique na aba **Actions**
-2. Você verá o workflow **"Build & Deploy"** em execução
-3. Ele tem 3 etapas: **Testes e SAST → Build e push → Deploy em produção**
-4. Se tudo der certo, a aplicação estará disponível em `https://dsc.rodrigor.com`
-
-Se alguma etapa falhar, clique nela para ver os logs detalhados.
-
----
-
-## Estrutura do Projeto
-
-```
-base_projeto/
-├── .github/workflows/
-│   └── deploy.yml           # Pipeline CI/CD (GitHub Actions)
-├── src/main/java/br/ufpb/dsc/mercado/
-│   ├── config/              # Configurações (Security, GlobalModelAttributes, etc.)
-│   ├── controller/          # Controllers HTTP + HTMX
-│   ├── domain/              # Entidades JPA
-│   ├── dto/                 # Data Transfer Objects (Records)
-│   ├── exception/           # Exceções de domínio
-│   ├── repository/          # Interfaces Spring Data JPA
-│   └── service/             # Lógica de negócio
-├── src/main/resources/
-│   ├── db/migration/        # Scripts Flyway (V1__, V2__, ...)
-│   └── templates/           # Templates Thymeleaf
-├── docker/                  # Dockerfiles + docker-compose
-├── docs/                    # Documentação técnica
-├── CLAUDE.md                # Memória para Claude Code
-└── pom.xml
+```powershell
+.\mvnw.cmd -s .mvn/local-settings.xml clean test jacoco:report
 ```
 
----
+Frontend:
 
-## Para Alunos: Adaptando o Boilerplate
+```bash
+cd web
+npm ci
+npm run lint
+npm run test
+npm run test:coverage
+npm run build
+```
 
-1. **Renomear** a entidade `Produto` para sua entidade principal
-2. **Criar migration** Flyway com a nova estrutura da tabela (`src/main/resources/db/migration/V2__...sql`)
-3. **Atualizar** Repository, Service, Controller e templates seguindo os mesmos padrões
-4. **Manter** a estrutura de pacotes e convenções (ver `docs/CONVENTIONS.md`)
-5. **Nunca editar** migrations já aplicadas — sempre criar uma nova (`V3__`, `V4__`, ...)
+Os testes de integração do backend precisam do PostgreSQL em `localhost:5435`; use `docker compose up -d db` antes da suíte.
 
-> Dúvidas? Consulte a documentação em `docs/` ou o professor.
+## Cobertura de Testes
+
+Os números abaixo foram gerados em 1º de julho de 2026 sem excluir classes de produção do backend e incluindo todos os arquivos de produção `web/src/**/*.{ts,tsx}` do frontend, exceto arquivos de teste e suporte de teste.
+
+| Camada | Testes | Linhas | Branches | Métodos/Funções | Classes |
+|---|---:|---:|---:|---:|---:|
+| Backend | 362 | **90,33%** | 74,43% | 91,76% | 99,47% |
+| Frontend | 211 | **85,90%** | 82,33% | 68,81% | — |
+
+- Backend: JaCoCo 0.8.12, relatório em `cobertura/backend/index.html`.
+- Frontend: Vitest 3.2.6 com V8 Coverage, relatório em `cobertura/frontend/index.html`.
+- A configuração do backend está em `pom.xml`; a do frontend está em `web/vitest.config.mjs` e `web/package.json`.
+
+## Log de Auditoria
+
+O módulo persiste eventos na tabela `audit_logs`. Cada registro contém `id`, `tenant_id`, `user_id`, `action`, `resource_type`, `resource_id`, `occurred_at` e `result` (`SUCCEEDED` ou `FAILED`). IDs de usuário e tenant vêm de `CurrentUserProvider`. Corpos de requisição, conteúdo das cenas, prompts, senhas, tokens e chaves de API não são armazenados.
+
+Operações auditadas:
+
+- criação, atualização e exclusão de livros;
+- criação, atualização de metadados, conteúdo e planejamento, e exclusão de cenas;
+- adição e remoção de colaboradores;
+- restauração de versão de cena;
+- análise de cena com OpenAI, incluindo resultado de sucesso ou falha.
+
+A estratégia usa uma annotation nos endpoints relevantes e um aspecto Spring AOP. O aspecto registra o resultado por meio de um serviço com transação `REQUIRES_NEW`, preservando eventos de falha mesmo quando a operação de negócio é revertida.
+
+Evidências no código:
+
+- Migration: `src/main/resources/db/migration/V27__create_audit_logs.sql`.
+- Entidade e enums: `src/main/java/com/iwrite/audit/entity/`.
+- Repository: `src/main/java/com/iwrite/audit/repository/AuditLogRepository.java`.
+- Serviço: `src/main/java/com/iwrite/audit/service/AuditLogService.java`.
+- Annotation: `src/main/java/com/iwrite/audit/annotation/AuditedOperation.java`.
+- Aspecto: `src/main/java/com/iwrite/audit/aspect/AuditLogAspect.java`.
+- Integração: `BookController`, `BookCollaboratorController`, `SceneController` e `SceneVersionController` em `src/main/java/com/iwrite/`.
+- Testes: `src/test/java/com/iwrite/audit/AuditLogIntegrationTest.java`.
+
+## Integração com Serviço Externo
+
+O serviço externo é a API da OpenAI. No IWrite ela produz uma análise estruturada da cena salva — resumo, tom, ritmo, pontos fortes, problemas e sugestões — pelo endpoint `POST /api/scenes/{sceneId}/ai-analysis`. A cena não é alterada pela análise.
+
+Arquivos participantes no backend:
+
+- `src/main/java/com/iwrite/scene/controller/SceneController.java`.
+- `src/main/java/com/iwrite/scene/service/SceneAnalysisService.java`.
+- `src/main/java/com/iwrite/scene/ai/WritingAssistant.java`.
+- `src/main/java/com/iwrite/scene/ai/OpenAiWritingAssistant.java`.
+- `src/main/java/com/iwrite/scene/ai/DisabledWritingAssistant.java`.
+- `src/main/java/com/iwrite/scene/ai/OpenAiChatGenerationProperties.java`.
+- `src/main/java/com/iwrite/scene/ai/OpenAiChatOptionsConfiguration.java`.
+- `src/main/resources/application.yml`.
+
+Arquivos participantes no frontend:
+
+- `web/src/features/scenes/api/analyze-scene.ts`.
+- `web/src/features/scenes/components/scene-ai-analysis-panel.tsx`.
+- `web/src/features/scenes/components/scene-editor.tsx`.
+
+Configuração:
+
+- `SPRING_AI_MODEL_CHAT=openai`: habilita o provider; o padrão é `none`.
+- `OPENAI_API_KEY`: chave secreta obrigatória quando habilitado.
+- `OPENAI_BASE_URL`: base da API; padrão `https://api.openai.com`.
+- `OPENAI_COMPLETIONS_PATH`: caminho de completions; padrão `/v1/chat/completions`.
+- `OPENAI_MODEL`: modelo; padrão `gpt-4o-mini`.
+- `OPENAI_TEMPERATURE`, `OPENAI_MAX_TOKENS`, `OPENAI_MAX_COMPLETION_TOKENS`, `OPENAI_REASONING_EFFORT`: opções opcionais de geração. Configure somente um dos dois limites de tokens.
+- `OPENAI_CONNECT_TIMEOUT`: timeout de conexão; padrão `5s`.
+- `OPENAI_READ_TIMEOUT`: timeout de leitura; padrão `60s`.
+
+Sem `SPRING_AI_MODEL_CHAT=openai`, `DisabledWritingAssistant` mantém a aplicação inicializável e a rota responde `503 Service Unavailable`. O backend limita a entrada a 12.000 caracteres, higieniza a resposta estruturada, converte falhas do provider em erro seguro, faz no máximo duas tentativas e não registra conteúdo da cena. Os testes em `src/test/java/com/iwrite/scene/ai/`, `src/test/java/com/iwrite/scene/service/SceneAnalysisServiceTest.java`, `src/test/java/com/iwrite/scene/controller/` e `web/src/features/scenes/` usam mocks/stubs; nenhuma suíte chama a API paga.
+
+Nenhuma chave ou valor secreto é versionado. Use variáveis de ambiente locais ou um gerenciador de segredos no ambiente de implantação.

@@ -1,0 +1,198 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="pt"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>BookWordCountEvent.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">iwrite-backend</a> &gt; <a href="index.source.html" class="el_package">com.iwrite.writingprogress.ledger.entity</a> &gt; <span class="el_source">BookWordCountEvent.java</span></div><h1>BookWordCountEvent.java</h1><pre class="source lang-java linenums">package com.iwrite.writingprogress.ledger.entity;
+
+import com.iwrite.book.entity.Book;
+import com.iwrite.scene.entity.Scene;
+import com.iwrite.user.entity.User;
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
+import jakarta.persistence.FetchType;
+import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.GenerationType;
+import jakarta.persistence.Id;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.ManyToOne;
+import jakarta.persistence.PrePersist;
+import jakarta.persistence.Table;
+import jakarta.persistence.UniqueConstraint;
+
+import java.time.OffsetDateTime;
+import java.util.UUID;
+
+@Entity
+@Table(
+        name = &quot;book_word_count_events&quot;,
+        uniqueConstraints = @UniqueConstraint(
+                name = &quot;uk_book_word_count_events_book_idempotency&quot;,
+                columnNames = {&quot;book_id&quot;, &quot;idempotency_key&quot;}
+        )
+)
+<span class="fc" id="L31">public class BookWordCountEvent {</span>
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.UUID)
+    private UUID id;
+
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @JoinColumn(name = &quot;book_id&quot;, nullable = false)
+    private Book book;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = &quot;scene_id&quot;)
+    private Scene scene;
+
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @JoinColumn(name = &quot;actor_user_id&quot;, nullable = false)
+    private User actorUser;
+
+    private UUID originalSceneId;
+
+    @Column(length = 255)
+    private String sceneTitleSnapshot;
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 40)
+    private BookWordCountEventType eventType;
+
+    @Column(nullable = false)
+    private Integer productiveWordDelta;
+
+    @Column(nullable = false)
+    private Integer manuscriptWordDelta;
+
+    private UUID operationId;
+
+    @Column(nullable = false)
+    private UUID idempotencyKey;
+
+    private Long contentRevisionBefore;
+
+    private Long contentRevisionAfter;
+
+    @Column(length = 64)
+    private String requestFingerprint;
+
+    @Column(nullable = false, updatable = false)
+    private OffsetDateTime createdAt;
+
+    @PrePersist
+    void onCreate() {
+<span class="pc bpc" id="L81" title="1 of 2 branches missed.">        if (createdAt == null) {</span>
+<span class="fc" id="L82">            createdAt = OffsetDateTime.now();</span>
+        }
+<span class="fc" id="L84">    }</span>
+
+    public UUID getId() {
+<span class="fc" id="L87">        return id;</span>
+    }
+
+    public Book getBook() {
+<span class="fc" id="L91">        return book;</span>
+    }
+
+    public void setBook(Book book) {
+<span class="fc" id="L95">        this.book = book;</span>
+<span class="fc" id="L96">    }</span>
+
+    public Scene getScene() {
+<span class="fc" id="L99">        return scene;</span>
+    }
+
+    public void setScene(Scene scene) {
+<span class="fc" id="L103">        this.scene = scene;</span>
+<span class="fc" id="L104">    }</span>
+
+    public User getActorUser() {
+<span class="fc" id="L107">        return actorUser;</span>
+    }
+
+    public void setActorUser(User actorUser) {
+<span class="fc" id="L111">        this.actorUser = actorUser;</span>
+<span class="fc" id="L112">    }</span>
+
+    public UUID getOriginalSceneId() {
+<span class="fc" id="L115">        return originalSceneId;</span>
+    }
+
+    public void setOriginalSceneId(UUID originalSceneId) {
+<span class="fc" id="L119">        this.originalSceneId = originalSceneId;</span>
+<span class="fc" id="L120">    }</span>
+
+    public String getSceneTitleSnapshot() {
+<span class="fc" id="L123">        return sceneTitleSnapshot;</span>
+    }
+
+    public void setSceneTitleSnapshot(String sceneTitleSnapshot) {
+<span class="fc" id="L127">        this.sceneTitleSnapshot = sceneTitleSnapshot;</span>
+<span class="fc" id="L128">    }</span>
+
+    public BookWordCountEventType getEventType() {
+<span class="fc" id="L131">        return eventType;</span>
+    }
+
+    public void setEventType(BookWordCountEventType eventType) {
+<span class="fc" id="L135">        this.eventType = eventType;</span>
+<span class="fc" id="L136">    }</span>
+
+    public Integer getProductiveWordDelta() {
+<span class="fc" id="L139">        return productiveWordDelta;</span>
+    }
+
+    public void setProductiveWordDelta(Integer productiveWordDelta) {
+<span class="fc" id="L143">        this.productiveWordDelta = productiveWordDelta;</span>
+<span class="fc" id="L144">    }</span>
+
+    public Integer getManuscriptWordDelta() {
+<span class="fc" id="L147">        return manuscriptWordDelta;</span>
+    }
+
+    public void setManuscriptWordDelta(Integer manuscriptWordDelta) {
+<span class="fc" id="L151">        this.manuscriptWordDelta = manuscriptWordDelta;</span>
+<span class="fc" id="L152">    }</span>
+
+    public UUID getOperationId() {
+<span class="fc" id="L155">        return operationId;</span>
+    }
+
+    public void setOperationId(UUID operationId) {
+<span class="fc" id="L159">        this.operationId = operationId;</span>
+<span class="fc" id="L160">    }</span>
+
+    public UUID getIdempotencyKey() {
+<span class="fc" id="L163">        return idempotencyKey;</span>
+    }
+
+    public void setIdempotencyKey(UUID idempotencyKey) {
+<span class="fc" id="L167">        this.idempotencyKey = idempotencyKey;</span>
+<span class="fc" id="L168">    }</span>
+
+    public Long getContentRevisionBefore() {
+<span class="fc" id="L171">        return contentRevisionBefore;</span>
+    }
+
+    public void setContentRevisionBefore(Long contentRevisionBefore) {
+<span class="fc" id="L175">        this.contentRevisionBefore = contentRevisionBefore;</span>
+<span class="fc" id="L176">    }</span>
+
+    public Long getContentRevisionAfter() {
+<span class="fc" id="L179">        return contentRevisionAfter;</span>
+    }
+
+    public void setContentRevisionAfter(Long contentRevisionAfter) {
+<span class="fc" id="L183">        this.contentRevisionAfter = contentRevisionAfter;</span>
+<span class="fc" id="L184">    }</span>
+
+    public String getRequestFingerprint() {
+<span class="fc" id="L187">        return requestFingerprint;</span>
+    }
+
+    public void setRequestFingerprint(String requestFingerprint) {
+<span class="fc" id="L191">        this.requestFingerprint = requestFingerprint;</span>
+<span class="fc" id="L192">    }</span>
+
+    public OffsetDateTime getCreatedAt() {
+<span class="fc" id="L195">        return createdAt;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

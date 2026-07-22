@@ -1,0 +1,118 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="pt"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>SceneController.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">iwrite-backend</a> &gt; <a href="index.source.html" class="el_package">com.iwrite.scene.controller</a> &gt; <span class="el_source">SceneController.java</span></div><h1>SceneController.java</h1><pre class="source lang-java linenums">package com.iwrite.scene.controller;
+
+import com.iwrite.audit.annotation.AuditedOperation;
+import com.iwrite.audit.entity.AuditAction;
+import com.iwrite.audit.entity.AuditResourceType;
+import com.iwrite.common.dto.ReorderRequest;
+import com.iwrite.scene.dto.SceneAnalysisRequest;
+import com.iwrite.scene.dto.SceneAnalysisResponse;
+import com.iwrite.scene.dto.SceneContentRequest;
+import com.iwrite.scene.dto.ScenePlanningRequest;
+import com.iwrite.scene.dto.SceneRequest;
+import com.iwrite.scene.dto.SceneResponse;
+import com.iwrite.scene.dto.SceneUpdateRequest;
+import com.iwrite.scene.service.SceneAnalysisService;
+import com.iwrite.scene.service.SceneService;
+import jakarta.validation.Valid;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.ResponseStatus;
+import org.springframework.web.bind.annotation.RestController;
+
+import java.util.UUID;
+
+@RestController
+@RequestMapping(&quot;/api&quot;)
+public class SceneController {
+
+    private final SceneService sceneService;
+    private final SceneAnalysisService sceneAnalysisService;
+
+<span class="fc" id="L37">    public SceneController(SceneService sceneService, SceneAnalysisService sceneAnalysisService) {</span>
+<span class="fc" id="L38">        this.sceneService = sceneService;</span>
+<span class="fc" id="L39">        this.sceneAnalysisService = sceneAnalysisService;</span>
+<span class="fc" id="L40">    }</span>
+
+    @PostMapping(&quot;/chapters/{chapterId}/scenes&quot;)
+    @ResponseStatus(HttpStatus.CREATED)
+    @AuditedOperation(
+            action = AuditAction.SCENE_CREATED,
+            resourceType = AuditResourceType.SCENE,
+            resourceId = &quot;#result?.id&quot;
+    )
+    public SceneResponse create(@PathVariable UUID chapterId, @Valid @RequestBody SceneRequest request) {
+<span class="nc" id="L50">        return sceneService.create(chapterId, request);</span>
+    }
+
+    @GetMapping(&quot;/scenes/{sceneId}&quot;)
+    public SceneResponse findById(@PathVariable UUID sceneId) {
+<span class="fc" id="L55">        return sceneService.findById(sceneId);</span>
+    }
+
+    @PatchMapping(&quot;/scenes/{sceneId}&quot;)
+    @AuditedOperation(
+            action = AuditAction.SCENE_UPDATED,
+            resourceType = AuditResourceType.SCENE,
+            resourceId = &quot;#sceneId&quot;
+    )
+    public SceneResponse update(@PathVariable UUID sceneId, @Valid @RequestBody SceneUpdateRequest request) {
+<span class="fc" id="L65">        return sceneService.update(sceneId, request);</span>
+    }
+
+    @PatchMapping(&quot;/scenes/{sceneId}/content&quot;)
+    @AuditedOperation(
+            action = AuditAction.SCENE_CONTENT_UPDATED,
+            resourceType = AuditResourceType.SCENE,
+            resourceId = &quot;#sceneId&quot;
+    )
+    public SceneResponse updateContent(@PathVariable UUID sceneId, @Valid @RequestBody SceneContentRequest request) {
+<span class="fc" id="L75">        return sceneService.updateContent(sceneId, request);</span>
+    }
+
+    @PatchMapping(&quot;/scenes/{sceneId}/planning&quot;)
+    @AuditedOperation(
+            action = AuditAction.SCENE_PLANNING_UPDATED,
+            resourceType = AuditResourceType.SCENE,
+            resourceId = &quot;#sceneId&quot;
+    )
+    public SceneResponse updatePlanning(@PathVariable UUID sceneId, @Valid @RequestBody ScenePlanningRequest request) {
+<span class="fc" id="L85">        return sceneService.updatePlanning(sceneId, request);</span>
+    }
+
+    @PostMapping(&quot;/scenes/{sceneId}/ai-analysis&quot;)
+    @AuditedOperation(
+            action = AuditAction.OPENAI_SCENE_ANALYSIS,
+            resourceType = AuditResourceType.SCENE,
+            resourceId = &quot;#sceneId&quot;
+    )
+    public SceneAnalysisResponse analyze(
+            @PathVariable UUID sceneId,
+            @Valid @RequestBody(required = false) SceneAnalysisRequest request
+    ) {
+<span class="fc" id="L98">        return sceneAnalysisService.analyze(sceneId, request);</span>
+    }
+
+    @PatchMapping(&quot;/chapters/{chapterId}/scenes/reorder&quot;)
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void reorder(@PathVariable UUID chapterId, @Valid @RequestBody ReorderRequest request) {
+<span class="nc" id="L104">        sceneService.reorder(chapterId, request);</span>
+<span class="nc" id="L105">    }</span>
+
+    @DeleteMapping(&quot;/scenes/{sceneId}&quot;)
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    @AuditedOperation(
+            action = AuditAction.SCENE_DELETED,
+            resourceType = AuditResourceType.SCENE,
+            resourceId = &quot;#sceneId&quot;
+    )
+    public void delete(@PathVariable UUID sceneId) {
+<span class="fc" id="L115">        sceneService.delete(sceneId);</span>
+<span class="fc" id="L116">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

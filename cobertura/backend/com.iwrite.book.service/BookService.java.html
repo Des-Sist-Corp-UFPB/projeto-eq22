@@ -1,0 +1,145 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="pt"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>BookService.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">iwrite-backend</a> &gt; <a href="index.source.html" class="el_package">com.iwrite.book.service</a> &gt; <span class="el_source">BookService.java</span></div><h1>BookService.java</h1><pre class="source lang-java linenums">package com.iwrite.book.service;
+
+import com.iwrite.book.dto.BookRequest;
+import com.iwrite.book.dto.BookResponse;
+import com.iwrite.book.dto.BookUpdateRequest;
+import com.iwrite.book.entity.Book;
+import com.iwrite.book.entity.BookAccessLevel;
+import com.iwrite.book.entity.BookStatus;
+import com.iwrite.book.repository.BookRepository;
+import com.iwrite.common.validation.RequestValidation;
+import com.iwrite.tenant.repository.TenantRepository;
+import com.iwrite.user.context.CurrentUserMembershipService;
+import com.iwrite.user.context.CurrentUserProvider;
+import com.iwrite.user.repository.UserRepository;
+import com.iwrite.writingprogress.service.WritingScheduleService;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.time.DayOfWeek;
+import java.util.List;
+import java.util.UUID;
+
+@Service
+public class BookService {
+
+    private final BookRepository bookRepository;
+    private final WritingScheduleService writingScheduleService;
+    private final TenantRepository tenantRepository;
+    private final CurrentUserProvider currentUserProvider;
+    private final CurrentUserMembershipService currentUserMembershipService;
+    private final BookAccessService bookAccessService;
+    private final UserRepository userRepository;
+
+    public BookService(
+            BookRepository bookRepository,
+            WritingScheduleService writingScheduleService,
+            TenantRepository tenantRepository,
+            CurrentUserProvider currentUserProvider,
+            CurrentUserMembershipService currentUserMembershipService,
+            BookAccessService bookAccessService,
+            UserRepository userRepository
+<span class="fc" id="L42">    ) {</span>
+<span class="fc" id="L43">        this.bookRepository = bookRepository;</span>
+<span class="fc" id="L44">        this.writingScheduleService = writingScheduleService;</span>
+<span class="fc" id="L45">        this.tenantRepository = tenantRepository;</span>
+<span class="fc" id="L46">        this.currentUserProvider = currentUserProvider;</span>
+<span class="fc" id="L47">        this.currentUserMembershipService = currentUserMembershipService;</span>
+<span class="fc" id="L48">        this.bookAccessService = bookAccessService;</span>
+<span class="fc" id="L49">        this.userRepository = userRepository;</span>
+<span class="fc" id="L50">    }</span>
+
+    @Transactional
+    public List&lt;BookResponse&gt; findAll() {
+<span class="fc" id="L54">        UUID userId = currentUserMembershipService.requireCurrentUserMemberId();</span>
+<span class="fc" id="L55">        UUID tenantId = currentUserProvider.tenantId();</span>
+<span class="fc" id="L56">        return bookRepository.findAllAccessibleByTenantIdAndUserId(tenantId, userId)</span>
+<span class="fc" id="L57">                .stream()</span>
+<span class="fc" id="L58">                .map(book -&gt; BookResponse.fromEntity(</span>
+                        book,
+<span class="fc" id="L60">                        writingScheduleService.getActivePlannedWritingDays(book),</span>
+<span class="fc" id="L61">                        accessLevel(book, userId)</span>
+                ))
+<span class="fc" id="L63">                .toList();</span>
+    }
+
+    @Transactional
+    public BookResponse findById(UUID bookId) {
+<span class="fc" id="L68">        Book book = bookAccessService.requireBookReadAccess(bookId);</span>
+<span class="fc" id="L69">        return BookResponse.fromEntity(</span>
+                book,
+<span class="fc" id="L71">                writingScheduleService.getActivePlannedWritingDays(book),</span>
+<span class="fc" id="L72">                accessLevel(book, currentUserProvider.userId())</span>
+        );
+    }
+
+    @Transactional
+    public BookResponse create(BookRequest request) {
+<span class="fc" id="L78">        UUID userId = currentUserMembershipService.requireCurrentUserMemberId();</span>
+<span class="fc" id="L79">        Book book = new Book();</span>
+<span class="fc" id="L80">        book.setTenant(tenantRepository.getReferenceById(currentUserProvider.tenantId()));</span>
+<span class="fc" id="L81">        book.setOwner(userRepository.getReferenceById(userId));</span>
+<span class="fc" id="L82">        book.setTitle(request.title());</span>
+<span class="fc" id="L83">        book.setSubtitle(request.subtitle());</span>
+<span class="fc" id="L84">        book.setDescription(request.description());</span>
+<span class="pc bpc" id="L85" title="1 of 2 branches missed.">        book.setStatus(request.status() == null ? BookStatus.PLANNING : request.status());</span>
+<span class="fc" id="L86">        book.setTargetWordCount(request.targetWordCount());</span>
+<span class="fc" id="L87">        book.setDailyTargetWordCount(request.dailyTargetWordCount());</span>
+
+<span class="fc" id="L89">        Book savedBook = bookRepository.save(book);</span>
+<span class="fc" id="L90">        List&lt;DayOfWeek&gt; plannedWritingDays = writingScheduleService.createInitialSchedule(savedBook, request.plannedWritingDays());</span>
+<span class="fc" id="L91">        return BookResponse.fromEntity(savedBook, plannedWritingDays, BookAccessLevel.OWNER);</span>
+    }
+
+    @Transactional
+    public BookResponse update(UUID bookId, BookUpdateRequest request) {
+<span class="fc" id="L96">        Book book = bookAccessService.requireBookEditAccess(bookId);</span>
+<span class="fc" id="L97">        RequestValidation.rejectBlankWhenPresent(&quot;title&quot;, request.title());</span>
+
+<span class="fc bfc" id="L99" title="All 2 branches covered.">        if (request.title() != null) {</span>
+<span class="fc" id="L100">            book.setTitle(request.title());</span>
+        }
+<span class="pc bpc" id="L102" title="1 of 2 branches missed.">        if (request.subtitle() != null) {</span>
+<span class="nc" id="L103">            book.setSubtitle(request.subtitle());</span>
+        }
+<span class="pc bpc" id="L105" title="1 of 2 branches missed.">        if (request.description() != null) {</span>
+<span class="nc" id="L106">            book.setDescription(request.description());</span>
+        }
+<span class="pc bpc" id="L108" title="1 of 2 branches missed.">        if (request.status() != null) {</span>
+<span class="nc" id="L109">            book.setStatus(request.status());</span>
+        }
+<span class="fc bfc" id="L111" title="All 2 branches covered.">        if (request.isTargetWordCountPresent()) {</span>
+<span class="fc" id="L112">            book.setTargetWordCount(request.targetWordCount());</span>
+        }
+<span class="fc bfc" id="L114" title="All 2 branches covered.">        if (request.isDailyTargetWordCountPresent()) {</span>
+<span class="fc" id="L115">            book.setDailyTargetWordCount(request.dailyTargetWordCount());</span>
+        }
+
+<span class="fc bfc" id="L118" title="All 2 branches covered.">        List&lt;DayOfWeek&gt; plannedWritingDays = request.isPlannedWritingDaysPresent()</span>
+<span class="fc" id="L119">                ? writingScheduleService.changeSchedule(book, request.plannedWritingDays())</span>
+<span class="fc" id="L120">                : writingScheduleService.getActivePlannedWritingDays(book);</span>
+
+<span class="fc" id="L122">        return BookResponse.fromEntity(book, plannedWritingDays, accessLevel(book, currentUserProvider.userId()));</span>
+    }
+
+    @Transactional
+    public void delete(UUID bookId) {
+<span class="fc" id="L127">        Book book = bookAccessService.requireBookOwnerAccess(bookId);</span>
+<span class="fc" id="L128">        bookRepository.delete(book);</span>
+<span class="fc" id="L129">    }</span>
+
+    @Transactional(readOnly = true)
+    public Book getBook(UUID bookId) {
+<span class="fc" id="L133">        return bookAccessService.requireBookReadAccess(bookId);</span>
+    }
+
+    @Transactional
+    public Book getBookForWordCountUpdate(UUID bookId) {
+<span class="fc" id="L138">        return bookAccessService.requireBookEditAccessForUpdate(bookId);</span>
+    }
+
+    private BookAccessLevel accessLevel(Book book, UUID userId) {
+<span class="fc bfc" id="L142" title="All 2 branches covered.">        return book.getOwner().getId().equals(userId) ? BookAccessLevel.OWNER : BookAccessLevel.COLLABORATOR;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

@@ -1,0 +1,727 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="pt"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>BookExportService.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">iwrite-backend</a> &gt; <a href="index.source.html" class="el_package">com.iwrite.export.service</a> &gt; <span class="el_source">BookExportService.java</span></div><h1>BookExportService.java</h1><pre class="source lang-java linenums">package com.iwrite.export.service;
+
+import com.iwrite.book.entity.Book;
+import com.iwrite.book.service.BookAccessService;
+import com.iwrite.chapter.entity.Chapter;
+import com.iwrite.chapter.repository.ChapterRepository;
+import com.iwrite.export.ExportFile;
+import com.iwrite.export.ExportFileNameService;
+import com.iwrite.export.ExportFormat;
+import com.iwrite.common.exception.BadRequestException;
+import com.iwrite.notebook.NotebookCategoryOrdering;
+import com.iwrite.notebook.entity.NotebookCategory;
+import com.iwrite.notebook.entity.NotebookNote;
+import com.iwrite.notebook.entity.NotebookNoteStatus;
+import com.iwrite.notebook.repository.NotebookCategoryRepository;
+import com.iwrite.notebook.repository.NotebookNoteRepository;
+import com.iwrite.scene.entity.Scene;
+import com.iwrite.scene.repository.SceneRepository;
+import com.iwrite.section.entity.BookSection;
+import com.iwrite.section.repository.BookSectionRepository;
+import org.apache.poi.xwpf.usermodel.ParagraphAlignment;
+import org.apache.poi.xwpf.usermodel.XWPFDocument;
+import org.apache.poi.xwpf.usermodel.XWPFParagraph;
+import org.apache.poi.xwpf.usermodel.XWPFRun;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
+import java.util.stream.Collectors;
+
+@Service
+public class BookExportService {
+
+    private static final String NOTEBOOK_TITLE_PREFIX = &quot;Caderno \u2014 &quot;;
+    private static final String UNCATEGORIZED_CATEGORY_NAME = &quot;Sem categoria&quot;;
+
+    private final BookAccessService bookAccessService;
+    private final BookSectionRepository sectionRepository;
+    private final ChapterRepository chapterRepository;
+    private final SceneRepository sceneRepository;
+    private final NotebookCategoryRepository notebookCategoryRepository;
+    private final NotebookNoteRepository notebookNoteRepository;
+    private final TipTapMarkdownRenderer tipTapMarkdownRenderer;
+    private final TipTapDocxRenderer tipTapDocxRenderer;
+    private final TipTapPlainTextRenderer tipTapPlainTextRenderer;
+    private final ExportFileNameService exportFileNameService;
+
+    public BookExportService(
+            BookAccessService bookAccessService,
+            BookSectionRepository sectionRepository,
+            ChapterRepository chapterRepository,
+            SceneRepository sceneRepository,
+            NotebookCategoryRepository notebookCategoryRepository,
+            NotebookNoteRepository notebookNoteRepository,
+            TipTapMarkdownRenderer tipTapMarkdownRenderer,
+            TipTapDocxRenderer tipTapDocxRenderer,
+            TipTapPlainTextRenderer tipTapPlainTextRenderer,
+            ExportFileNameService exportFileNameService
+<span class="fc" id="L66">    ) {</span>
+<span class="fc" id="L67">        this.bookAccessService = bookAccessService;</span>
+<span class="fc" id="L68">        this.sectionRepository = sectionRepository;</span>
+<span class="fc" id="L69">        this.chapterRepository = chapterRepository;</span>
+<span class="fc" id="L70">        this.sceneRepository = sceneRepository;</span>
+<span class="fc" id="L71">        this.notebookCategoryRepository = notebookCategoryRepository;</span>
+<span class="fc" id="L72">        this.notebookNoteRepository = notebookNoteRepository;</span>
+<span class="fc" id="L73">        this.tipTapMarkdownRenderer = tipTapMarkdownRenderer;</span>
+<span class="fc" id="L74">        this.tipTapDocxRenderer = tipTapDocxRenderer;</span>
+<span class="fc" id="L75">        this.tipTapPlainTextRenderer = tipTapPlainTextRenderer;</span>
+<span class="fc" id="L76">        this.exportFileNameService = exportFileNameService;</span>
+<span class="fc" id="L77">    }</span>
+
+    @Transactional(readOnly = true)
+    public ExportFile exportManuscript(
+            UUID bookId,
+            ExportFormat format,
+            boolean includeSceneTitles,
+            boolean includeEmptyScenes
+    ) {
+<span class="fc" id="L86">        ManuscriptExport manuscript = getManuscriptExport(bookId);</span>
+<span class="fc" id="L87">        String fileName = manuscriptFileName(manuscript.book(), format);</span>
+
+<span class="fc bfc" id="L89" title="All 3 branches covered.">        return switch (format) {</span>
+<span class="fc" id="L90">            case TXT -&gt; new ExportFile(</span>
+<span class="fc" id="L91">                    exportTxt(manuscript, includeSceneTitles, includeEmptyScenes).getBytes(StandardCharsets.UTF_8),</span>
+<span class="fc" id="L92">                    format.contentType(),</span>
+                    fileName
+            );
+<span class="fc" id="L95">            case MD -&gt; new ExportFile(</span>
+<span class="fc" id="L96">                    exportMarkdown(manuscript, includeSceneTitles, includeEmptyScenes).getBytes(StandardCharsets.UTF_8),</span>
+<span class="fc" id="L97">                    format.contentType(),</span>
+                    fileName
+            );
+<span class="fc" id="L100">            case DOCX -&gt; new ExportFile(</span>
+<span class="fc" id="L101">                    exportDocx(manuscript, includeSceneTitles, includeEmptyScenes),</span>
+<span class="fc" id="L102">                    format.contentType(),</span>
+                    fileName
+            );
+        };
+    }
+
+    @Transactional(readOnly = true)
+    public ExportFile exportNotebook(
+            UUID bookId,
+            ExportFormat format,
+            boolean includeOpen,
+            boolean includeResolved
+    ) {
+<span class="fc" id="L115">        NotebookExport notebook = getNotebookExport(bookId, includeOpen, includeResolved);</span>
+<span class="fc" id="L116">        String fileName = exportFileNameService.fileName(&quot;caderno &quot; + notebook.book().getTitle(), &quot;caderno&quot;, format.extension());</span>
+
+<span class="fc bfc" id="L118" title="All 3 branches covered.">        return switch (format) {</span>
+<span class="fc" id="L119">            case TXT -&gt; new ExportFile(</span>
+<span class="fc" id="L120">                    exportNotebookTxt(notebook).getBytes(StandardCharsets.UTF_8),</span>
+<span class="fc" id="L121">                    format.contentType(),</span>
+                    fileName
+            );
+<span class="fc" id="L124">            case MD -&gt; new ExportFile(</span>
+<span class="fc" id="L125">                    exportNotebookMarkdown(notebook).getBytes(StandardCharsets.UTF_8),</span>
+<span class="fc" id="L126">                    format.contentType(),</span>
+                    fileName
+            );
+<span class="fc" id="L129">            case DOCX -&gt; new ExportFile(</span>
+<span class="fc" id="L130">                    exportNotebookDocx(notebook),</span>
+<span class="fc" id="L131">                    format.contentType(),</span>
+                    fileName
+            );
+        };
+    }
+
+    @Transactional(readOnly = true)
+    public String exportMarkdown(UUID bookId, boolean includeSceneTitles, boolean includeEmptyScenes) {
+<span class="nc" id="L139">        return exportMarkdown(getManuscriptExport(bookId), includeSceneTitles, includeEmptyScenes);</span>
+    }
+
+    @Transactional(readOnly = true)
+    public byte[] exportDocx(UUID bookId, boolean includeSceneTitles, boolean includeEmptyScenes) {
+<span class="nc" id="L144">        return exportDocx(getManuscriptExport(bookId), includeSceneTitles, includeEmptyScenes);</span>
+    }
+
+    public String getMarkdownFileName(UUID bookId) {
+<span class="nc" id="L148">        Book book = bookAccessService.requireBookReadAccess(bookId);</span>
+<span class="nc" id="L149">        return manuscriptFileName(book, ExportFormat.MD);</span>
+    }
+
+    public String getDocxFileName(UUID bookId) {
+<span class="nc" id="L153">        Book book = bookAccessService.requireBookReadAccess(bookId);</span>
+<span class="nc" id="L154">        return manuscriptFileName(book, ExportFormat.DOCX);</span>
+    }
+
+    private String exportMarkdown(ManuscriptExport manuscript, boolean includeSceneTitles, boolean includeEmptyScenes) {
+<span class="fc" id="L158">        StringBuilder markdown = new StringBuilder();</span>
+<span class="fc" id="L159">        appendHeading(markdown, &quot;#&quot;, manuscript.book().getTitle());</span>
+<span class="fc" id="L160">        appendOptionalBlock(markdown, manuscript.book().getSubtitle());</span>
+<span class="fc" id="L161">        appendOptionalBlock(markdown, manuscript.book().getDescription());</span>
+
+<span class="fc bfc" id="L163" title="All 2 branches covered.">        for (BookSection section : manuscript.sections()) {</span>
+<span class="fc" id="L164">            appendHeading(markdown, &quot;##&quot;, section.getTitle());</span>
+
+<span class="fc bfc" id="L166" title="All 2 branches covered.">            for (Chapter chapter : manuscript.chaptersBySection().getOrDefault(section.getId(), List.of())) {</span>
+<span class="fc" id="L167">                appendHeading(markdown, &quot;###&quot;, chapter.getTitle());</span>
+<span class="fc" id="L168">                appendChapterScenes(markdown, manuscript.scenesByChapter().getOrDefault(chapter.getId(), List.of()), includeSceneTitles, includeEmptyScenes);</span>
+<span class="fc" id="L169">            }</span>
+<span class="fc" id="L170">        }</span>
+
+<span class="fc" id="L172">        return markdown.toString();</span>
+    }
+
+    private byte[] exportDocx(ManuscriptExport manuscript, boolean includeSceneTitles, boolean includeEmptyScenes) {
+<span class="fc" id="L176">        try (XWPFDocument document = new XWPFDocument();</span>
+<span class="fc" id="L177">             ByteArrayOutputStream outputStream = new ByteArrayOutputStream()) {</span>
+<span class="fc" id="L178">            appendDocxHeading(document, &quot;Title&quot;, manuscript.book().getTitle());</span>
+<span class="fc" id="L179">            appendDocxOptionalParagraph(document, manuscript.book().getSubtitle());</span>
+<span class="fc" id="L180">            appendDocxOptionalParagraph(document, manuscript.book().getDescription());</span>
+
+<span class="fc bfc" id="L182" title="All 2 branches covered.">            for (BookSection section : manuscript.sections()) {</span>
+<span class="fc" id="L183">                appendDocxHeading(document, &quot;Heading1&quot;, section.getTitle());</span>
+
+<span class="fc bfc" id="L185" title="All 2 branches covered.">                for (Chapter chapter : manuscript.chaptersBySection().getOrDefault(section.getId(), List.of())) {</span>
+<span class="fc" id="L186">                    appendDocxHeading(document, &quot;Heading2&quot;, chapter.getTitle());</span>
+<span class="fc" id="L187">                    appendDocxChapterScenes(document, manuscript.scenesByChapter().getOrDefault(chapter.getId(), List.of()), includeSceneTitles, includeEmptyScenes);</span>
+<span class="fc" id="L188">                }</span>
+<span class="fc" id="L189">            }</span>
+
+<span class="fc" id="L191">            document.write(outputStream);</span>
+<span class="fc" id="L192">            return outputStream.toByteArray();</span>
+<span class="nc" id="L193">        } catch (IOException exception) {</span>
+<span class="nc" id="L194">            throw new IllegalStateException(&quot;Failed to export DOCX manuscript&quot;, exception);</span>
+        }
+    }
+
+    private String exportTxt(ManuscriptExport manuscript, boolean includeSceneTitles, boolean includeEmptyScenes) {
+<span class="fc" id="L199">        StringBuilder text = new StringBuilder();</span>
+<span class="fc" id="L200">        appendTextBlock(text, manuscript.book().getTitle());</span>
+<span class="fc" id="L201">        appendOptionalTextBlock(text, manuscript.book().getSubtitle());</span>
+<span class="fc" id="L202">        appendOptionalTextBlock(text, manuscript.book().getDescription());</span>
+
+<span class="fc bfc" id="L204" title="All 2 branches covered.">        for (BookSection section : manuscript.sections()) {</span>
+<span class="fc" id="L205">            appendTextBlock(text, section.getTitle());</span>
+
+<span class="fc bfc" id="L207" title="All 2 branches covered.">            for (Chapter chapter : manuscript.chaptersBySection().getOrDefault(section.getId(), List.of())) {</span>
+<span class="fc" id="L208">                appendTextBlock(text, chapter.getTitle());</span>
+<span class="fc" id="L209">                appendTxtChapterScenes(text, manuscript.scenesByChapter().getOrDefault(chapter.getId(), List.of()), includeSceneTitles, includeEmptyScenes);</span>
+<span class="fc" id="L210">            }</span>
+<span class="fc" id="L211">        }</span>
+
+<span class="fc" id="L213">        return normalizeLineEndings(text.toString());</span>
+    }
+
+    private ManuscriptExport getManuscriptExport(UUID bookId) {
+<span class="fc" id="L217">        Book book = bookAccessService.requireBookReadAccess(bookId);</span>
+<span class="fc" id="L218">        List&lt;BookSection&gt; sections = sectionRepository.findByBookIdOrderBySortOrderAsc(bookId);</span>
+<span class="fc" id="L219">        List&lt;Chapter&gt; chapters = chapterRepository.findByBookIdOrderBySortOrderAsc(bookId);</span>
+<span class="fc" id="L220">        List&lt;Scene&gt; scenes = sceneRepository.findByBookIdOrderBySortOrderAsc(bookId);</span>
+
+<span class="fc" id="L222">        Map&lt;UUID, List&lt;Chapter&gt;&gt; chaptersBySection = chapters.stream()</span>
+<span class="fc" id="L223">                .collect(Collectors.groupingBy(chapter -&gt; chapter.getSection().getId()));</span>
+<span class="fc" id="L224">        Map&lt;UUID, List&lt;Scene&gt;&gt; scenesByChapter = scenes.stream()</span>
+<span class="fc" id="L225">                .collect(Collectors.groupingBy(scene -&gt; scene.getChapter().getId()));</span>
+
+<span class="fc" id="L227">        return new ManuscriptExport(book, sections, chaptersBySection, scenesByChapter);</span>
+    }
+
+    private NotebookExport getNotebookExport(UUID bookId, boolean includeOpen, boolean includeResolved) {
+<span class="pc bpc" id="L231" title="1 of 4 branches missed.">        if (!includeOpen &amp;&amp; !includeResolved) {</span>
+<span class="fc" id="L232">            throw new BadRequestException(&quot;At least one notebook note status must be included&quot;);</span>
+        }
+
+<span class="fc" id="L235">        Book book = bookAccessService.requireBookReadAccess(bookId);</span>
+<span class="fc" id="L236">        List&lt;NotebookNote&gt; notes = notebookNoteRepository.findByBookIdOrderByUpdatedAtDescIdAsc(bookId)</span>
+<span class="fc" id="L237">                .stream()</span>
+<span class="fc" id="L238">                .filter(note -&gt; shouldIncludeNotebookStatus(note.getStatus(), includeOpen, includeResolved))</span>
+<span class="fc" id="L239">                .toList();</span>
+<span class="fc" id="L240">        List&lt;NotebookCategory&gt; categories = NotebookCategoryOrdering.ordered(</span>
+<span class="fc" id="L241">                notebookCategoryRepository.findByBookIdOrderBySortOrderAscNameAscIdAsc(bookId));</span>
+<span class="fc" id="L242">        Set&lt;UUID&gt; categoryIds = categories.stream()</span>
+<span class="fc" id="L243">                .map(NotebookCategory::getId)</span>
+<span class="fc" id="L244">                .collect(Collectors.toSet());</span>
+<span class="fc" id="L245">        List&lt;NotebookCategoryExport&gt; categoryExports = new ArrayList&lt;&gt;();</span>
+
+<span class="fc bfc" id="L247" title="All 2 branches covered.">        for (NotebookCategory category : categories) {</span>
+<span class="fc" id="L248">            List&lt;NotebookNote&gt; categoryNotes = notes.stream()</span>
+<span class="fc bfc" id="L249" title="All 4 branches covered.">                    .filter(note -&gt; note.getCategory() != null &amp;&amp; note.getCategory().getId().equals(category.getId()))</span>
+<span class="fc" id="L250">                    .toList();</span>
+<span class="fc bfc" id="L251" title="All 2 branches covered.">            if (!categoryNotes.isEmpty()) {</span>
+<span class="fc" id="L252">                categoryExports.add(new NotebookCategoryExport(category.getName(), categoryNotes));</span>
+            }
+<span class="fc" id="L254">        }</span>
+
+<span class="fc" id="L256">        List&lt;NotebookNote&gt; uncategorizedNotes = notes.stream()</span>
+<span class="fc bfc" id="L257" title="All 4 branches covered.">                .filter(note -&gt; note.getCategory() == null || !categoryIds.contains(note.getCategory().getId()))</span>
+<span class="fc" id="L258">                .toList();</span>
+<span class="fc bfc" id="L259" title="All 2 branches covered.">        if (!uncategorizedNotes.isEmpty()) {</span>
+<span class="fc" id="L260">            categoryExports.add(new NotebookCategoryExport(UNCATEGORIZED_CATEGORY_NAME, uncategorizedNotes));</span>
+        }
+
+<span class="fc" id="L263">        return new NotebookExport(book, categoryExports);</span>
+    }
+
+    private boolean shouldIncludeNotebookStatus(NotebookNoteStatus status, boolean includeOpen, boolean includeResolved) {
+<span class="pc bpc" id="L267" title="2 of 8 branches missed.">        return (includeOpen &amp;&amp; status == NotebookNoteStatus.OPEN)</span>
+                || (includeResolved &amp;&amp; status == NotebookNoteStatus.RESOLVED);
+    }
+
+    private String manuscriptFileName(Book book, ExportFormat format) {
+<span class="fc" id="L272">        return exportFileNameService.fileName(book.getTitle(), &quot;manuscrito&quot;, format.extension());</span>
+    }
+
+    private String exportNotebookTxt(NotebookExport notebook) {
+<span class="fc" id="L276">        StringBuilder text = new StringBuilder();</span>
+<span class="fc" id="L277">        appendTextBlock(text, notebookTitle(notebook));</span>
+
+<span class="fc bfc" id="L279" title="All 2 branches covered.">        for (NotebookCategoryExport category : notebook.categories()) {</span>
+<span class="fc" id="L280">            appendTextBlock(text, category.name());</span>
+<span class="fc" id="L281">            appendNotebookTxtStatusSection(text, &quot;Abertas&quot;, category.openNotes());</span>
+<span class="fc" id="L282">            appendNotebookTxtStatusSection(text, &quot;Resolvidas&quot;, category.resolvedNotes());</span>
+<span class="fc" id="L283">        }</span>
+
+<span class="fc" id="L285">        return normalizeLineEndings(text.toString());</span>
+    }
+
+    private void appendNotebookTxtStatusSection(StringBuilder text, String statusTitle, List&lt;NotebookNote&gt; notes) {
+<span class="fc bfc" id="L289" title="All 2 branches covered.">        if (notes.isEmpty()) {</span>
+<span class="fc" id="L290">            return;</span>
+        }
+
+<span class="fc" id="L293">        appendTextBlock(text, statusTitle);</span>
+<span class="fc bfc" id="L294" title="All 2 branches covered.">        for (NotebookNote note : notes) {</span>
+<span class="fc" id="L295">            appendTextBlock(text, notebookNoteTxtBlock(note));</span>
+<span class="fc" id="L296">        }</span>
+<span class="fc" id="L297">    }</span>
+
+    private String notebookNoteTxtBlock(NotebookNote note) {
+<span class="fc" id="L300">        StringBuilder block = new StringBuilder(note.getTitle());</span>
+<span class="fc" id="L301">        block.append(&quot;\n&quot;).append(notebookMetadata(note));</span>
+<span class="fc" id="L302">        appendNotebookContent(block, note.getContent());</span>
+<span class="fc" id="L303">        return block.toString();</span>
+    }
+
+    private String exportNotebookMarkdown(NotebookExport notebook) {
+<span class="fc" id="L307">        StringBuilder markdown = new StringBuilder();</span>
+<span class="fc" id="L308">        appendHeading(markdown, &quot;#&quot;, notebookTitle(notebook));</span>
+
+<span class="fc bfc" id="L310" title="All 2 branches covered.">        for (NotebookCategoryExport category : notebook.categories()) {</span>
+<span class="fc" id="L311">            appendHeading(markdown, &quot;##&quot;, category.name());</span>
+<span class="fc" id="L312">            appendNotebookMarkdownStatusSection(markdown, &quot;Abertas&quot;, category.openNotes());</span>
+<span class="fc" id="L313">            appendNotebookMarkdownStatusSection(markdown, &quot;Resolvidas&quot;, category.resolvedNotes());</span>
+<span class="fc" id="L314">        }</span>
+
+<span class="fc" id="L316">        return markdown.toString();</span>
+    }
+
+    private void appendNotebookMarkdownStatusSection(StringBuilder markdown, String statusTitle, List&lt;NotebookNote&gt; notes) {
+<span class="fc bfc" id="L320" title="All 2 branches covered.">        if (notes.isEmpty()) {</span>
+<span class="fc" id="L321">            return;</span>
+        }
+
+<span class="fc" id="L324">        appendHeading(markdown, &quot;###&quot;, statusTitle);</span>
+<span class="fc bfc" id="L325" title="All 2 branches covered.">        for (NotebookNote note : notes) {</span>
+<span class="fc" id="L326">            appendHeading(markdown, &quot;####&quot;, note.getTitle());</span>
+<span class="fc" id="L327">            appendBlock(markdown, notebookMetadata(note));</span>
+<span class="fc" id="L328">            appendOptionalBlock(markdown, normalizeNotebookContent(note.getContent()));</span>
+<span class="fc" id="L329">        }</span>
+<span class="fc" id="L330">    }</span>
+
+    private byte[] exportNotebookDocx(NotebookExport notebook) {
+<span class="fc" id="L333">        try (XWPFDocument document = new XWPFDocument();</span>
+<span class="fc" id="L334">             ByteArrayOutputStream outputStream = new ByteArrayOutputStream()) {</span>
+<span class="fc" id="L335">            appendDocxHeading(document, &quot;Title&quot;, notebookTitle(notebook));</span>
+
+<span class="fc bfc" id="L337" title="All 2 branches covered.">            for (NotebookCategoryExport category : notebook.categories()) {</span>
+<span class="fc" id="L338">                appendDocxHeading(document, &quot;Heading1&quot;, category.name());</span>
+<span class="fc" id="L339">                appendNotebookDocxStatusSection(document, &quot;Abertas&quot;, category.openNotes());</span>
+<span class="fc" id="L340">                appendNotebookDocxStatusSection(document, &quot;Resolvidas&quot;, category.resolvedNotes());</span>
+<span class="fc" id="L341">            }</span>
+
+<span class="fc" id="L343">            document.write(outputStream);</span>
+<span class="fc" id="L344">            return outputStream.toByteArray();</span>
+<span class="nc" id="L345">        } catch (IOException exception) {</span>
+<span class="nc" id="L346">            throw new IllegalStateException(&quot;Failed to export DOCX notebook&quot;, exception);</span>
+        }
+    }
+
+    private void appendNotebookDocxStatusSection(XWPFDocument document, String statusTitle, List&lt;NotebookNote&gt; notes) {
+<span class="fc bfc" id="L351" title="All 2 branches covered.">        if (notes.isEmpty()) {</span>
+<span class="fc" id="L352">            return;</span>
+        }
+
+<span class="fc" id="L355">        appendDocxHeading(document, &quot;Heading2&quot;, statusTitle);</span>
+<span class="fc bfc" id="L356" title="All 2 branches covered.">        for (NotebookNote note : notes) {</span>
+<span class="fc" id="L357">            appendDocxHeading(document, &quot;Heading3&quot;, note.getTitle());</span>
+<span class="fc" id="L358">            appendDocxParagraph(document, notebookMetadata(note));</span>
+<span class="fc" id="L359">            appendDocxNotebookContent(document, note.getContent());</span>
+<span class="fc" id="L360">        }</span>
+<span class="fc" id="L361">    }</span>
+
+    private String notebookTitle(NotebookExport notebook) {
+<span class="fc" id="L364">        return NOTEBOOK_TITLE_PREFIX + notebook.book().getTitle();</span>
+    }
+
+    private String notebookMetadata(NotebookNote note) {
+<span class="fc" id="L368">        return &quot;Status: &quot; + notebookStatusLabel(note.getStatus())</span>
+<span class="fc" id="L369">                + &quot; | Atualizada em: &quot; + note.getUpdatedAt().toLocalDate();</span>
+    }
+
+    private String notebookStatusLabel(NotebookNoteStatus status) {
+<span class="fc bfc" id="L373" title="All 2 branches covered.">        return status == NotebookNoteStatus.RESOLVED ? &quot;Resolvida&quot; : &quot;Aberta&quot;;</span>
+    }
+
+    private void appendNotebookContent(StringBuilder block, String content) {
+<span class="fc" id="L377">        String normalizedContent = normalizeNotebookContent(content);</span>
+<span class="pc bpc" id="L378" title="1 of 2 branches missed.">        if (normalizedContent == null) {</span>
+<span class="nc" id="L379">            return;</span>
+        }
+
+<span class="fc" id="L382">        block.append(&quot;\n\n&quot;).append(normalizedContent);</span>
+<span class="fc" id="L383">    }</span>
+
+    private String normalizeNotebookContent(String content) {
+<span class="pc bpc" id="L386" title="2 of 4 branches missed.">        if (content == null || content.isBlank()) {</span>
+<span class="nc" id="L387">            return null;</span>
+        }
+
+<span class="fc" id="L390">        return normalizeLineEndings(content).strip();</span>
+    }
+
+    private void appendDocxNotebookContent(XWPFDocument document, String content) {
+<span class="fc" id="L394">        String normalizedContent = normalizeNotebookContent(content);</span>
+<span class="pc bpc" id="L395" title="1 of 2 branches missed.">        if (normalizedContent == null) {</span>
+<span class="nc" id="L396">            return;</span>
+        }
+
+<span class="fc bfc" id="L399" title="All 2 branches covered.">        for (String paragraph : normalizedContent.split(&quot;\\n{2,}&quot;, -1)) {</span>
+<span class="fc" id="L400">            appendDocxParagraph(document, paragraph);</span>
+        }
+<span class="fc" id="L402">    }</span>
+
+    private void appendHeading(StringBuilder markdown, String marker, String title) {
+<span class="fc" id="L405">        appendBlock(markdown, marker + &quot; &quot; + title);</span>
+<span class="fc" id="L406">    }</span>
+
+    private void appendOptionalBlock(StringBuilder markdown, String text) {
+<span class="pc bpc" id="L409" title="1 of 4 branches missed.">        if (text == null || text.isBlank()) {</span>
+<span class="fc" id="L410">            return;</span>
+        }
+
+<span class="fc" id="L413">        appendBlock(markdown, text);</span>
+<span class="fc" id="L414">    }</span>
+
+    private void appendChapterScenes(
+            StringBuilder markdown,
+            List&lt;Scene&gt; scenes,
+            boolean includeSceneTitles,
+            boolean includeEmptyScenes
+    ) {
+<span class="fc" id="L422">        boolean hasPreviousSceneContent = false;</span>
+
+<span class="fc bfc" id="L424" title="All 2 branches covered.">        for (Scene scene : scenes) {</span>
+<span class="fc" id="L425">            String sceneBlock = buildSceneBlock(scene, includeSceneTitles, includeEmptyScenes);</span>
+<span class="fc bfc" id="L426" title="All 2 branches covered.">            if (sceneBlock == null) {</span>
+<span class="fc" id="L427">                continue;</span>
+            }
+
+<span class="fc bfc" id="L430" title="All 2 branches covered.">            if (hasPreviousSceneContent) {</span>
+<span class="fc" id="L431">                appendBlock(markdown, &quot;---&quot;);</span>
+            }
+
+<span class="fc" id="L434">            appendBlock(markdown, sceneBlock);</span>
+<span class="fc" id="L435">            hasPreviousSceneContent = true;</span>
+<span class="fc" id="L436">        }</span>
+<span class="fc" id="L437">    }</span>
+
+    private String buildSceneBlock(Scene scene, boolean includeSceneTitles, boolean includeEmptyScenes) {
+<span class="fc" id="L440">        String sceneContent = getSceneContent(scene);</span>
+<span class="pc bpc" id="L441" title="1 of 4 branches missed.">        boolean hasContent = sceneContent != null &amp;&amp; !sceneContent.isBlank();</span>
+
+<span class="fc bfc" id="L443" title="All 4 branches covered.">        if (!hasContent &amp;&amp; !includeEmptyScenes) {</span>
+<span class="fc" id="L444">            return null;</span>
+        }
+
+<span class="fc" id="L447">        StringBuilder sceneBlock = new StringBuilder();</span>
+<span class="fc bfc" id="L448" title="All 2 branches covered.">        if (includeSceneTitles) {</span>
+<span class="fc" id="L449">            sceneBlock.append(&quot;#### &quot;).append(scene.getTitle());</span>
+        }
+<span class="fc bfc" id="L451" title="All 2 branches covered.">        if (hasContent) {</span>
+<span class="fc bfc" id="L452" title="All 2 branches covered.">            if (!sceneBlock.isEmpty()) {</span>
+<span class="fc" id="L453">                sceneBlock.append(&quot;\n\n&quot;);</span>
+            }
+<span class="fc" id="L455">            sceneBlock.append(sceneContent);</span>
+        }
+
+<span class="pc bpc" id="L458" title="1 of 2 branches missed.">        return sceneBlock.isEmpty() ? null : sceneBlock.toString();</span>
+    }
+
+    private String getSceneContent(Scene scene) {
+<span class="fc" id="L462">        return tipTapMarkdownRenderer.render(scene.getContentJson())</span>
+<span class="pc bpc" id="L463" title="1 of 4 branches missed.">                .orElseGet(() -&gt; scene.getContentText() == null || scene.getContentText().isBlank() ? null : scene.getContentText());</span>
+    }
+
+    private void appendBlock(StringBuilder markdown, String block) {
+<span class="fc bfc" id="L467" title="All 2 branches covered.">        if (!markdown.isEmpty()) {</span>
+<span class="fc" id="L468">            markdown.append(&quot;\n\n&quot;);</span>
+        }
+
+<span class="fc" id="L471">        markdown.append(block);</span>
+<span class="fc" id="L472">    }</span>
+
+    private void appendTxtChapterScenes(
+            StringBuilder text,
+            List&lt;Scene&gt; scenes,
+            boolean includeSceneTitles,
+            boolean includeEmptyScenes
+    ) {
+<span class="fc" id="L480">        boolean hasPreviousSceneContent = false;</span>
+
+<span class="fc bfc" id="L482" title="All 2 branches covered.">        for (Scene scene : scenes) {</span>
+<span class="fc" id="L483">            String sceneBlock = buildTxtSceneBlock(scene, includeSceneTitles, includeEmptyScenes);</span>
+<span class="fc bfc" id="L484" title="All 2 branches covered.">            if (sceneBlock == null) {</span>
+<span class="fc" id="L485">                continue;</span>
+            }
+
+<span class="fc bfc" id="L488" title="All 4 branches covered.">            if (hasPreviousSceneContent &amp;&amp; !includeSceneTitles) {</span>
+<span class="fc" id="L489">                appendTextBlock(text, TipTapPlainTextRenderer.TEXT_SEPARATOR);</span>
+            }
+
+<span class="fc" id="L492">            appendTextBlock(text, sceneBlock);</span>
+<span class="fc" id="L493">            hasPreviousSceneContent = true;</span>
+<span class="fc" id="L494">        }</span>
+<span class="fc" id="L495">    }</span>
+
+    private String buildTxtSceneBlock(Scene scene, boolean includeSceneTitles, boolean includeEmptyScenes) {
+<span class="fc" id="L498">        String sceneContent = getPlainSceneContent(scene);</span>
+<span class="pc bpc" id="L499" title="1 of 4 branches missed.">        boolean hasContent = sceneContent != null &amp;&amp; !sceneContent.isBlank();</span>
+
+<span class="pc bpc" id="L501" title="1 of 4 branches missed.">        if (!hasContent &amp;&amp; !includeEmptyScenes) {</span>
+<span class="nc" id="L502">            return null;</span>
+        }
+
+<span class="fc" id="L505">        StringBuilder sceneBlock = new StringBuilder();</span>
+<span class="fc bfc" id="L506" title="All 2 branches covered.">        if (includeSceneTitles) {</span>
+<span class="fc" id="L507">            sceneBlock.append(scene.getTitle());</span>
+        }
+<span class="fc bfc" id="L509" title="All 2 branches covered.">        if (hasContent) {</span>
+<span class="fc bfc" id="L510" title="All 2 branches covered.">            if (!sceneBlock.isEmpty()) {</span>
+<span class="fc" id="L511">                sceneBlock.append(&quot;\n\n&quot;);</span>
+            }
+<span class="fc" id="L513">            sceneBlock.append(sceneContent);</span>
+        }
+
+<span class="fc bfc" id="L516" title="All 2 branches covered.">        return sceneBlock.isEmpty() ? null : sceneBlock.toString();</span>
+    }
+
+    private String getPlainSceneContent(Scene scene) {
+<span class="fc" id="L520">        return tipTapPlainTextRenderer.render(scene.getContentJson())</span>
+<span class="pc bpc" id="L521" title="1 of 4 branches missed.">                .orElseGet(() -&gt; scene.getContentText() == null || scene.getContentText().isBlank() ? null : normalizeLineEndings(scene.getContentText()));</span>
+    }
+
+    private void appendOptionalTextBlock(StringBuilder text, String block) {
+<span class="pc bpc" id="L525" title="1 of 4 branches missed.">        if (block == null || block.isBlank()) {</span>
+<span class="fc" id="L526">            return;</span>
+        }
+
+<span class="fc" id="L529">        appendTextBlock(text, block);</span>
+<span class="fc" id="L530">    }</span>
+
+    private void appendTextBlock(StringBuilder text, String block) {
+<span class="fc bfc" id="L533" title="All 2 branches covered.">        if (!text.isEmpty()) {</span>
+<span class="fc" id="L534">            text.append(&quot;\n\n&quot;);</span>
+        }
+
+<span class="fc" id="L537">        text.append(normalizeLineEndings(block));</span>
+<span class="fc" id="L538">    }</span>
+
+    private String normalizeLineEndings(String text) {
+<span class="fc" id="L541">        return text.replaceAll(&quot;\\R&quot;, &quot;\n&quot;);</span>
+    }
+
+    private void appendDocxChapterScenes(
+            XWPFDocument document,
+            List&lt;Scene&gt; scenes,
+            boolean includeSceneTitles,
+            boolean includeEmptyScenes
+    ) {
+<span class="fc" id="L550">        boolean hasPreviousScene = false;</span>
+
+<span class="fc bfc" id="L552" title="All 2 branches covered.">        for (Scene scene : scenes) {</span>
+<span class="fc" id="L553">            boolean appendedScene = appendDocxScene(document, scene, includeSceneTitles, includeEmptyScenes, hasPreviousScene);</span>
+<span class="pc bpc" id="L554" title="3 of 4 branches missed.">            hasPreviousScene = appendedScene || hasPreviousScene;</span>
+<span class="fc" id="L555">        }</span>
+<span class="fc" id="L556">    }</span>
+
+    private boolean appendDocxScene(
+            XWPFDocument document,
+            Scene scene,
+            boolean includeSceneTitles,
+            boolean includeEmptyScenes,
+            boolean hasPreviousScene
+    ) {
+<span class="fc" id="L565">        int initialBodyElementCount = document.getBodyElements().size();</span>
+<span class="fc" id="L566">        boolean hasJsonContent = tipTapDocxRenderer.canRender(scene.getContentJson());</span>
+<span class="pc bpc" id="L567" title="2 of 4 branches missed.">        boolean hasTextContent = scene.getContentText() != null &amp;&amp; !scene.getContentText().isBlank();</span>
+
+<span class="pc bpc" id="L569" title="3 of 6 branches missed.">        if (!hasJsonContent &amp;&amp; !hasTextContent &amp;&amp; !includeEmptyScenes) {</span>
+<span class="nc" id="L570">            return false;</span>
+        }
+<span class="pc bpc" id="L572" title="3 of 6 branches missed.">        if (!hasJsonContent &amp;&amp; !hasTextContent &amp;&amp; !includeSceneTitles) {</span>
+<span class="nc" id="L573">            return false;</span>
+        }
+
+<span class="fc bfc" id="L576" title="All 4 branches covered.">        if (!includeSceneTitles &amp;&amp; hasPreviousScene) {</span>
+<span class="fc" id="L577">            appendDocxSceneSeparator(document);</span>
+        }
+
+<span class="fc bfc" id="L580" title="All 2 branches covered.">        if (includeSceneTitles) {</span>
+<span class="fc" id="L581">            appendDocxHeading(document, &quot;Heading3&quot;, scene.getTitle());</span>
+        }
+
+<span class="fc bfc" id="L584" title="All 2 branches covered.">        if (hasJsonContent) {</span>
+<span class="fc" id="L585">            boolean renderedJsonContent = tipTapDocxRenderer.renderInto(document, scene.getContentJson());</span>
+<span class="fc bfc" id="L586" title="All 2 branches covered.">            if (renderedJsonContent) {</span>
+<span class="fc" id="L587">                return true;</span>
+            }
+        }
+
+<span class="pc bpc" id="L591" title="1 of 2 branches missed.">        if (hasTextContent) {</span>
+<span class="fc" id="L592">            appendDocxParagraph(document, scene.getContentText());</span>
+<span class="fc" id="L593">            return true;</span>
+        }
+
+<span class="nc bnc" id="L596" title="All 2 branches missed.">        if (includeSceneTitles) {</span>
+<span class="nc" id="L597">            return true;</span>
+        }
+
+<span class="nc" id="L600">        removeDocxBodyElementsFrom(document, initialBodyElementCount);</span>
+<span class="nc" id="L601">        return false;</span>
+    }
+
+    private void removeDocxBodyElementsFrom(XWPFDocument document, int firstIndexToRemove) {
+<span class="nc bnc" id="L605" title="All 2 branches missed.">        for (int index = document.getBodyElements().size() - 1; index &gt;= firstIndexToRemove; index--) {</span>
+<span class="nc" id="L606">            document.removeBodyElement(index);</span>
+        }
+<span class="nc" id="L608">    }</span>
+
+    private void appendDocxSceneSeparator(XWPFDocument document) {
+<span class="fc" id="L611">        XWPFParagraph paragraph = document.createParagraph();</span>
+<span class="fc" id="L612">        paragraph.setAlignment(ParagraphAlignment.CENTER);</span>
+<span class="fc" id="L613">        paragraph.createRun().setText(&quot;***&quot;);</span>
+<span class="fc" id="L614">    }</span>
+
+    private void appendDocxHeading(XWPFDocument document, String style, String text) {
+<span class="fc" id="L617">        XWPFParagraph paragraph = document.createParagraph();</span>
+<span class="fc" id="L618">        paragraph.setStyle(style);</span>
+<span class="fc" id="L619">        applyDocxHeadingParagraphFormat(paragraph, style);</span>
+
+<span class="fc" id="L621">        XWPFRun run = paragraph.createRun();</span>
+<span class="fc" id="L622">        run.setText(text);</span>
+<span class="fc" id="L623">        applyDocxHeadingRunFormat(run, style);</span>
+<span class="fc" id="L624">    }</span>
+
+    private void applyDocxHeadingParagraphFormat(XWPFParagraph paragraph, String style) {
+<span class="fc bfc" id="L627" title="All 2 branches covered.">        if (&quot;Title&quot;.equals(style)) {</span>
+<span class="fc" id="L628">            paragraph.setAlignment(ParagraphAlignment.CENTER);</span>
+<span class="fc" id="L629">            paragraph.setSpacingAfter(360);</span>
+<span class="fc" id="L630">            return;</span>
+        }
+
+<span class="fc bfc" id="L633" title="All 2 branches covered.">        if (&quot;Heading1&quot;.equals(style)) {</span>
+<span class="fc" id="L634">            paragraph.setSpacingBefore(360);</span>
+<span class="fc" id="L635">            paragraph.setSpacingAfter(180);</span>
+<span class="fc" id="L636">            return;</span>
+        }
+
+<span class="fc bfc" id="L639" title="All 2 branches covered.">        if (&quot;Heading2&quot;.equals(style)) {</span>
+<span class="fc" id="L640">            paragraph.setSpacingBefore(280);</span>
+<span class="fc" id="L641">            paragraph.setSpacingAfter(140);</span>
+<span class="fc" id="L642">            return;</span>
+        }
+
+<span class="pc bpc" id="L645" title="1 of 2 branches missed.">        if (&quot;Heading3&quot;.equals(style)) {</span>
+<span class="fc" id="L646">            paragraph.setSpacingBefore(180);</span>
+<span class="fc" id="L647">            paragraph.setSpacingAfter(100);</span>
+        }
+<span class="fc" id="L649">    }</span>
+
+    private void applyDocxHeadingRunFormat(XWPFRun run, String style) {
+<span class="fc" id="L652">        run.setBold(true);</span>
+
+<span class="fc bfc" id="L654" title="All 2 branches covered.">        if (&quot;Title&quot;.equals(style)) {</span>
+<span class="fc" id="L655">            run.setFontSize(24);</span>
+<span class="fc" id="L656">            return;</span>
+        }
+
+<span class="fc bfc" id="L659" title="All 2 branches covered.">        if (&quot;Heading1&quot;.equals(style)) {</span>
+<span class="fc" id="L660">            run.setFontSize(18);</span>
+<span class="fc" id="L661">            return;</span>
+        }
+
+<span class="fc bfc" id="L664" title="All 2 branches covered.">        if (&quot;Heading2&quot;.equals(style)) {</span>
+<span class="fc" id="L665">            run.setFontSize(16);</span>
+<span class="fc" id="L666">            return;</span>
+        }
+
+<span class="pc bpc" id="L669" title="1 of 2 branches missed.">        if (&quot;Heading3&quot;.equals(style)) {</span>
+<span class="fc" id="L670">            run.setFontSize(13);</span>
+        }
+<span class="fc" id="L672">    }</span>
+
+    private void appendDocxOptionalParagraph(XWPFDocument document, String text) {
+<span class="pc bpc" id="L675" title="3 of 4 branches missed.">        if (text == null || text.isBlank()) {</span>
+<span class="fc" id="L676">            return;</span>
+        }
+
+<span class="nc" id="L679">        appendDocxParagraph(document, text);</span>
+<span class="nc" id="L680">    }</span>
+
+    private void appendDocxParagraph(XWPFDocument document, String text) {
+<span class="fc" id="L683">        XWPFParagraph paragraph = document.createParagraph();</span>
+<span class="fc" id="L684">        String[] lines = text.split(&quot;\\R&quot;, -1);</span>
+
+<span class="fc bfc" id="L686" title="All 2 branches covered.">        for (int index = 0; index &lt; lines.length; index++) {</span>
+<span class="fc" id="L687">            XWPFRun run = paragraph.createRun();</span>
+<span class="pc bpc" id="L688" title="1 of 2 branches missed.">            if (index &gt; 0) {</span>
+<span class="nc" id="L689">                run.addBreak();</span>
+            }
+<span class="fc" id="L691">            run.setText(lines[index]);</span>
+        }
+<span class="fc" id="L693">    }</span>
+
+<span class="fc" id="L695">    private record ManuscriptExport(</span>
+            Book book,
+            List&lt;BookSection&gt; sections,
+            Map&lt;UUID, List&lt;Chapter&gt;&gt; chaptersBySection,
+            Map&lt;UUID, List&lt;Scene&gt;&gt; scenesByChapter
+    ) {
+    }
+
+<span class="fc" id="L703">    private record NotebookExport(</span>
+            Book book,
+            List&lt;NotebookCategoryExport&gt; categories
+    ) {
+    }
+
+<span class="fc" id="L709">    private record NotebookCategoryExport(</span>
+            String name,
+            List&lt;NotebookNote&gt; notes
+    ) {
+
+        List&lt;NotebookNote&gt; openNotes() {
+<span class="fc" id="L715">            return notes.stream()</span>
+<span class="fc bfc" id="L716" title="All 2 branches covered.">                    .filter(note -&gt; note.getStatus() == NotebookNoteStatus.OPEN)</span>
+<span class="fc" id="L717">                    .toList();</span>
+        }
+
+        List&lt;NotebookNote&gt; resolvedNotes() {
+<span class="fc" id="L721">            return notes.stream()</span>
+<span class="fc bfc" id="L722" title="All 2 branches covered.">                    .filter(note -&gt; note.getStatus() == NotebookNoteStatus.RESOLVED)</span>
+<span class="fc" id="L723">                    .toList();</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

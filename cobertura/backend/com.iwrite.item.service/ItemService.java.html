@@ -1,0 +1,180 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="pt"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ItemService.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">iwrite-backend</a> &gt; <a href="index.source.html" class="el_package">com.iwrite.item.service</a> &gt; <span class="el_source">ItemService.java</span></div><h1>ItemService.java</h1><pre class="source lang-java linenums">package com.iwrite.item.service;
+
+import com.iwrite.book.entity.Book;
+import com.iwrite.book.service.BookAccessService;
+import com.iwrite.character.entity.Character;
+import com.iwrite.character.service.CharacterService;
+import com.iwrite.common.exception.BadRequestException;
+import com.iwrite.common.exception.ConflictException;
+import com.iwrite.common.exception.ResourceNotFoundException;
+import com.iwrite.common.validation.RequestValidation;
+import com.iwrite.item.dto.ItemRequest;
+import com.iwrite.item.dto.ItemResponse;
+import com.iwrite.item.dto.ItemUpdateRequest;
+import com.iwrite.item.entity.Item;
+import com.iwrite.item.repository.ItemRepository;
+import com.iwrite.scene.repository.SceneRepository;
+import com.iwrite.user.context.CurrentUserProvider;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.List;
+import java.util.UUID;
+
+@Service
+public class ItemService {
+
+    private final ItemRepository itemRepository;
+    private final BookAccessService bookAccessService;
+    private final CharacterService characterService;
+    private final CurrentUserProvider currentUserProvider;
+    private final SceneRepository sceneRepository;
+
+    public ItemService(
+            ItemRepository itemRepository,
+            BookAccessService bookAccessService,
+            CharacterService characterService,
+            CurrentUserProvider currentUserProvider,
+            SceneRepository sceneRepository
+<span class="fc" id="L40">    ) {</span>
+<span class="fc" id="L41">        this.itemRepository = itemRepository;</span>
+<span class="fc" id="L42">        this.bookAccessService = bookAccessService;</span>
+<span class="fc" id="L43">        this.characterService = characterService;</span>
+<span class="fc" id="L44">        this.currentUserProvider = currentUserProvider;</span>
+<span class="fc" id="L45">        this.sceneRepository = sceneRepository;</span>
+<span class="fc" id="L46">    }</span>
+
+    @Transactional(readOnly = true)
+    public List&lt;ItemResponse&gt; findByBook(UUID bookId) {
+<span class="fc" id="L50">        bookAccessService.requireBookReadAccess(bookId);</span>
+<span class="fc" id="L51">        return itemRepository.findByBook_IdAndBook_Tenant_IdOrderByNameAscIdAsc(</span>
+                        bookId,
+<span class="fc" id="L53">                        currentUserProvider.tenantId()</span>
+                )
+<span class="fc" id="L55">                .stream()</span>
+<span class="fc" id="L56">                .map(ItemResponse::fromEntity)</span>
+<span class="fc" id="L57">                .toList();</span>
+    }
+
+    @Transactional(readOnly = true)
+    public ItemResponse findById(UUID itemId) {
+<span class="fc" id="L62">        return ItemResponse.fromEntity(getItem(itemId));</span>
+    }
+
+    @Transactional
+    public ItemResponse create(UUID bookId, ItemRequest request) {
+<span class="fc" id="L67">        Book book = bookAccessService.requireBookEditAccess(bookId);</span>
+<span class="fc" id="L68">        Character owner = findOwnerForBook(bookId, request.currentOwnerCharacterId());</span>
+
+<span class="fc" id="L70">        Item item = new Item();</span>
+<span class="fc" id="L71">        item.setBook(book);</span>
+<span class="fc" id="L72">        item.setName(request.name());</span>
+<span class="fc" id="L73">        item.setType(request.type());</span>
+<span class="fc" id="L74">        item.setDescription(request.description());</span>
+<span class="fc" id="L75">        item.setOrigin(request.origin());</span>
+<span class="fc" id="L76">        item.setCurrentOwnerCharacter(owner);</span>
+<span class="fc" id="L77">        item.setNarrativeImportance(request.narrativeImportance());</span>
+<span class="fc" id="L78">        item.setNotes(request.notes());</span>
+
+<span class="fc" id="L80">        return ItemResponse.fromEntity(itemRepository.save(item));</span>
+    }
+
+    @Transactional
+    public ItemResponse update(UUID itemId, ItemUpdateRequest request) {
+<span class="fc" id="L85">        Item item = getItem(itemId);</span>
+<span class="fc" id="L86">        RequestValidation.rejectBlankWhenPresent(&quot;name&quot;, request.name());</span>
+<span class="fc bfc" id="L87" title="All 2 branches covered.">        Character owner = request.isCurrentOwnerCharacterIdPresent()</span>
+<span class="fc" id="L88">                ? findOwnerForBook(item.getBook().getId(), request.currentOwnerCharacterId())</span>
+<span class="fc" id="L89">                : item.getCurrentOwnerCharacter();</span>
+
+<span class="fc bfc" id="L91" title="All 2 branches covered.">        if (request.name() != null) {</span>
+<span class="fc" id="L92">            item.setName(request.name());</span>
+        }
+<span class="fc bfc" id="L94" title="All 2 branches covered.">        if (request.type() != null) {</span>
+<span class="fc" id="L95">            item.setType(request.type());</span>
+        }
+<span class="fc bfc" id="L97" title="All 2 branches covered.">        if (request.description() != null) {</span>
+<span class="fc" id="L98">            item.setDescription(request.description());</span>
+        }
+<span class="fc bfc" id="L100" title="All 2 branches covered.">        if (request.origin() != null) {</span>
+<span class="fc" id="L101">            item.setOrigin(request.origin());</span>
+        }
+<span class="fc bfc" id="L103" title="All 2 branches covered.">        if (request.isCurrentOwnerCharacterIdPresent()) {</span>
+<span class="fc" id="L104">            item.setCurrentOwnerCharacter(owner);</span>
+        }
+<span class="fc bfc" id="L106" title="All 2 branches covered.">        if (request.narrativeImportance() != null) {</span>
+<span class="fc" id="L107">            item.setNarrativeImportance(request.narrativeImportance());</span>
+        }
+<span class="fc bfc" id="L109" title="All 2 branches covered.">        if (request.notes() != null) {</span>
+<span class="fc" id="L110">            item.setNotes(request.notes());</span>
+        }
+
+<span class="fc" id="L113">        return ItemResponse.fromEntity(item);</span>
+    }
+
+    @Transactional
+    public void delete(UUID itemId) {
+<span class="fc" id="L118">        UUID tenantId = currentUserProvider.tenantId();</span>
+<span class="fc" id="L119">        Item item = getItemForUpdate(itemId, tenantId);</span>
+<span class="fc bfc" id="L120" title="All 2 branches covered.">        if (sceneRepository.existsByItemId(itemId)) {</span>
+<span class="fc" id="L121">            throw itemReferencedConflict();</span>
+        }
+
+        try {
+<span class="fc" id="L125">            itemRepository.delete(item);</span>
+<span class="fc" id="L126">            itemRepository.flush();</span>
+<span class="nc" id="L127">        } catch (DataIntegrityViolationException exception) {</span>
+<span class="nc" id="L128">            throw itemReferencedConflict();</span>
+<span class="fc" id="L129">        }</span>
+<span class="fc" id="L130">    }</span>
+
+    @Transactional(readOnly = true)
+    public Item getItem(UUID itemId) {
+<span class="fc" id="L134">        Item item = itemRepository.findByIdAndBook_Tenant_Id(itemId, currentUserProvider.tenantId())</span>
+<span class="fc" id="L135">                .orElseThrow(() -&gt; itemNotFound(itemId));</span>
+<span class="fc" id="L136">        requireItemBookAccess(item, itemId, false);</span>
+<span class="fc" id="L137">        return item;</span>
+    }
+
+    private Item getItemForUpdate(UUID itemId, UUID tenantId) {
+<span class="fc" id="L141">        Item item = itemRepository.findByIdAndBookTenantIdForUpdate(itemId, tenantId)</span>
+<span class="fc" id="L142">                .orElseThrow(() -&gt; itemNotFound(itemId));</span>
+<span class="fc" id="L143">        requireItemBookAccess(item, itemId, true);</span>
+<span class="fc" id="L144">        return item;</span>
+    }
+
+    private void requireItemBookAccess(Item item, UUID itemId, boolean edit) {
+        try {
+<span class="fc bfc" id="L149" title="All 2 branches covered.">            if (edit) {</span>
+<span class="fc" id="L150">                bookAccessService.requireBookEditAccess(item.getBook().getId());</span>
+            } else {
+<span class="fc" id="L152">                bookAccessService.requireBookReadAccess(item.getBook().getId());</span>
+            }
+<span class="nc" id="L154">        } catch (ResourceNotFoundException exception) {</span>
+<span class="nc" id="L155">            throw itemNotFound(itemId);</span>
+<span class="fc" id="L156">        }</span>
+<span class="fc" id="L157">    }</span>
+
+    private ResourceNotFoundException itemNotFound(UUID itemId) {
+<span class="fc" id="L160">        return new ResourceNotFoundException(&quot;Item not found: &quot; + itemId);</span>
+    }
+
+    private Character findOwnerForBook(UUID bookId, UUID characterId) {
+<span class="fc bfc" id="L164" title="All 2 branches covered.">        if (characterId == null) {</span>
+<span class="fc" id="L165">            return null;</span>
+        }
+
+<span class="fc" id="L168">        Character character = characterService.getCharacter(characterId);</span>
+<span class="fc bfc" id="L169" title="All 2 branches covered.">        if (!character.getBook().getId().equals(bookId)) {</span>
+<span class="fc" id="L170">            throw new BadRequestException(&quot;currentOwnerCharacterId must belong to the same book&quot;);</span>
+        }
+
+<span class="fc" id="L173">        return character;</span>
+    }
+
+    private ConflictException itemReferencedConflict() {
+<span class="fc" id="L177">        return new ConflictException(&quot;Item cannot be deleted while it is referenced.&quot;);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

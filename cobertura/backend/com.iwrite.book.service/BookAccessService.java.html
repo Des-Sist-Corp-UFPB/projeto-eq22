@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="pt"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>BookAccessService.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">iwrite-backend</a> &gt; <a href="index.source.html" class="el_package">com.iwrite.book.service</a> &gt; <span class="el_source">BookAccessService.java</span></div><h1>BookAccessService.java</h1><pre class="source lang-java linenums">package com.iwrite.book.service;
+
+import com.iwrite.book.entity.Book;
+import com.iwrite.book.entity.BookAccessLevel;
+import com.iwrite.book.repository.BookRepository;
+import com.iwrite.common.exception.ResourceNotFoundException;
+import com.iwrite.user.context.CurrentUserMembershipService;
+import com.iwrite.user.context.CurrentUserProvider;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.UUID;
+
+@Service
+public class BookAccessService {
+
+    private final BookRepository bookRepository;
+    private final CurrentUserProvider currentUserProvider;
+    private final CurrentUserMembershipService currentUserMembershipService;
+
+    public BookAccessService(
+            BookRepository bookRepository,
+            CurrentUserProvider currentUserProvider,
+            CurrentUserMembershipService currentUserMembershipService
+<span class="fc" id="L25">    ) {</span>
+<span class="fc" id="L26">        this.bookRepository = bookRepository;</span>
+<span class="fc" id="L27">        this.currentUserProvider = currentUserProvider;</span>
+<span class="fc" id="L28">        this.currentUserMembershipService = currentUserMembershipService;</span>
+<span class="fc" id="L29">    }</span>
+
+    @Transactional(readOnly = true)
+    public Book requireBookReadAccess(UUID bookId) {
+<span class="fc" id="L33">        return requireAccessibleBook(bookId);</span>
+    }
+
+    @Transactional(readOnly = true)
+    public Book requireBookEditAccess(UUID bookId) {
+<span class="fc" id="L38">        return requireAccessibleBook(bookId);</span>
+    }
+
+    @Transactional(readOnly = true)
+    public Book requireBookOwnerAccess(UUID bookId) {
+<span class="fc" id="L43">        UUID userId = currentUserMembershipService.requireCurrentUserMemberId();</span>
+<span class="fc" id="L44">        UUID tenantId = currentUserProvider.tenantId();</span>
+<span class="fc" id="L45">        return bookRepository.findOwnedByIdAndTenantIdAndUserId(bookId, tenantId, userId)</span>
+<span class="fc" id="L46">                .orElseThrow(() -&gt; bookNotFound(bookId));</span>
+    }
+
+    @Transactional
+    public Book requireBookEditAccessForUpdate(UUID bookId) {
+<span class="fc" id="L51">        UUID userId = currentUserMembershipService.requireCurrentUserMemberId();</span>
+<span class="fc" id="L52">        UUID tenantId = currentUserProvider.tenantId();</span>
+<span class="fc" id="L53">        Book lockedBook = bookRepository.findByIdAndTenantIdForUpdate(bookId, tenantId)</span>
+<span class="pc" id="L54">                .orElseThrow(() -&gt; bookNotFound(bookId));</span>
+<span class="fc" id="L55">        bookRepository.findAccessibleByIdAndTenantIdAndUserId(bookId, tenantId, userId)</span>
+<span class="pc" id="L56">                .orElseThrow(() -&gt; bookNotFound(bookId));</span>
+<span class="fc" id="L57">        return lockedBook;</span>
+    }
+
+    @Transactional
+    public Book requireBookOwnerAccessForUpdate(UUID bookId) {
+<span class="fc" id="L62">        UUID userId = currentUserMembershipService.requireCurrentUserMemberId();</span>
+<span class="fc" id="L63">        UUID tenantId = currentUserProvider.tenantId();</span>
+<span class="fc" id="L64">        return bookRepository.findOwnedByIdAndTenantIdAndUserIdForUpdate(bookId, tenantId, userId)</span>
+<span class="fc" id="L65">                .orElseThrow(() -&gt; bookNotFound(bookId));</span>
+    }
+
+    @Transactional(readOnly = true)
+    public BookAccessLevel requireAccessLevel(UUID bookId) {
+<span class="nc" id="L70">        UUID userId = currentUserMembershipService.requireCurrentUserMemberId();</span>
+<span class="nc" id="L71">        UUID tenantId = currentUserProvider.tenantId();</span>
+<span class="nc" id="L72">        return bookRepository.findAccessLevel(bookId, tenantId, userId)</span>
+<span class="nc" id="L73">                .orElseThrow(() -&gt; bookNotFound(bookId));</span>
+    }
+
+    private Book requireAccessibleBook(UUID bookId) {
+<span class="fc" id="L77">        UUID userId = currentUserMembershipService.requireCurrentUserMemberId();</span>
+<span class="fc" id="L78">        UUID tenantId = currentUserProvider.tenantId();</span>
+<span class="fc" id="L79">        return bookRepository.findAccessibleByIdAndTenantIdAndUserId(bookId, tenantId, userId)</span>
+<span class="fc" id="L80">                .orElseThrow(() -&gt; bookNotFound(bookId));</span>
+    }
+
+    private ResourceNotFoundException bookNotFound(UUID bookId) {
+<span class="fc" id="L84">        return new ResourceNotFoundException(&quot;Book not found: &quot; + bookId);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

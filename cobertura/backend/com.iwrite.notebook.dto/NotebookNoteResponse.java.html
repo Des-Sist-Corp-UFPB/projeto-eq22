@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="pt"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>NotebookNoteResponse.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">iwrite-backend</a> &gt; <a href="index.source.html" class="el_package">com.iwrite.notebook.dto</a> &gt; <span class="el_source">NotebookNoteResponse.java</span></div><h1>NotebookNoteResponse.java</h1><pre class="source lang-java linenums">package com.iwrite.notebook.dto;
+
+import com.iwrite.notebook.entity.NotebookCategory;
+import com.iwrite.notebook.entity.NotebookNote;
+import com.iwrite.notebook.entity.NotebookNoteStatus;
+
+import java.time.OffsetDateTime;
+import java.util.UUID;
+
+<span class="fc" id="L10">public record NotebookNoteResponse(</span>
+        UUID id,
+        UUID bookId,
+        UUID categoryId,
+        NotebookCategoryResponse category,
+        String title,
+        String content,
+        NotebookNoteStatus status,
+        OffsetDateTime createdAt,
+        OffsetDateTime updatedAt
+) {
+
+    public static NotebookNoteResponse fromEntity(NotebookNote note) {
+<span class="fc" id="L23">        NotebookCategory category = sameBookCategory(note);</span>
+<span class="fc" id="L24">        return new NotebookNoteResponse(</span>
+<span class="fc" id="L25">                note.getId(),</span>
+<span class="fc" id="L26">                note.getBook().getId(),</span>
+<span class="fc bfc" id="L27" title="All 2 branches covered.">                category == null ? null : category.getId(),</span>
+<span class="fc bfc" id="L28" title="All 2 branches covered.">                category == null ? null : NotebookCategoryResponse.fromEntity(category),</span>
+<span class="fc" id="L29">                note.getTitle(),</span>
+<span class="fc" id="L30">                note.getContent(),</span>
+<span class="fc" id="L31">                note.getStatus(),</span>
+<span class="fc" id="L32">                note.getCreatedAt(),</span>
+<span class="fc" id="L33">                note.getUpdatedAt()</span>
+        );
+    }
+
+    private static NotebookCategory sameBookCategory(NotebookNote note) {
+<span class="fc" id="L38">        NotebookCategory category = note.getCategory();</span>
+<span class="fc bfc" id="L39" title="All 2 branches covered.">        if (category == null) {</span>
+<span class="fc" id="L40">            return null;</span>
+        }
+
+<span class="fc" id="L43">        UUID noteBookId = note.getBook().getId();</span>
+<span class="fc" id="L44">        UUID categoryBookId = category.getBook().getId();</span>
+<span class="fc bfc" id="L45" title="All 2 branches covered.">        return noteBookId.equals(categoryBookId) ? category : null;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

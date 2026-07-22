@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="pt"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>WritingProgressPeriod.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">iwrite-backend</a> &gt; <a href="index.source.html" class="el_package">com.iwrite.writingprogress.service</a> &gt; <span class="el_source">WritingProgressPeriod.java</span></div><h1>WritingProgressPeriod.java</h1><pre class="source lang-java linenums">package com.iwrite.writingprogress.service;
+
+import com.iwrite.common.exception.BadRequestException;
+
+import java.time.LocalDate;
+
+<span class="fc" id="L7">public enum WritingProgressPeriod {</span>
+<span class="fc" id="L8">    SEVEN_DAYS(&quot;7d&quot;) {</span>
+        @Override
+        LocalDate startDate(LocalDate today) {
+<span class="fc" id="L11">            return today.minusDays(6);</span>
+        }
+    },
+<span class="fc" id="L14">    FIFTEEN_DAYS(&quot;15d&quot;) {</span>
+        @Override
+        LocalDate startDate(LocalDate today) {
+<span class="nc" id="L17">            return today.minusDays(14);</span>
+        }
+    },
+<span class="fc" id="L20">    THIRTY_DAYS(&quot;30d&quot;) {</span>
+        @Override
+        LocalDate startDate(LocalDate today) {
+<span class="fc" id="L23">            return today.minusDays(29);</span>
+        }
+    },
+<span class="fc" id="L26">    THREE_MONTHS(&quot;3m&quot;) {</span>
+        @Override
+        LocalDate startDate(LocalDate today) {
+<span class="fc" id="L29">            return firstDayOfCurrentMonthMinusMonths(today, 2);</span>
+        }
+    },
+<span class="fc" id="L32">    SIX_MONTHS(&quot;6m&quot;) {</span>
+        @Override
+        LocalDate startDate(LocalDate today) {
+<span class="fc" id="L35">            return firstDayOfCurrentMonthMinusMonths(today, 5);</span>
+        }
+    },
+<span class="fc" id="L38">    TWELVE_MONTHS(&quot;12m&quot;) {</span>
+        @Override
+        LocalDate startDate(LocalDate today) {
+<span class="fc" id="L41">            return firstDayOfCurrentMonthMinusMonths(today, 11);</span>
+        }
+    };
+
+<span class="fc" id="L45">    public static final WritingProgressPeriod DEFAULT = SEVEN_DAYS;</span>
+
+    private final String requestValue;
+
+<span class="fc" id="L49">    WritingProgressPeriod(String requestValue) {</span>
+<span class="fc" id="L50">        this.requestValue = requestValue;</span>
+<span class="fc" id="L51">    }</span>
+
+    public static WritingProgressPeriod fromRequestValue(String value) {
+<span class="pc bpc" id="L54" title="1 of 4 branches missed.">        if (value == null || value.isBlank()) {</span>
+<span class="fc" id="L55">            return DEFAULT;</span>
+        }
+
+<span class="fc bfc" id="L58" title="All 2 branches covered.">        for (WritingProgressPeriod period : values()) {</span>
+<span class="fc bfc" id="L59" title="All 2 branches covered.">            if (period.requestValue.equals(value)) {</span>
+<span class="fc" id="L60">                return period;</span>
+            }
+        }
+
+<span class="fc" id="L64">        throw new BadRequestException(&quot;Unsupported progressPeriod: &quot; + value);</span>
+    }
+
+    public LocalDate startDateInclusive(LocalDate today) {
+<span class="fc" id="L68">        return startDate(today);</span>
+    }
+
+    public String requestValue() {
+<span class="fc" id="L72">        return requestValue;</span>
+    }
+
+    abstract LocalDate startDate(LocalDate today);
+
+    private static LocalDate firstDayOfCurrentMonthMinusMonths(LocalDate today, int months) {
+<span class="fc" id="L78">        return today.withDayOfMonth(1).minusMonths(months);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

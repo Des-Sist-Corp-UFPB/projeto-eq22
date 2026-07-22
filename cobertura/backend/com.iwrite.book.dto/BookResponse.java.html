@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="pt"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>BookResponse.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">iwrite-backend</a> &gt; <a href="index.source.html" class="el_package">com.iwrite.book.dto</a> &gt; <span class="el_source">BookResponse.java</span></div><h1>BookResponse.java</h1><pre class="source lang-java linenums">package com.iwrite.book.dto;
+
+import com.iwrite.book.entity.Book;
+import com.iwrite.book.entity.BookAccessLevel;
+import com.iwrite.book.entity.BookStatus;
+
+import java.time.DayOfWeek;
+import java.time.OffsetDateTime;
+import java.util.List;
+import java.util.UUID;
+
+<span class="fc" id="L12">public record BookResponse(</span>
+        UUID id,
+        String title,
+        String subtitle,
+        String description,
+        BookStatus status,
+        Integer targetWordCount,
+        Integer dailyTargetWordCount,
+        List&lt;DayOfWeek&gt; plannedWritingDays,
+        BookAccessLevel accessLevel,
+        OffsetDateTime createdAt,
+        OffsetDateTime updatedAt
+) {
+
+    public static BookResponse fromEntity(Book book, List&lt;DayOfWeek&gt; plannedWritingDays, BookAccessLevel accessLevel) {
+<span class="fc" id="L27">        return new BookResponse(</span>
+<span class="fc" id="L28">                book.getId(),</span>
+<span class="fc" id="L29">                book.getTitle(),</span>
+<span class="fc" id="L30">                book.getSubtitle(),</span>
+<span class="fc" id="L31">                book.getDescription(),</span>
+<span class="fc" id="L32">                book.getStatus(),</span>
+<span class="fc" id="L33">                book.getTargetWordCount(),</span>
+<span class="fc" id="L34">                book.getDailyTargetWordCount(),</span>
+                plannedWritingDays,
+                accessLevel,
+<span class="fc" id="L37">                book.getCreatedAt(),</span>
+<span class="fc" id="L38">                book.getUpdatedAt()</span>
+        );
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

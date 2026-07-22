@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="pt"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AuditLogAspect.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">iwrite-backend</a> &gt; <a href="index.source.html" class="el_package">com.iwrite.audit.aspect</a> &gt; <span class="el_source">AuditLogAspect.java</span></div><h1>AuditLogAspect.java</h1><pre class="source lang-java linenums">package com.iwrite.audit.aspect;
+
+import com.iwrite.audit.annotation.AuditedOperation;
+import com.iwrite.audit.entity.AuditResult;
+import com.iwrite.audit.service.AuditLogService;
+import org.aspectj.lang.ProceedingJoinPoint;
+import org.aspectj.lang.annotation.Around;
+import org.aspectj.lang.annotation.Aspect;
+import org.aspectj.lang.reflect.MethodSignature;
+import org.springframework.context.expression.MethodBasedEvaluationContext;
+import org.springframework.core.DefaultParameterNameDiscoverer;
+import org.springframework.expression.ExpressionParser;
+import org.springframework.expression.spel.standard.SpelExpressionParser;
+import org.springframework.stereotype.Component;
+
+import java.lang.reflect.Method;
+import java.util.UUID;
+
+@Aspect
+@Component
+public class AuditLogAspect {
+
+    private final AuditLogService auditLogService;
+<span class="fc" id="L24">    private final ExpressionParser expressionParser = new SpelExpressionParser();</span>
+<span class="fc" id="L25">    private final DefaultParameterNameDiscoverer parameterNameDiscoverer = new DefaultParameterNameDiscoverer();</span>
+
+<span class="fc" id="L27">    public AuditLogAspect(AuditLogService auditLogService) {</span>
+<span class="fc" id="L28">        this.auditLogService = auditLogService;</span>
+<span class="fc" id="L29">    }</span>
+
+    @Around(&quot;@annotation(auditedOperation)&quot;)
+    public Object audit(ProceedingJoinPoint joinPoint, AuditedOperation auditedOperation) throws Throwable {
+<span class="fc" id="L33">        Method method = ((MethodSignature) joinPoint.getSignature()).getMethod();</span>
+        Object result;
+        try {
+<span class="fc" id="L36">            result = joinPoint.proceed();</span>
+<span class="fc" id="L37">        } catch (Throwable operationFailure) {</span>
+            try {
+<span class="fc" id="L39">                auditLogService.record(</span>
+<span class="fc" id="L40">                        auditedOperation.action(),</span>
+<span class="fc" id="L41">                        auditedOperation.resourceType(),</span>
+<span class="fc" id="L42">                        resolveResourceId(auditedOperation.resourceId(), method, joinPoint.getArgs(), null),</span>
+                        AuditResult.FAILED
+                );
+<span class="nc" id="L45">            } catch (RuntimeException auditFailure) {</span>
+<span class="nc" id="L46">                operationFailure.addSuppressed(auditFailure);</span>
+<span class="fc" id="L47">            }</span>
+<span class="fc" id="L48">            throw operationFailure;</span>
+<span class="fc" id="L49">        }</span>
+
+<span class="fc" id="L51">        auditLogService.record(</span>
+<span class="fc" id="L52">                auditedOperation.action(),</span>
+<span class="fc" id="L53">                auditedOperation.resourceType(),</span>
+<span class="fc" id="L54">                resolveResourceId(auditedOperation.resourceId(), method, joinPoint.getArgs(), result),</span>
+                AuditResult.SUCCEEDED
+        );
+<span class="fc" id="L57">        return result;</span>
+    }
+
+    private UUID resolveResourceId(String expression, Method method, Object[] arguments, Object result) {
+<span class="fc" id="L61">        MethodBasedEvaluationContext context = new MethodBasedEvaluationContext(</span>
+                result,
+                method,
+                arguments,
+                parameterNameDiscoverer
+        );
+<span class="fc" id="L67">        context.setVariable(&quot;result&quot;, result);</span>
+<span class="fc" id="L68">        return expressionParser.parseExpression(expression).getValue(context, UUID.class);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>
