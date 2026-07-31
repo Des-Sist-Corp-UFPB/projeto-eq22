@@ -1,5 +1,5 @@
 import { act, fireEvent, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { ApiError } from "@/lib/api/client";
 import {
   SceneAiAnalysisPanel,
@@ -360,6 +360,57 @@ describe("SceneAiAnalysisPanel", () => {
 
     await waitFor(() => expect(signal.aborted).toBe(true));
     expect(screen.getByRole("button", { name: "Analisar com IA" })).toBeEnabled();
+  });
+});
+
+describe("SceneAiAnalysisPanel — eventos de analytics", () => {
+  let track: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.analyzeScene.mockResolvedValue(analysisResult);
+    vi.stubEnv("NEXT_PUBLIC_UMAMI_ENABLED", "true");
+    vi.stubEnv("NEXT_PUBLIC_UMAMI_SCRIPT_URL", "https://umami.example.com/script.js");
+    vi.stubEnv("NEXT_PUBLIC_UMAMI_WEBSITE_ID", "11111111-1111-1111-1111-111111111111");
+    track = vi.fn();
+    window.umami = { track };
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    delete window.umami;
+  });
+
+  test("registra requested e succeeded apenas após resposta válida", async () => {
+    const pending = deferred<SceneAnalysisResult>();
+    mocks.analyzeScene.mockReturnValue(pending.promise);
+
+    renderPanel();
+    submitAnalysis();
+
+    expect(track).toHaveBeenCalledWith("scene_analysis_requested");
+    expect(track).not.toHaveBeenCalledWith("scene_analysis_succeeded");
+
+    await act(async () => {
+      pending.resolve(analysisResult);
+      await pending.promise;
+    });
+
+    expect(track).toHaveBeenCalledWith("scene_analysis_succeeded");
+  });
+
+  test("registra falha com categoria enumerada, sem mensagem livre", async () => {
+    mocks.analyzeScene.mockRejectedValue(new ApiError("Service unavailable", 503));
+
+    renderPanel();
+    submitAnalysis();
+
+    await screen.findByText("A análise com IA está indisponível no momento. Tente novamente mais tarde.");
+
+    expect(track).toHaveBeenCalledWith("scene_analysis_failed", { category: "unavailable" });
+    const failedCalls = track.mock.calls.filter(([name]) => name === "scene_analysis_failed");
+    expect(failedCalls).toHaveLength(1);
+    expect(JSON.stringify(failedCalls)).not.toContain("Service unavailable");
   });
 });
 
