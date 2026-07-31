@@ -3,12 +3,14 @@ import {
   __resetAnalyticsForTest,
   ensureUmamiScript,
   getUmamiConfig,
+  sanitizeTrackedPath,
   trackEvent,
   trackPageView,
   type AnalyticsEvent,
 } from "@/lib/analytics/analytics";
 
 const SCRIPT_SELECTOR = "script[data-iwrite-umami]";
+const UUID = "123e4567-e89b-12d3-a456-426614174000";
 
 function stubValidConfig() {
   vi.stubEnv("NEXT_PUBLIC_UMAMI_ENABLED", "true");
@@ -22,11 +24,21 @@ function installUmami() {
   return track;
 }
 
+function stubReferrer(value: string) {
+  Object.defineProperty(document, "referrer", { value, configurable: true });
+}
+
+function trackedUrls(track: ReturnType<typeof vi.fn>) {
+  return track.mock.calls.map(([payload]) => (payload as { url: string }).url);
+}
+
 describe("analytics", () => {
   beforeEach(() => {
     __resetAnalyticsForTest();
     document.querySelectorAll(SCRIPT_SELECTOR).forEach((script) => script.remove());
     delete window.umami;
+    stubReferrer("");
+    window.history.replaceState({}, "", "/");
   });
 
   afterEach(() => {
@@ -84,14 +96,14 @@ describe("analytics", () => {
   });
 
   describe("page views", () => {
-    test("registra page view quando o tracker está carregado", () => {
+    test("registra page view com URL sanitizada explícita, sem título", () => {
       stubValidConfig();
       const track = installUmami();
 
       trackPageView("/dashboard");
 
       expect(track).toHaveBeenCalledTimes(1);
-      expect(track).toHaveBeenCalledWith();
+      expect(track).toHaveBeenCalledWith({ url: "/dashboard", referrer: "", title: "" });
     });
 
     test("deduplica page views consecutivas do mesmo caminho", () => {
@@ -100,24 +112,9 @@ describe("analytics", () => {
 
       trackPageView("/dashboard");
       trackPageView("/dashboard");
-      trackPageView("/books/abc");
+      trackPageView(`/books/${UUID}`);
 
       expect(track).toHaveBeenCalledTimes(2);
-    });
-
-    test("page view inicial pendente é enviada uma única vez após o script carregar", () => {
-      stubValidConfig();
-      ensureUmamiScript();
-
-      trackPageView("/");
-      trackPageView("/");
-
-      const track = installUmami();
-      const script = document.querySelector(SCRIPT_SELECTOR) as HTMLScriptElement;
-      script.dispatchEvent(new Event("load"));
-      script.dispatchEvent(new Event("load"));
-
-      expect(track).toHaveBeenCalledTimes(1);
     });
 
     test("não registra nada quando desabilitado", () => {
@@ -127,14 +124,168 @@ describe("analytics", () => {
     });
   });
 
+  describe("privacidade das URLs", () => {
+    test("UUID, query string e hash nunca chegam ao tracker", () => {
+      stubValidConfig();
+      const track = installUmami();
+
+      trackPageView(`/books/${UUID}?token=segredo#capitulo-1`);
+
+      expect(track).toHaveBeenCalledWith({ url: "/books/{id}", referrer: "", title: "" });
+      const serialized = JSON.stringify(track.mock.calls);
+      expect(serialized).not.toContain(UUID);
+      expect(serialized).not.toContain("token");
+      expect(serialized).not.toContain("segredo");
+      expect(serialized).not.toContain("#");
+    });
+
+    test("segmentos numéricos, hex e tokens opacos longos são normalizados", () => {
+      expect(sanitizeTrackedPath("/books/42")).toBe("/books/{id}");
+      expect(sanitizeTrackedPath("/books/9f8e7d6c5b4a39281706f5e4d3c2b1a0")).toBe("/books/{id}");
+      expect(sanitizeTrackedPath("/share/V1StGXR8_Z5jdHi6B-myTasdfg")).toBe("/share/{id}");
+      expect(sanitizeTrackedPath("/dashboard")).toBe("/dashboard");
+      expect(sanitizeTrackedPath("")).toBe("/");
+    });
+
+    test("eventos usam a URL sanitizada da página atual, não a URL crua", () => {
+      stubValidConfig();
+      const track = installUmami();
+      window.history.replaceState({}, "", `/books/${UUID}?aba=notas#cena`);
+
+      trackEvent({ name: "book_created" });
+
+      expect(track).toHaveBeenCalledWith({
+        url: "/books/{id}",
+        referrer: "",
+        title: "",
+        name: "book_created",
+      });
+      expect(JSON.stringify(track.mock.calls)).not.toContain(UUID);
+    });
+
+    test("referrer interno é sanitizado e externo vira somente a origem", () => {
+      stubValidConfig();
+      const track = installUmami();
+
+      stubReferrer(`${window.location.origin}/books/${UUID}?q=1`);
+      trackPageView("/dashboard");
+      expect(track).toHaveBeenLastCalledWith({
+        url: "/dashboard",
+        referrer: `${window.location.origin}/books/{id}`,
+        title: "",
+      });
+
+      stubReferrer("https://busca.example.com/resultados?q=meu-livro-secreto");
+      trackPageView("/");
+      expect(track).toHaveBeenLastCalledWith({
+        url: "/",
+        referrer: "https://busca.example.com",
+        title: "",
+      });
+      expect(JSON.stringify(track.mock.calls)).not.toContain("meu-livro-secreto");
+    });
+  });
+
+  describe("fila antes do carregamento do script", () => {
+    function loadScript() {
+      const script = document.querySelector(SCRIPT_SELECTOR) as HTMLScriptElement;
+      script.dispatchEvent(new Event("load"));
+    }
+
+    test("navegações distintas antes do script carregar são preservadas em ordem", () => {
+      stubValidConfig();
+      ensureUmamiScript();
+
+      trackPageView("/");
+      trackPageView("/dashboard");
+      trackPageView(`/books/${UUID}`);
+
+      const track = installUmami();
+      loadScript();
+
+      expect(trackedUrls(track)).toEqual(["/", "/dashboard", "/books/{id}"]);
+    });
+
+    test("page view pendente é enviada uma única vez mesmo com load duplicado", () => {
+      stubValidConfig();
+      ensureUmamiScript();
+
+      trackPageView("/");
+      trackPageView("/");
+
+      const track = installUmami();
+      loadScript();
+      loadScript();
+
+      expect(track).toHaveBeenCalledTimes(1);
+    });
+
+    test("eventos personalizados antes do script carregar também são enfileirados", () => {
+      stubValidConfig();
+      ensureUmamiScript();
+
+      trackEvent({ name: "scene_saved", data: { source: "AUTO_SAVE" } });
+
+      const track = installUmami();
+      loadScript();
+
+      expect(track).toHaveBeenCalledWith({
+        url: "/",
+        referrer: "",
+        title: "",
+        name: "scene_saved",
+        data: { source: "AUTO_SAVE" },
+      });
+    });
+
+    test("eventos consecutivos idênticos na fila são deduplicados", () => {
+      stubValidConfig();
+      ensureUmamiScript();
+
+      trackEvent({ name: "scene_saved", data: { source: "AUTO_SAVE" } });
+      trackEvent({ name: "scene_saved", data: { source: "AUTO_SAVE" } });
+      trackEvent({ name: "scene_saved", data: { source: "MANUAL_SAVE" } });
+
+      const track = installUmami();
+      loadScript();
+
+      expect(track).toHaveBeenCalledTimes(2);
+    });
+
+    test("fila é limitada e descarta os itens mais antigos", () => {
+      stubValidConfig();
+      ensureUmamiScript();
+
+      for (let page = 1; page <= 12; page++) {
+        trackPageView(`/page-${page}`);
+      }
+
+      const track = installUmami();
+      loadScript();
+
+      expect(track).toHaveBeenCalledTimes(10);
+      const urls = trackedUrls(track);
+      expect(urls[0]).toBe("/page-3");
+      expect(urls[urls.length - 1]).toBe("/page-12");
+      expect(urls).not.toContain("/page-1");
+      expect(urls).not.toContain("/page-2");
+    });
+  });
+
   describe("eventos", () => {
-    test("envia evento de sucesso permitido com propriedades enumeradas", () => {
+    test("envia evento permitido com propriedades enumeradas", () => {
       stubValidConfig();
       const track = installUmami();
 
       trackEvent({ name: "scene_saved", data: { source: "AUTO_SAVE" } });
 
-      expect(track).toHaveBeenCalledWith("scene_saved", { source: "AUTO_SAVE" });
+      expect(track).toHaveBeenCalledWith({
+        url: "/",
+        referrer: "",
+        title: "",
+        name: "scene_saved",
+        data: { source: "AUTO_SAVE" },
+      });
     });
 
     test("envia evento de falha com categoria enumerada", () => {
@@ -143,7 +294,9 @@ describe("analytics", () => {
 
       trackEvent({ name: "scene_analysis_failed", data: { category: "unavailable" } });
 
-      expect(track).toHaveBeenCalledWith("scene_analysis_failed", { category: "unavailable" });
+      expect(track).toHaveBeenCalledWith(
+        expect.objectContaining({ name: "scene_analysis_failed", data: { category: "unavailable" } })
+      );
     });
 
     test("remove propriedades fora da allowlist antes do envio", () => {
@@ -160,7 +313,10 @@ describe("analytics", () => {
         },
       } as unknown as AnalyticsEvent);
 
-      expect(track).toHaveBeenCalledWith("book_exported", { target: "manuscript", format: "md" });
+      expect(track).toHaveBeenCalledWith(
+        expect.objectContaining({ name: "book_exported", data: { target: "manuscript", format: "md" } })
+      );
+      expect(JSON.stringify(track.mock.calls)).not.toContain("raw-id-must-not-leak");
     });
 
     test("descarta valores fora da enumeração", () => {
@@ -172,7 +328,12 @@ describe("analytics", () => {
         data: { category: "stack trace: NullPointerException" },
       } as unknown as AnalyticsEvent);
 
-      expect(track).toHaveBeenCalledWith("scene_analysis_failed");
+      expect(track).toHaveBeenCalledWith({
+        url: "/",
+        referrer: "",
+        title: "",
+        name: "scene_analysis_failed",
+      });
     });
 
     test("descarta evento com nome fora da allowlist", () => {

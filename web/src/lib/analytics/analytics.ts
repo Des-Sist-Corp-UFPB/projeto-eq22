@@ -1,5 +1,7 @@
+type UmamiTrackPayload = Record<string, unknown>;
+
 type UmamiGlobal = {
-  track: (eventName?: string, eventData?: Record<string, string>) => void;
+  track: (payload?: string | UmamiTrackPayload, eventData?: Record<string, string>) => void;
 };
 
 declare global {
@@ -44,8 +46,32 @@ const ALLOWED_EVENTS: Record<AnalyticsEvent["name"], Record<string, readonly str
 
 const SCRIPT_MARKER_ATTRIBUTE = "data-iwrite-umami";
 
+/**
+ * Todo envio usa URL sanitizada explícita (nunca a captura automática da URL
+ * atual): sem query string, sem hash e com segmentos que parecem IDs (UUID,
+ * numérico, hex ou token opaco longo) normalizados para `{id}` — ex.:
+ * `/books/{id}`. Referrer segue a mesma regra (externo vira só a origem) e o
+ * título nunca é enviado (pode conter título de manuscrito).
+ */
+const UUID_SEGMENT = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const NUMERIC_SEGMENT = /^\d+$/;
+const HEX_SEGMENT = /^[0-9a-f]{16,}$/i;
+const LONG_OPAQUE_SEGMENT = /^[\w-]{21,}$/;
+
+type TrackedItem = {
+  url: string;
+  name?: AnalyticsEvent["name"];
+  data?: Record<string, string>;
+};
+
+/**
+ * Fila pequena para page views e eventos ocorridos antes do script carregar:
+ * preserva navegações distintas, deduplica itens consecutivos idênticos e,
+ * cheia, descarta o item mais antigo (as navegações recentes valem mais).
+ */
+const MAX_PENDING_ITEMS = 10;
+let pendingItems: TrackedItem[] = [];
 let lastTrackedPath: string | null = null;
-let hasPendingPageView = false;
 
 export function getUmamiConfig(): UmamiConfig | null {
   const enabled = process.env.NEXT_PUBLIC_UMAMI_ENABLED === "true";
@@ -84,10 +110,43 @@ export function ensureUmamiScript(): void {
     if (config.hostUrl) {
       script.setAttribute("data-host-url", config.hostUrl);
     }
-    script.addEventListener("load", flushPendingPageView);
+    script.addEventListener("load", flushPendingItems);
     document.head.appendChild(script);
   } catch {
     // Analytics nunca bloqueia o produto.
+  }
+}
+
+export function sanitizeTrackedPath(rawPath: string): string {
+  const path = rawPath.split(/[?#]/)[0];
+  const sanitized = path
+    .split("/")
+    .map((segment) => (isOpaqueSegment(segment) ? "{id}" : segment))
+    .join("/");
+  return sanitized.startsWith("/") ? sanitized : `/${sanitized}`;
+}
+
+function isOpaqueSegment(segment: string): boolean {
+  return (
+    UUID_SEGMENT.test(segment) ||
+    NUMERIC_SEGMENT.test(segment) ||
+    HEX_SEGMENT.test(segment) ||
+    LONG_OPAQUE_SEGMENT.test(segment)
+  );
+}
+
+function sanitizeReferrer(referrer: string): string {
+  if (!referrer || typeof window === "undefined") {
+    return "";
+  }
+  try {
+    const url = new URL(referrer);
+    if (url.origin === window.location.origin) {
+      return url.origin + sanitizeTrackedPath(url.pathname);
+    }
+    return url.origin;
+  } catch {
+    return "";
   }
 }
 
@@ -98,15 +157,7 @@ export function trackPageView(path: string): void {
     }
 
     lastTrackedPath = path;
-
-    const umami = typeof window === "undefined" ? undefined : window.umami;
-    if (!umami) {
-      hasPendingPageView = true;
-      return;
-    }
-
-    hasPendingPageView = false;
-    umami.track();
+    dispatch({ url: sanitizeTrackedPath(path) });
   } catch {
     // Analytics nunca bloqueia o produto.
   }
@@ -114,25 +165,51 @@ export function trackPageView(path: string): void {
 
 export function trackEvent(event: AnalyticsEvent): void {
   try {
-    if (!getUmamiConfig()) {
+    if (!getUmamiConfig() || typeof window === "undefined") {
       return;
     }
 
-    const umami = typeof window === "undefined" ? undefined : window.umami;
     const allowedProperties = ALLOWED_EVENTS[event.name];
-    if (!umami || !allowedProperties) {
+    if (!allowedProperties) {
       return;
     }
 
     const data = sanitizeEventData(allowedProperties, "data" in event ? event.data : undefined);
-    if (data && Object.keys(data).length > 0) {
-      umami.track(event.name, data);
-    } else {
-      umami.track(event.name);
-    }
+    dispatch({
+      url: sanitizeTrackedPath(window.location.pathname),
+      name: event.name,
+      ...(data && Object.keys(data).length > 0 ? { data } : {}),
+    });
   } catch {
     // Analytics nunca bloqueia o produto.
   }
+}
+
+function dispatch(item: TrackedItem): void {
+  const umami = typeof window === "undefined" ? undefined : window.umami;
+  if (umami) {
+    sendToTracker(umami, item);
+    return;
+  }
+
+  const last = pendingItems[pendingItems.length - 1];
+  if (last && JSON.stringify(last) === JSON.stringify(item)) {
+    return;
+  }
+  pendingItems.push(item);
+  if (pendingItems.length > MAX_PENDING_ITEMS) {
+    pendingItems.shift();
+  }
+}
+
+function sendToTracker(umami: UmamiGlobal, item: TrackedItem): void {
+  umami.track({
+    url: item.url,
+    referrer: sanitizeReferrer(document.referrer),
+    title: "",
+    ...(item.name ? { name: item.name } : {}),
+    ...(item.data ? { data: item.data } : {}),
+  });
 }
 
 function sanitizeEventData(
@@ -152,14 +229,16 @@ function sanitizeEventData(
   return sanitized;
 }
 
-function flushPendingPageView(): void {
+function flushPendingItems(): void {
   try {
-    if (!hasPendingPageView) {
+    const umami = typeof window === "undefined" ? undefined : window.umami;
+    if (!umami) {
       return;
     }
 
-    hasPendingPageView = false;
-    window.umami?.track();
+    const items = pendingItems;
+    pendingItems = [];
+    items.forEach((item) => sendToTracker(umami, item));
   } catch {
     // Analytics nunca bloqueia o produto.
   }
@@ -167,5 +246,5 @@ function flushPendingPageView(): void {
 
 export function __resetAnalyticsForTest(): void {
   lastTrackedPath = null;
-  hasPendingPageView = false;
+  pendingItems = [];
 }

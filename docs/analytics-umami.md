@@ -20,7 +20,9 @@ Sem configuração válida a integração é um **no-op total**: o script não �
 ## Implementação
 
 - `web/src/lib/analytics/analytics.ts` — camada única e tipada: configuração, injeção do script (uma vez, `data-auto-track="false"`), page views com deduplicação e `trackEvent` com allowlist. **Não** chame `window.umami.track` diretamente fora deste arquivo.
-- `web/src/lib/analytics/umami-analytics.tsx` — componente client no layout raiz; registra page view inicial e a cada mudança de `usePathname()` (navegação client-side), com dedup por caminho e fila de uma page view pendente até o script carregar.
+- Todo envio (page view e evento) passa **URL sanitizada explícita** ao tracker — nunca a captura automática da URL atual: query string e hash são removidos e segmentos dinâmicos (UUID, numérico, hex, token opaco longo) viram `{id}` (ex.: `/books/{id}`). O referrer segue a mesma regra (interno sanitizado; externo reduzido à origem) e o título da página não é enviado.
+- Page views e eventos disparados antes do script carregar entram numa **fila limitada** (10 itens): navegações distintas são preservadas em ordem, itens consecutivos idênticos são deduplicados e, cheia, o item mais antigo é descartado. Ao carregar, a fila é enviada de uma vez.
+- `web/src/lib/analytics/umami-analytics.tsx` — componente client no layout raiz; registra page view inicial e a cada mudança de `usePathname()` (navegação client-side), com dedup por caminho.
 
 ## Eventos
 
@@ -35,7 +37,7 @@ Sem configuração válida a integração é um **no-op total**: o script não �
 
 ## Proteção de dados
 
-A allowlist em `analytics.ts` é a única fonte de eventos/propriedades/valores aceitos: eventos desconhecidos são descartados e propriedades ou valores fora da enumeração são removidos antes do envio. Nunca são enviados: conteúdo de manuscrito, títulos, emails, nomes, IDs brutos (usuário/tenant/livro/cena), prompts, respostas de IA, tokens, stack traces ou URLs com query string sensível (os caminhos rastreados são rotas do app: `/`, `/dashboard`, `/books/{id}` — sem query string).
+A allowlist em `analytics.ts` é a única fonte de eventos/propriedades/valores aceitos: eventos desconhecidos são descartados e propriedades ou valores fora da enumeração são removidos antes do envio. Nunca são enviados: conteúdo de manuscrito, títulos, emails, nomes, IDs brutos (usuário/tenant/livro/cena), prompts, respostas de IA, tokens, stack traces, query strings, hashes ou referrers sensíveis. Os caminhos rastreados são rotas normalizadas do app (`/`, `/dashboard`, `/books/{id}`), enviadas explicitamente já sanitizadas.
 
 ## Testes
 
