@@ -60,6 +60,10 @@ logging:
     org.springframework.ai.retry.autoconfigure.SpringAiRetryAutoConfiguration: OFF
 
 iwrite:
+  mcp:
+    scene-analysis:
+      max-per-window: ${IWRITE_MCP_SCENE_ANALYSIS_MAX_PER_WINDOW:3}
+      window: ${IWRITE_MCP_SCENE_ANALYSIS_WINDOW:1m}
   ai:
     audit:
       pricing:

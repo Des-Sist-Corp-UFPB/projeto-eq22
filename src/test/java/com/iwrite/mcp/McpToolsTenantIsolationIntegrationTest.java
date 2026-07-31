@@ -4,7 +4,6 @@ import com.iwrite.audit.entity.AuditAction;
 import com.iwrite.audit.entity.AuditResult;
 import com.iwrite.audit.repository.AuditLogRepository;
 import com.iwrite.book.service.BookCollaboratorService;
-import com.iwrite.mcp.IwriteMcpTools.McpBookExportResult;
 import com.iwrite.mcp.IwriteMcpTools.McpBookSummary;
 import com.iwrite.support.PostgresIntegrationTest;
 import com.iwrite.support.SwitchableCurrentUserProvider;
@@ -128,7 +127,6 @@ class McpToolsTenantIsolationIntegrationTest extends PostgresIntegrationTest {
         assertThat(crossTenant.getMessage()).isEqualTo(nonexistent.getMessage());
 
         assertNotFound(() -> mcpTools.analisarCena(world.scene().id().toString(), null));
-        assertNotFound(() -> mcpTools.exportarLivro(world.book().id().toString(), "md"));
     }
 
     @Test
@@ -149,7 +147,6 @@ class McpToolsTenantIsolationIntegrationTest extends PostgresIntegrationTest {
 
         currentUserProvider.switchTo(collaboratorId, DEFAULT_TENANT_ID, ZoneId.of("UTC"));
         assertNotFound(() -> mcpTools.obterOutlineLivro(world.book().id().toString()));
-        assertNotFound(() -> mcpTools.exportarLivro(world.book().id().toString(), null));
     }
 
     @Test
@@ -167,26 +164,38 @@ class McpToolsTenantIsolationIntegrationTest extends PostgresIntegrationTest {
                 () -> mcpTools.analisarCena(world.scene().id().toString(), "x".repeat(301))
         );
         assertThat(focusTooLong.category()).isEqualTo(McpToolException.CATEGORY_INVALID_REQUEST);
-
-        McpToolException invalidFormat = catchThrowableOfType(
-                McpToolException.class,
-                () -> mcpTools.exportarLivro(world.book().id().toString(), "pdf")
-        );
-        assertThat(invalidFormat.category()).isEqualTo(McpToolException.CATEGORY_INVALID_REQUEST);
     }
 
     @Test
-    void exportacaoAutorizadaRetornaReferenciaSeguraSemCaminhoInterno() {
-        var world = createStoryWorld("MCP exportação");
+    void analiseELimitadaPorIdentidadeSemVazarParaOutroUsuario() {
+        var world = createStoryWorld("MCP limite de análise");
+        UUID heavyUserId = createMember(DEFAULT_TENANT_ID, "mcp-heavy-user@iwrite.local");
+        bookCollaboratorService.add(world.book().id(), heavyUserId);
+        currentUserProvider.switchTo(heavyUserId, DEFAULT_TENANT_ID, ZoneId.of("UTC"));
 
-        McpBookExportResult export = mcpTools.exportarLivro(world.book().id().toString(), "md");
+        // IA desabilitada no contexto de teste: cada tentativa falha (sem custo), mas conta na janela.
+        for (int attempt = 0; attempt < 3; attempt++) {
+            McpToolException failure = catchThrowableOfType(
+                    McpToolException.class,
+                    () -> mcpTools.analisarCena(world.scene().id().toString(), null)
+            );
+            assertThat(failure.category()).isNotEqualTo(McpToolException.CATEGORY_RATE_LIMITED);
+        }
 
-        assertThat(export.fileName()).isNotBlank();
-        assertThat(export.sizeBytes()).isPositive();
-        assertThat(export.downloadPath())
-                .startsWith("/api/books/" + world.book().id())
-                .doesNotContain("\\")
-                .doesNotContain(":");
+        McpToolException limited = catchThrowableOfType(
+                McpToolException.class,
+                () -> mcpTools.analisarCena(world.scene().id().toString(), null)
+        );
+        assertThat(limited.category()).isEqualTo(McpToolException.CATEGORY_RATE_LIMITED);
+        assertSanitized(limited);
+
+        // O limite é por identidade: o dono do livro não herda o esgotamento do colaborador.
+        currentUserProvider.reset();
+        McpToolException ownerFailure = catchThrowableOfType(
+                McpToolException.class,
+                () -> mcpTools.analisarCena(world.scene().id().toString(), null)
+        );
+        assertThat(ownerFailure.category()).isNotEqualTo(McpToolException.CATEGORY_RATE_LIMITED);
     }
 
     @Test

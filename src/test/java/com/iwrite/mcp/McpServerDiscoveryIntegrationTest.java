@@ -17,7 +17,6 @@ import com.iwrite.section.dto.BookSectionRequest;
 import com.iwrite.section.dto.BookSectionResponse;
 import com.iwrite.section.entity.SectionType;
 import com.iwrite.section.service.BookSectionService;
-import com.iwrite.support.SwitchableCurrentUserProvider;
 import com.iwrite.support.TestDatabaseInitializer;
 import io.modelcontextprotocol.client.McpClient;
 import io.modelcontextprotocol.client.McpSyncClient;
@@ -26,11 +25,7 @@ import io.modelcontextprotocol.spec.McpSchema;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.test.web.server.LocalServerPort;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Import;
-import org.springframework.context.annotation.Primary;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 
@@ -42,17 +37,21 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Prova de descoberta remota: um cliente MCP real (SSE sobre HTTP) descobre as
- * tools e o resource template e executa fluxos autorizados de ponta a ponta.
+ * Prova de descoberta com a configuração local suportada: identidade fixa de
+ * desenvolvimento + servidor limitado a loopback. Um cliente MCP real (SSE
+ * sobre HTTP) descobre as tools e o resource template e executa fluxos
+ * autorizados de ponta a ponta — provando também que o guard de loopback
+ * permite esse arranjo.
  */
 @SpringBootTest(
         webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
         properties = {
                 "spring.ai.mcp.server.enabled=true",
+                "server.address=127.0.0.1",
+                "iwrite.current-user.development.enabled=true",
                 "server.shutdown=immediate"
         }
 )
-@Import(McpServerDiscoveryIntegrationTest.CurrentUserTestConfiguration.class)
 class McpServerDiscoveryIntegrationTest {
 
     @DynamicPropertySource
@@ -132,7 +131,7 @@ class McpServerDiscoveryIntegrationTest {
             McpSchema.ListToolsResult tools = client.listTools();
             assertThat(tools.tools())
                     .extracting(McpSchema.Tool::name)
-                    .contains("listar_livros_acessiveis", "obter_outline_livro", "analisar_cena", "exportar_livro");
+                    .containsExactlyInAnyOrder("listar_livros_acessiveis", "obter_outline_livro", "analisar_cena");
 
             McpSchema.ListResourceTemplatesResult templates = client.listResourceTemplates();
             assertThat(templates.resourceTemplates())
@@ -166,15 +165,5 @@ class McpServerDiscoveryIntegrationTest {
                 .filter(McpSchema.TextContent.class::isInstance)
                 .map(item -> ((McpSchema.TextContent) item).text())
                 .reduce("", String::concat);
-    }
-
-    @TestConfiguration(proxyBeanMethods = false)
-    static class CurrentUserTestConfiguration {
-
-        @Bean
-        @Primary
-        SwitchableCurrentUserProvider switchableCurrentUserProvider() {
-            return new SwitchableCurrentUserProvider();
-        }
     }
 }

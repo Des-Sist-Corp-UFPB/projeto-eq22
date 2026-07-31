@@ -18,6 +18,7 @@ public class McpToolException extends RuntimeException {
     public static final String CATEGORY_NOT_FOUND = "not_found";
     public static final String CATEGORY_INVALID_REQUEST = "invalid_request";
     public static final String CATEGORY_UNAVAILABLE = "unavailable";
+    public static final String CATEGORY_RATE_LIMITED = "rate_limited";
     public static final String CATEGORY_INTERNAL = "internal";
 
     private final String category;

@@ -4,9 +4,6 @@ import com.iwrite.audit.entity.AuditAction;
 import com.iwrite.audit.entity.AuditResourceType;
 import com.iwrite.book.dto.BookResponse;
 import com.iwrite.book.service.BookService;
-import com.iwrite.export.ExportFile;
-import com.iwrite.export.ExportFormat;
-import com.iwrite.export.service.BookExportService;
 import com.iwrite.outline.dto.BookOutlineResponse;
 import com.iwrite.outline.service.OutlineService;
 import com.iwrite.scene.dto.SceneAnalysisRequest;
@@ -35,20 +32,20 @@ public class IwriteMcpTools {
     private final BookService bookService;
     private final OutlineService outlineService;
     private final SceneAnalysisService sceneAnalysisService;
-    private final BookExportService bookExportService;
+    private final McpSceneAnalysisLimiter sceneAnalysisLimiter;
     private final McpInvocationSupport invocationSupport;
 
     public IwriteMcpTools(
             BookService bookService,
             OutlineService outlineService,
             SceneAnalysisService sceneAnalysisService,
-            BookExportService bookExportService,
+            McpSceneAnalysisLimiter sceneAnalysisLimiter,
             McpInvocationSupport invocationSupport
     ) {
         this.bookService = bookService;
         this.outlineService = outlineService;
         this.sceneAnalysisService = sceneAnalysisService;
-        this.bookExportService = bookExportService;
+        this.sceneAnalysisLimiter = sceneAnalysisLimiter;
         this.invocationSupport = invocationSupport;
     }
 
@@ -108,37 +105,8 @@ public class IwriteMcpTools {
                 AuditAction.MCP_SCENE_ANALYZED,
                 AuditResourceType.SCENE,
                 id,
-                () -> sceneAnalysisService.analyze(id, new SceneAnalysisRequest(usableFocus))
-        );
-    }
-
-    @Tool(
-            name = "exportar_livro",
-            description = "Prepara a exportação do manuscrito de um livro acessível e retorna metadados do arquivo "
-                    + "(nome, formato, tipo e tamanho) com o caminho de download da API. Formatos: txt, md ou docx "
-                    + "(padrão md). Não retorna o conteúdo do manuscrito."
-    )
-    public McpBookExportResult exportarLivro(
-            @ToolParam(description = "ID (UUID) do livro") String bookId,
-            @ToolParam(description = "Formato de exportação: txt, md ou docx (padrão md)", required = false) String format
-    ) {
-        UUID id = parseUuid("bookId", bookId);
-        return invocationSupport.invoke(
-                "exportar_livro",
-                AuditAction.MCP_BOOK_EXPORTED,
-                AuditResourceType.BOOK,
-                id,
-                () -> {
-                    ExportFormat exportFormat = ExportFormat.parse(format);
-                    ExportFile file = bookExportService.exportManuscript(id, exportFormat, false, false);
-                    return new McpBookExportResult(
-                            file.fileName(),
-                            exportFormat.extension(),
-                            file.contentType().toString(),
-                            file.content().length,
-                            "/api/books/" + id + "/exports/manuscript?format=" + exportFormat.extension()
-                    );
-                }
+                () -> sceneAnalysisLimiter.withLimit(
+                        () -> sceneAnalysisService.analyze(id, new SceneAnalysisRequest(usableFocus)))
         );
     }
 
@@ -163,14 +131,5 @@ public class IwriteMcpTools {
                     book.accessLevel() == null ? null : book.accessLevel().name()
             );
         }
-    }
-
-    public record McpBookExportResult(
-            String fileName,
-            String format,
-            String contentType,
-            int sizeBytes,
-            String downloadPath
-    ) {
     }
 }
