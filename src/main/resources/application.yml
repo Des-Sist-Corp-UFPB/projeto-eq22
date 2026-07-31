@@ -16,6 +16,13 @@ spring:
     retry:
       max-attempts: 2
 
+    # branch feature/umami-mcp (#128): servidor MCP desabilitado por padrão.
+    mcp:
+      server:
+        enabled: ${IWRITE_MCP_ENABLED:false}
+        name: iwrite-mcp
+        version: 0.0.1
+
     openai:
       base-url: ${OPENAI_BASE_URL:https://api.openai.com}
       api-key: ${OPENAI_API_KEY:}
