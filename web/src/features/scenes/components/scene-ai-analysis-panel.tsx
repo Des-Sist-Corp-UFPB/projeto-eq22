@@ -135,12 +135,12 @@ export function SceneAiAnalysisPanel({ sceneId, contentRevision, contentSyncStat
         controller.signal
       );
 
-      trackEvent({ name: "scene_analysis_succeeded" });
-
+      // Requisição obsoleta (cancelada, descartada ou de outra cena) não gera sucesso.
       if (requestIsStale()) {
         return;
       }
 
+      trackEvent({ name: "scene_analysis_succeeded" });
       setResult(analysis);
     } catch (error) {
       if (requestIsStale() || isAbortError(error)) {
