@@ -1,4 +1,11 @@
-type UmamiTrackPayload = Record<string, unknown>;
+type UmamiTrackPayload = {
+  website: string;
+  url: string;
+  referrer: string;
+  title: string;
+  name?: string;
+  data?: Record<string, string>;
+};
 
 type UmamiGlobal = {
   track: (payload?: string | UmamiTrackPayload, eventData?: Record<string, string>) => void;
@@ -203,7 +210,14 @@ function dispatch(item: TrackedItem): void {
 }
 
 function sendToTracker(umami: UmamiGlobal, item: TrackedItem): void {
+  // Payload personalizado precisa carregar o website ID; se a configuração
+  // deixou de ser válida (ex.: entre enfileirar e o flush), descarta o item.
+  const config = getUmamiConfig();
+  if (!config) {
+    return;
+  }
   umami.track({
+    website: config.websiteId,
     url: item.url,
     referrer: sanitizeReferrer(document.referrer),
     title: "",
