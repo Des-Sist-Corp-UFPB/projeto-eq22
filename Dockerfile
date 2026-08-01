@@ -48,8 +48,16 @@ COPY --from=frontend-build /frontend/public /app/frontend/public
 COPY --from=frontend-build /frontend/.next /app/frontend/.next
 COPY --from=frontend-build /frontend/node_modules /app/frontend/node_modules
 
+# OpenTelemetry Java Agent 2.30.0, versão fixa com SHA-256 validado pelo BuildKit.
+ADD --checksum=sha256:9d6bc2ad8dd8fb7f730984988e57b8ac0a82d81c7b3b8ae795378718733a509d \
+    --chmod=444 \
+    https://github.com/open-telemetry/opentelemetry-java-instrumentation/releases/download/v2.30.0/opentelemetry-javaagent.jar \
+    /app/otel/opentelemetry-javaagent.jar
+
+COPY --chmod=555 docker/start.sh /app/start.sh
+
 EXPOSE 8080
 
 HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=5 \
   CMD node -e "fetch('http://127.0.0.1:8080/health',{redirect:'manual'}).then(r => process.exit(r.status >= 200 && r.status < 400 ? 0 : 1)).catch(() => process.exit(1))"
-CMD ["sh", "-c", "set -eu; SERVER_PORT=8085 java -jar /app/backend/app.jar & backend_pid=$!; /app/frontend/node_modules/.bin/next start /app/frontend -p 8080 -H 0.0.0.0 & frontend_pid=$!; trap 'kill \"$backend_pid\" \"$frontend_pid\" 2>/dev/null || true' INT TERM EXIT; while kill -0 \"$backend_pid\" 2>/dev/null && kill -0 \"$frontend_pid\" 2>/dev/null; do sleep 1; done; echo 'Backend or frontend exited unexpectedly'; exit 1"]
+CMD ["/app/start.sh"]
