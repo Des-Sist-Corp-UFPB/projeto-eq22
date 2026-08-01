@@ -95,6 +95,28 @@ class McpSceneAnalysisLimiterTest {
     }
 
     @Test
+    void configuracaoInvalidaFalhaNaConstrucaoComMensagemSegura() {
+        assertThatThrownBy(() -> new McpSceneAnalysisLimiter(provider, 0, Duration.ofMinutes(1), clock))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("max-per-window");
+        assertThatThrownBy(() -> new McpSceneAnalysisLimiter(provider, -3, Duration.ofMinutes(1), clock))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("max-per-window");
+        assertThatThrownBy(() -> new McpSceneAnalysisLimiter(provider, 1, Duration.ZERO, clock))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("window");
+        assertThatThrownBy(() -> new McpSceneAnalysisLimiter(provider, 1, Duration.ofSeconds(-5), clock))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("window");
+    }
+
+    @Test
+    void configuracaoValidaConstroiEFunciona() {
+        McpSceneAnalysisLimiter valid = new McpSceneAnalysisLimiter(provider, 1, Duration.ofSeconds(30), clock);
+        assertThat(valid.withLimit(() -> "ok")).isEqualTo("ok");
+    }
+
+    @Test
     void identidadesDistintasTemOrcamentosIndependentes() {
         limiter.withLimit(() -> "ok");
         limiter.withLimit(() -> "ok");

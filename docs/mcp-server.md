@@ -18,6 +18,7 @@ Backend IWrite (porta 8085) ── com.iwrite.mcp ──► services existentes 
 - **Transporte:** HTTP + SSE na mesma porta da API (`/sse` e `/mcp/message`, padrões do starter WebMVC). Escolhido por ser o transporte mínimo compatível com o runtime atual (aplicação web contínua; `stdio` não se aplica). O SDK 0.18 também suporta streamable HTTP; o SSE é o padrão do starter e o suficiente aqui.
 - **Desabilitado por padrão:** `IWRITE_MCP_ENABLED=false` (`spring.ai.mcp.server.enabled`). Em ambiente remoto o servidor não fica exposto anonimamente por padrão.
 - **Somente local enquanto não houver autenticação real:** com o provedor de identidade de desenvolvimento (`DevelopmentCurrentUserProvider`), todo cliente MCP herdaria a mesma identidade fixa. Por isso o `McpLoopbackGuard` **recusa a inicialização** quando o MCP está habilitado com identidade fixa e o servidor não está limitado a loopback: é obrigatório definir `server.address` como endereço de loopback (`SERVER_ADDRESS=127.0.0.1`). Sem isso a aplicação não sobe — o MCP não pode ser exposto remotamente com identidade fixa.
+- **Atenção a reverse proxy:** o loopback protege a configuração atual do processo, mas não impede que um reverse proxy publique os endpoints. Enquanto não houver autenticação, `/sse` e `/mcp/message` **não devem** ser expostos por reverse proxy.
 
 ## Autenticação e autorização
 

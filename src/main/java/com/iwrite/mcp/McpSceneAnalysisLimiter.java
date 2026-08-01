@@ -38,6 +38,14 @@ public class McpSceneAnalysisLimiter {
     }
 
     McpSceneAnalysisLimiter(CurrentUserProvider currentUserProvider, int maxPerWindow, Duration window, Clock clock) {
+        if (maxPerWindow < 1) {
+            throw new IllegalArgumentException(
+                    "iwrite.mcp.scene-analysis.max-per-window deve ser no mínimo 1.");
+        }
+        if (window == null || window.isZero() || window.isNegative()) {
+            throw new IllegalArgumentException(
+                    "iwrite.mcp.scene-analysis.window deve ser uma duração positiva (ex.: 1m).");
+        }
         this.currentUserProvider = currentUserProvider;
         this.maxPerWindow = maxPerWindow;
         this.window = window;
