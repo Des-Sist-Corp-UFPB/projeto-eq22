@@ -44,6 +44,8 @@ docker run --rm iwrite-otel-test /app/start.sh --check
 docker run --rm -e IWRITE_OTEL_ENABLED=true iwrite-otel-test /app/start.sh --check   # falha citando OTEL_SERVICE_NAME
 ```
 
+No Git Bash do Windows, exporte `MSYS_NO_PATHCONV=1` antes desses comandos; caso contrário o shell converte `/app/start.sh` em caminho Windows.
+
 Testes do script de inicialização (validação de variáveis, agente ausente e não-vazamento de secrets):
 
 ```bash
