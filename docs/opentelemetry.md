@@ -21,11 +21,13 @@ Com `IWRITE_OTEL_ENABLED=true`, o `docker/start.sh` exige, antes de iniciar qual
 
 | Variável | Sempre exigida | Exemplo (sem valores reais) |
 |---|---|---|
-| `OTEL_SERVICE_NAME` | sim | `iwrite-backend` |
+| `OTEL_SERVICE_NAME` | sim | `dsc-eq22` |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | sim | `https://otlp.exemplo-institucional.invalid` |
 | `OTEL_EXPORTER_OTLP_HEADERS` | apenas se `IWRITE_OTEL_AUTH_REQUIRED=true` | `Authorization=Bearer <TOKEN>` |
 
 `IWRITE_OTEL_ENABLED` e `IWRITE_OTEL_AUTH_REQUIRED` só aceitam `true` ou `false`; qualquer outro valor falha antes de iniciar, com mensagem que nomeia a variável mas nunca ecoa o valor recebido.
+
+**Seguro por padrão:** com `IWRITE_OTEL_ENABLED=true` e `IWRITE_OTEL_AUTH_REQUIRED` ausente, o default é `true` — exige `OTEL_EXPORTER_OTLP_HEADERS`. Isso evita habilitar OTel contra o endpoint institucional sem token por engano. Só o LGTM local (via `docker-compose.observability.yml`) define `IWRITE_OTEL_AUTH_REQUIRED=false` explicitamente. Com `IWRITE_OTEL_ENABLED=false`, `IWRITE_OTEL_AUTH_REQUIRED` não tem efeito.
 
 Se uma variável obrigatória estiver ausente, o container falha antes de iniciar com uma mensagem que cita apenas o nome da variável — nunca valores, headers ou tokens.
 
@@ -55,12 +57,16 @@ docker compose -f docker-compose.yml -f docker-compose.observability.yml up --bu
 
 A UI do Grafana fica em `http://localhost:3001` (a porta 3000 do host já é usada pelo frontend Next.js; a porta interna do container `otel-lgtm` continua 3000, sem efeito no endpoint OTLP interno). Sem headers/token — o LGTM local não exige autenticação.
 
+**Imagem do LGTM (fixa por versão + digest):** `grafana/otel-lgtm:0.30.0@sha256:46ca028e294bd728e8e930a28e887f640a8f2a9533cc283f79bcc6ab73d2ffd8`, validada em 2026-08-01 (`docker image inspect grafana/otel-lgtm:latest --format '{{json .RepoDigests}}'`, que na data da validação apontava para a tag `0.30.0`). Uso **exclusivo para desenvolvimento/evidências** — não faz parte do `Dockerfile` nem do deploy de produção.
+
 ### Servidor institucional (com autenticação)
 
 ```env
 IWRITE_OTEL_ENABLED=true
+# IWRITE_OTEL_AUTH_REQUIRED ausente assume 'true' (seguro por padrão); pode
+# ser omitida aqui, mostrada só para clareza.
 IWRITE_OTEL_AUTH_REQUIRED=true
-OTEL_SERVICE_NAME=iwrite-backend
+OTEL_SERVICE_NAME=dsc-eq22
 OTEL_EXPORTER_OTLP_ENDPOINT=https://otel.dsc.rodrigor.com
 OTEL_EXPORTER_OTLP_HEADERS=Authorization=Bearer <TOKEN>
 ```
@@ -71,6 +77,7 @@ OTEL_EXPORTER_OTLP_HEADERS=Authorization=Bearer <TOKEN>
 - O script nunca imprime valores de `OTEL_EXPORTER_OTLP_HEADERS`, nem os valores recebidos para `IWRITE_OTEL_ENABLED`/`IWRITE_OTEL_AUTH_REQUIRED` quando inválidos.
 - `docker-compose.observability.yml` não define nenhum token/header — é só para o LGTM local sem autenticação.
 - O MCP permanece desabilitado por padrão (`IWRITE_MCP_ENABLED=false`); `/sse` e `/mcp/message` não são expostos.
+- **Sanitização de `db.statement`:** o agente já sanitiza por padrão; `docker-compose.observability.yml` define `OTEL_INSTRUMENTATION_COMMON_DB_STATEMENT_SANITIZER_ENABLED=true` explicitamente para deixar essa proteção visível na configuração, em vez de depender só do default. Com ela, valores literais do SQL são substituídos por `?` antes de virar span attribute; parâmetros JDBC vinculados (bind parameters) não são capturados; conteúdo de manuscrito nunca deve aparecer em `db.statement`, só a forma parametrizada da query.
 
 ## Diagnóstico
 
@@ -90,6 +97,66 @@ sh docker/start.test.sh
 ```
 
 Com o agente ativo, as primeiras linhas do log do backend incluem `opentelemetry-javaagent` e a versão. Falhas de exportação aparecem no log como erros do exporter OTLP, sem interromper a aplicação.
+
+## Comandos de evidência (Tempo/Prometheus/Loki)
+
+Só as portas 3001 (Grafana), 4317 e 4318 (OTLP) são publicadas no host pelo `docker-compose.observability.yml`; as APIs de consulta do Tempo (3200), Prometheus/Mimir (9090) e Loki (3100) ficam só na rede interna do compose. Os comandos abaixo usam `docker compose exec otel-lgtm curl ...` (o `curl` já vem na imagem). Rode com o stack de observabilidade no ar:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d --build
+```
+
+Gere tráfego real primeiro (ex.: `GET /api/books` autenticado pela identidade de desenvolvimento).
+
+**Localizar traces por `service.name=dsc-eq22` e abrir o trace de `GET /api/books`:**
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.observability.yml exec otel-lgtm \
+  curl -s 'http://localhost:3200/api/search?tags=service.name%3Ddsc-eq22' | head -c 2000
+```
+
+Pegue um `traceID` do resultado acima e consulte o trace completo:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.observability.yml exec otel-lgtm \
+  curl -s 'http://localhost:3200/api/traces/<TRACE_ID>' | head -c 4000
+```
+
+**Confirmar o span JDBC filho:** no JSON do trace acima, procure um span com `SPAN_KIND_CLIENT`, `db.system=postgresql` e `parentSpanId` igual ao `spanId` do span raiz `GET /api/books` (`SPAN_KIND_SERVER`). O `db.statement` deve conter apenas placeholders (`?`), nunca valores literais.
+
+**Consultar `jvm_memory_used_bytes`:**
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.observability.yml exec otel-lgtm \
+  curl -s 'http://localhost:9090/api/v1/query?query=jvm_memory_used_bytes%7Bservice_name%3D%22dsc-eq22%22%7D' | head -c 2000
+```
+
+**Consultar a métrica HTTP (`http_server_request_duration_seconds_count`):**
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.observability.yml exec otel-lgtm \
+  curl -s 'http://localhost:9090/api/v1/query?query=http_server_request_duration_seconds_count%7Bhttp_route%3D%22%2Fapi%2Fbooks%22%7D' | head -c 2000
+```
+
+**Consultar logs do serviço (Loki):**
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.observability.yml exec otel-lgtm \
+  curl -s -G 'http://localhost:3100/loki/api/v1/query_range' \
+  --data-urlencode 'query={service_name="dsc-eq22"}' \
+  --data-urlencode 'limit=50' | head -c 3000
+```
+
+**Procurar termos proibidos sem imprimir secrets** (confirma ausência de `Authorization`, tokens ou conteúdo de manuscrito nos logs — o grep só reporta se o termo aparece, nunca o valor ao redor):
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.observability.yml exec otel-lgtm \
+  curl -s -G 'http://localhost:3100/loki/api/v1/query_range' \
+  --data-urlencode 'query={service_name="dsc-eq22"}' --data-urlencode 'limit=1000' \
+  | grep -o -E 'Authorization|Bearer|<TOKEN_REAL_AQUI>' | sort -u || echo "nenhum termo proibido encontrado"
+```
+
+Todos os comandos acima usam placeholders (`<TRACE_ID>`, `<TOKEN_REAL_AQUI>`) — nenhum token, conteúdo privado ou ID pessoal real.
 
 ## Limitações conhecidas
 

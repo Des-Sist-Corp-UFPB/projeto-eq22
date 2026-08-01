@@ -105,7 +105,7 @@ Banco e runtime:
 Observabilidade (opcional):
 
 - `IWRITE_OTEL_ENABLED`: habilita o OpenTelemetry Java Agent no container; padrão `false` (comportamento atual, sem variáveis extras).
-- `IWRITE_OTEL_AUTH_REQUIRED`: com `true`, exige `OTEL_EXPORTER_OTLP_HEADERS` (backend institucional); com `false`, dispensa headers (LGTM local sem autenticação). Padrão `false`.
+- `IWRITE_OTEL_AUTH_REQUIRED`: com `true`, exige `OTEL_EXPORTER_OTLP_HEADERS` (backend institucional); com `false`, dispensa headers (LGTM local sem autenticação). Padrão `true` quando `IWRITE_OTEL_ENABLED=true` (seguro por padrão); sem efeito quando OTel está desabilitado.
 - `OTEL_SERVICE_NAME`, `OTEL_EXPORTER_OTLP_ENDPOINT`: obrigatórias sempre que `IWRITE_OTEL_ENABLED=true`.
 - `OTEL_EXPORTER_OTLP_HEADERS`: obrigatória apenas com `IWRITE_OTEL_AUTH_REQUIRED=true`.
 
