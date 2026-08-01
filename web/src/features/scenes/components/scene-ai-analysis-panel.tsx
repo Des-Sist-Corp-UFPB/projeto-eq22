@@ -8,6 +8,7 @@ import {
   analyzeScene,
   type SceneAnalysisResult,
 } from "@/features/scenes/api/analyze-scene";
+import { trackEvent } from "@/lib/analytics/analytics";
 import { ApiError } from "@/lib/api/client";
 
 const CONTENT_ID = "scene-ai-analysis-content";
@@ -125,6 +126,8 @@ export function SceneAiAnalysisPanel({ sceneId, contentRevision, contentSyncStat
       capturedContentRevision !== activeContentRevisionRef.current ||
       contentSyncStateRef.current !== "saved";
 
+    trackEvent({ name: "scene_analysis_requested" });
+
     try {
       const analysis = await analyzeScene(
         capturedSceneId,
@@ -132,17 +135,21 @@ export function SceneAiAnalysisPanel({ sceneId, contentRevision, contentSyncStat
         controller.signal
       );
 
+      // Requisição obsoleta (cancelada, descartada ou de outra cena) não gera sucesso.
       if (requestIsStale()) {
         return;
       }
 
+      trackEvent({ name: "scene_analysis_succeeded" });
       setResult(analysis);
     } catch (error) {
       if (requestIsStale() || isAbortError(error)) {
         return;
       }
 
-      setErrorMessage(error instanceof ApiError && error.status === 503 ? UNAVAILABLE_MESSAGE : GENERIC_ERROR_MESSAGE);
+      const isUnavailable = error instanceof ApiError && error.status === 503;
+      trackEvent({ name: "scene_analysis_failed", data: { category: isUnavailable ? "unavailable" : "request_failed" } });
+      setErrorMessage(isUnavailable ? UNAVAILABLE_MESSAGE : GENERIC_ERROR_MESSAGE);
     } finally {
       if (activeControllerRef.current === controller) {
         activeControllerRef.current = null;

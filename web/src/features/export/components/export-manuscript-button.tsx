@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { downloadBookExport, type ExportFormat } from "@/features/export/api/export-api";
 import { ExportOptionsPopover } from "@/features/export/components/export-options-popover";
+import { trackEvent } from "@/lib/analytics/analytics";
 
 type ExportManuscriptButtonProps = {
   bookId: string;
@@ -22,6 +23,7 @@ export function ExportManuscriptButton({ bookId }: ExportManuscriptButtonProps) 
 
     try {
       await downloadBookExport(bookId, { format, includeSceneTitles, includeEmptyScenes });
+      trackEvent({ name: "book_exported", data: { target: "manuscript", format } });
       setIsOptionsOpen(false);
     } catch {
       setErrorMessage("Nao foi possivel exportar o manuscrito agora. Tente novamente.");

@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { downloadNotebookExport, type ExportFormat } from "@/features/export/api/export-api";
 import { ExportOptionsPopover } from "@/features/export/components/export-options-popover";
+import { trackEvent } from "@/lib/analytics/analytics";
 
 type ExportNotebookButtonProps = {
   bookId: string;
@@ -31,6 +32,7 @@ export function ExportNotebookButton({ bookId }: ExportNotebookButtonProps) {
 
     try {
       await downloadNotebookExport(bookId, { format, includeOpen, includeResolved });
+      trackEvent({ name: "book_exported", data: { target: "notebook", format } });
       setIsOptionsOpen(false);
     } catch {
       setErrorMessage("Nao foi possivel exportar o caderno agora. Tente novamente.");
