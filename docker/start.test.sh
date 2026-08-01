@@ -46,6 +46,21 @@ check "ligado sem OTEL_EXPORTER_OTLP_ENDPOINT falha citando a variável" 1 "OTEL
   OTEL_SERVICE_NAME=iwrite-backend \
   "OTEL_EXPORTER_OTLP_HEADERS=Authorization=Bearer $SECRET"
 
+# 4a. OTel ligado sem IWRITE_OTEL_AUTH_REQUIRED (default 'true') e sem headers -> falha
+check "ligado sem IWRITE_OTEL_AUTH_REQUIRED (default seguro) exige headers" 1 "OTEL_EXPORTER_OTLP_HEADERS" \
+  IWRITE_OTEL_ENABLED=true \
+  OTEL_SERVICE_NAME=iwrite-backend \
+  OTEL_EXPORTER_OTLP_ENDPOINT=https://otlp.example.invalid \
+  "IWRITE_OTEL_AGENT_PATH=$fake_agent"
+
+# 4b. OTel ligado sem IWRITE_OTEL_AUTH_REQUIRED (default 'true'), mas com headers -> passa
+check "ligado sem IWRITE_OTEL_AUTH_REQUIRED (default seguro) e com headers passa" 0 "IWRITE_OTEL_ENABLED=true" \
+  IWRITE_OTEL_ENABLED=true \
+  OTEL_SERVICE_NAME=iwrite-backend \
+  OTEL_EXPORTER_OTLP_ENDPOINT=https://otlp.example.invalid \
+  "OTEL_EXPORTER_OTLP_HEADERS=Authorization=Bearer $SECRET" \
+  "IWRITE_OTEL_AGENT_PATH=$fake_agent"
+
 # 4. OTel ligado, auth desligada e sem headers -> passa (ex.: LGTM local)
 check "ligado com IWRITE_OTEL_AUTH_REQUIRED=false dispensa headers" 0 "IWRITE_OTEL_ENABLED=true" \
   IWRITE_OTEL_ENABLED=true \

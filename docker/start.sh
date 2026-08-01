@@ -2,8 +2,8 @@
 # Inicia backend (Spring Boot) e frontend (Next.js) no container.
 # Com IWRITE_OTEL_ENABLED=true, valida a configuração OTLP e anexa o
 # OpenTelemetry Java Agent somente ao processo Java. IWRITE_OTEL_AUTH_REQUIRED
-# controla se OTEL_EXPORTER_OTLP_HEADERS é obrigatório (backend institucional)
-# ou dispensável (ex.: LGTM local sem autenticação).
+# controla se OTEL_EXPORTER_OTLP_HEADERS é obrigatório; ausente, assume 'true'
+# (seguro por padrão). Só o LGTM local define 'false' explicitamente.
 # Nunca imprime valores de OTEL_EXPORTER_OTLP_HEADERS ou outros secrets.
 set -eu
 
@@ -11,7 +11,6 @@ check_mode="${1:-}"
 
 OTEL_AGENT="${IWRITE_OTEL_AGENT_PATH:-/app/otel/opentelemetry-javaagent.jar}"
 otel_enabled="${IWRITE_OTEL_ENABLED:-false}"
-otel_auth_required="${IWRITE_OTEL_AUTH_REQUIRED:-false}"
 
 case "$otel_enabled" in
   true|false) ;;
@@ -20,6 +19,16 @@ case "$otel_enabled" in
     exit 1
     ;;
 esac
+
+# Seguro por padrão: com OTel habilitado, IWRITE_OTEL_AUTH_REQUIRED ausente
+# assume 'true' (exige headers). Só o LGTM local (docker-compose.observability.yml)
+# define 'false' explicitamente. Com OTel desabilitado, o default 'false' não
+# importa, pois nenhuma variável OTel é checada.
+if [ "$otel_enabled" = "true" ]; then
+  otel_auth_required="${IWRITE_OTEL_AUTH_REQUIRED:-true}"
+else
+  otel_auth_required="${IWRITE_OTEL_AUTH_REQUIRED:-false}"
+fi
 
 case "$otel_auth_required" in
   true|false) ;;
