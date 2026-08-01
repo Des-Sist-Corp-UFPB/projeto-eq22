@@ -102,7 +102,12 @@ Banco e runtime:
 - `IWRITE_DEVELOPMENT_CURRENT_USER_ENABLED`: habilita somente a identidade temporária de desenvolvimento.
 - `IWRITE_DEVELOPMENT_CURRENT_USER_ID`, `IWRITE_DEVELOPMENT_TENANT_ID`, `IWRITE_DEVELOPMENT_TIME_ZONE_ID`: identidade temporária local.
 
-As variáveis da integração OpenAI estão descritas na seção de serviço externo. Não versione valores secretos.
+Observabilidade (opcional):
+
+- `IWRITE_OTEL_ENABLED`: habilita o OpenTelemetry Java Agent no container; padrão `false` (comportamento atual, sem variáveis extras).
+- `OTEL_SERVICE_NAME`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_HEADERS`: obrigatórias apenas quando habilitado. Veja [docs/opentelemetry.md](docs/opentelemetry.md).
+
+Use `.env.example` como modelo. As variáveis da integração OpenAI estão descritas na seção de serviço externo. Não versione valores secretos.
 
 ## Validação local
 

@@ -1,6 +1,7 @@
 target/
 .m2/
 *.log
+.env
 node_modules/
 .next/
 web/coverage/
