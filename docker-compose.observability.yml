@@ -1,0 +1,31 @@
+# Override opcional para desenvolvimento/evidências: sobe um LGTM (Grafana +
+# Tempo + Loki + Mimir/Prometheus) local sem autenticação e aponta o backend
+# para ele. Não usar em produção; o backend institucional é externo.
+#
+# Uso:
+#   docker compose -f docker-compose.yml -f docker-compose.observability.yml up --build
+#
+# UI do Grafana em http://localhost:3001 (a porta 3000 do host já é usada
+# pelo frontend Next.js; a porta interna do container permanece 3000).
+services:
+  otel-lgtm:
+    image: grafana/otel-lgtm
+    container_name: iwrite-otel-lgtm
+    ports:
+      - "3001:3000"
+      - "4317:4317"
+      - "4318:4318"
+
+  backend:
+    environment:
+      IWRITE_OTEL_ENABLED: "true"
+      IWRITE_OTEL_AUTH_REQUIRED: "false"
+      OTEL_SERVICE_NAME: dsc-eq22
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-lgtm:4318
+      OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+      OTEL_TRACES_EXPORTER: otlp
+      OTEL_METRICS_EXPORTER: otlp
+      OTEL_LOGS_EXPORTER: otlp
+    depends_on:
+      otel-lgtm:
+        condition: service_started

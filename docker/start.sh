@@ -1,36 +1,80 @@
 #!/bin/sh
 # Inicia backend (Spring Boot) e frontend (Next.js) no container.
 # Com IWRITE_OTEL_ENABLED=true, valida a configuração OTLP e anexa o
-# OpenTelemetry Java Agent somente ao processo Java.
+# OpenTelemetry Java Agent somente ao processo Java. IWRITE_OTEL_AUTH_REQUIRED
+# controla se OTEL_EXPORTER_OTLP_HEADERS é obrigatório (backend institucional)
+# ou dispensável (ex.: LGTM local sem autenticação).
 # Nunca imprime valores de OTEL_EXPORTER_OTLP_HEADERS ou outros secrets.
 set -eu
 
-OTEL_AGENT="${IWRITE_OTEL_AGENT_PATH:-/app/otel/opentelemetry-javaagent.jar}"
-JAVA_OTEL_OPTS=""
+check_mode="${1:-}"
 
-if [ "${IWRITE_OTEL_ENABLED:-false}" = "true" ]; then
-  for required in OTEL_SERVICE_NAME OTEL_EXPORTER_OTLP_ENDPOINT OTEL_EXPORTER_OTLP_HEADERS; do
-    eval "value=\${${required}:-}"
-    if [ -z "${value}" ]; then
-      echo "IWRITE_OTEL_ENABLED=true exige a variável ${required}" >&2
-      exit 1
-    fi
-  done
-  if [ ! -f "${OTEL_AGENT}" ]; then
-    echo "Agente OpenTelemetry ausente: ${OTEL_AGENT}" >&2
+OTEL_AGENT="${IWRITE_OTEL_AGENT_PATH:-/app/otel/opentelemetry-javaagent.jar}"
+otel_enabled="${IWRITE_OTEL_ENABLED:-false}"
+otel_auth_required="${IWRITE_OTEL_AUTH_REQUIRED:-false}"
+
+case "$otel_enabled" in
+  true|false) ;;
+  *)
+    echo "IWRITE_OTEL_ENABLED deve ser 'true' ou 'false'" >&2
+    exit 1
+    ;;
+esac
+
+case "$otel_auth_required" in
+  true|false) ;;
+  *)
+    echo "IWRITE_OTEL_AUTH_REQUIRED deve ser 'true' ou 'false'" >&2
+    exit 1
+    ;;
+esac
+
+if [ "$otel_enabled" = "true" ]; then
+  if [ -z "${OTEL_SERVICE_NAME:-}" ]; then
+    echo "IWRITE_OTEL_ENABLED=true exige a variável OTEL_SERVICE_NAME" >&2
     exit 1
   fi
-  export OTEL_EXPORTER_OTLP_PROTOCOL="http/protobuf"
-  JAVA_OTEL_OPTS="-javaagent:${OTEL_AGENT}"
+  if [ -z "${OTEL_EXPORTER_OTLP_ENDPOINT:-}" ]; then
+    echo "IWRITE_OTEL_ENABLED=true exige a variável OTEL_EXPORTER_OTLP_ENDPOINT" >&2
+    exit 1
+  fi
+  if [ "$otel_auth_required" = "true" ] && [ -z "${OTEL_EXPORTER_OTLP_HEADERS:-}" ]; then
+    echo "IWRITE_OTEL_AUTH_REQUIRED=true exige a variável OTEL_EXPORTER_OTLP_HEADERS" >&2
+    exit 1
+  fi
+  if [ ! -f "$OTEL_AGENT" ]; then
+    echo "Agente OpenTelemetry ausente: $OTEL_AGENT" >&2
+    exit 1
+  fi
+  # Defaults aplicados apenas quando não fornecidos externamente.
+  : "${OTEL_EXPORTER_OTLP_PROTOCOL:=http/protobuf}"
+  : "${OTEL_TRACES_EXPORTER:=otlp}"
+  : "${OTEL_METRICS_EXPORTER:=otlp}"
+  : "${OTEL_LOGS_EXPORTER:=otlp}"
+  export OTEL_EXPORTER_OTLP_PROTOCOL OTEL_TRACES_EXPORTER OTEL_METRICS_EXPORTER OTEL_LOGS_EXPORTER
 fi
 
 # Modo de validação usado pelos testes e pelo smoke test do container.
-if [ "${1:-}" = "--check" ]; then
-  echo "Configuração OTel válida (IWRITE_OTEL_ENABLED=${IWRITE_OTEL_ENABLED:-false})"
+if [ "$check_mode" = "--check" ]; then
+  echo "Configuração OTel válida (IWRITE_OTEL_ENABLED=${otel_enabled}, IWRITE_OTEL_AUTH_REQUIRED=${otel_auth_required})"
   exit 0
 fi
 
-SERVER_PORT=8085 java ${JAVA_OTEL_OPTS} -jar /app/backend/app.jar &
+if [ "$otel_enabled" = "true" ]; then
+  set -- -javaagent:"$OTEL_AGENT" -jar /app/backend/app.jar
+else
+  set -- -jar /app/backend/app.jar
+fi
+
+# Modo de teste: imprime os argumentos do java um por linha, sem executar nada.
+if [ "$check_mode" = "--print-java-args" ]; then
+  for arg in "$@"; do
+    echo "$arg"
+  done
+  exit 0
+fi
+
+SERVER_PORT=8085 java "$@" &
 backend_pid=$!
 /app/frontend/node_modules/.bin/next start /app/frontend -p 8080 -H 0.0.0.0 &
 frontend_pid=$!
