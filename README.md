@@ -102,7 +102,20 @@ Banco e runtime:
 - `IWRITE_DEVELOPMENT_CURRENT_USER_ENABLED`: habilita somente a identidade temporária de desenvolvimento.
 - `IWRITE_DEVELOPMENT_CURRENT_USER_ID`, `IWRITE_DEVELOPMENT_TENANT_ID`, `IWRITE_DEVELOPMENT_TIME_ZONE_ID`: identidade temporária local.
 
-As variáveis da integração OpenAI estão descritas na seção de serviço externo. Não versione valores secretos.
+Observabilidade (opcional):
+
+- `IWRITE_OTEL_ENABLED`: habilita o OpenTelemetry Java Agent no container; padrão `false` (comportamento atual, sem variáveis extras).
+- `IWRITE_OTEL_AUTH_REQUIRED`: com `true`, exige `OTEL_EXPORTER_OTLP_HEADERS` (backend institucional); com `false`, dispensa headers (LGTM local sem autenticação). Padrão `true` quando `IWRITE_OTEL_ENABLED=true` (seguro por padrão); sem efeito quando OTel está desabilitado.
+- `OTEL_SERVICE_NAME`, `OTEL_EXPORTER_OTLP_ENDPOINT`: obrigatórias sempre que `IWRITE_OTEL_ENABLED=true`.
+- `OTEL_EXPORTER_OTLP_HEADERS`: obrigatória apenas com `IWRITE_OTEL_AUTH_REQUIRED=true`.
+
+Detalhes, exemplos para os dois ambientes (LGTM local e servidor institucional) e diagnóstico em [docs/opentelemetry.md](docs/opentelemetry.md). Para subir um LGTM local:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.observability.yml up --build
+```
+
+Use `.env.example` como modelo. As variáveis da integração OpenAI estão descritas na seção de serviço externo. Não versione valores secretos.
 
 ## Validação local
 
