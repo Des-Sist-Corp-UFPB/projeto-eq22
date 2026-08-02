@@ -27,7 +27,11 @@ services:
       DB_USERNAME: postgres
       DB_PASSWORD: postgres
       SERVER_PORT: 8085
-      IWRITE_DEVELOPMENT_CURRENT_USER_ENABLED: "true"
+      # Off, so identity comes from the session and each user resolves to their own tenant.
+      # Leaving it on would register the fixed development identity instead, and every logged-in
+      # user would land in the same workspace. Demo credentials are seeded by #137; until then this
+      # environment has no account to log in with.
+      IWRITE_DEVELOPMENT_CURRENT_USER_ENABLED: "false"
     ports:
       - "8085:8085"
     depends_on:
