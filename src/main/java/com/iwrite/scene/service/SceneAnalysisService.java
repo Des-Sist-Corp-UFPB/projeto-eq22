@@ -81,9 +81,13 @@ public class SceneAnalysisService {
             BusinessTelemetry.Operation telemetry
     ) {
         telemetry.attribute(BusinessTelemetry.AI_FOCUS_PRESENT, usableFocus(request) != null);
+        SceneAnalysisPrompt prompt = readOnlyTransactionTemplate.execute(status -> loadPrompt(sceneId, request));
+        /*
+         * Read after loadPrompt so a scene that fails validation still reaches
+         * the assistant zero times, as SceneAnalysisAccessIntegrationTest requires.
+         */
         telemetry.attribute(BusinessTelemetry.AI_PROVIDER, writingAssistant.provider());
         telemetry.attribute(BusinessTelemetry.AI_MODEL, writingAssistant.model());
-        SceneAnalysisPrompt prompt = readOnlyTransactionTemplate.execute(status -> loadPrompt(sceneId, request));
         telemetry.attribute(
                 BusinessTelemetry.AI_INPUT_SIZE_BUCKET,
                 BusinessTelemetry.modelInputSizeBucket(prompt.sceneText().length(), prompt.truncated())
