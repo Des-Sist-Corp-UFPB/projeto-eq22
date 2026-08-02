@@ -1,6 +1,6 @@
 import { fireEvent, screen, waitFor } from "@testing-library/react";
 import React from "react";
-import { beforeEach, describe, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { BookWorkspace } from "@/features/workspace/components/book-workspace";
 import type { BookOutline } from "@/features/outline/types";
 import { sceneForPlanning } from "@/test/fixtures";
@@ -176,10 +176,38 @@ const outlineWithAlternateScene: BookOutline = {
   })),
 };
 
+/**
+ * Undoes exactly what {@link Object.defineProperty} did: reinstalls the captured descriptor, or
+ * deletes the property when it did not exist beforehand. Scoped to this file's own `afterEach`
+ * rather than the global setup - moving it there would only turn a leak local to this describe
+ * block into one shared by the whole suite.
+ */
+function restoreProperty(target: object, property: PropertyKey, original: PropertyDescriptor | undefined) {
+  if (original) {
+    Object.defineProperty(target, property, original);
+  } else {
+    delete (target as Record<PropertyKey, unknown>)[property];
+  }
+}
+
 describe("BookWorkspace focus mode", () => {
   let fullscreenElement: Element | null;
   let requestFullscreen: ReturnType<typeof vi.fn>;
   let exitFullscreen: ReturnType<typeof vi.fn>;
+
+  // None of the three exist on jsdom's document by default (verified: all three descriptors are
+  // undefined here), so "restore" means delete, not reinstall a prior getter. Captured once, before
+  // any test in this block runs, so the shape holds even if a future jsdom version does define one
+  // of them.
+  const originalFullscreenElement = Object.getOwnPropertyDescriptor(document, "fullscreenElement");
+  const originalRequestFullscreen = Object.getOwnPropertyDescriptor(document.documentElement, "requestFullscreen");
+  const originalExitFullscreen = Object.getOwnPropertyDescriptor(document, "exitFullscreen");
+
+  afterEach(() => {
+    restoreProperty(document, "fullscreenElement", originalFullscreenElement);
+    restoreProperty(document.documentElement, "requestFullscreen", originalRequestFullscreen);
+    restoreProperty(document, "exitFullscreen", originalExitFullscreen);
+  });
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -325,6 +353,17 @@ describe("BookWorkspace focus mode", () => {
     fireEvent.click(screen.getByRole("button", { name: "Sair do foco" }));
     expect(exitFullscreen).toHaveBeenCalled();
     expect(await screen.findByText("Livro")).toBeInTheDocument();
+  });
+});
+
+// Regression guard for the fullscreen mocks above: this block declares no fixtures of its own, so
+// if the previous describe's afterEach failed to clean up, these globals would still carry its
+// mocks here.
+describe("global fullscreen properties after BookWorkspace focus mode", () => {
+  test("document and documentElement are back to their pre-suite shape", () => {
+    expect(Object.getOwnPropertyDescriptor(document, "fullscreenElement")).toBeUndefined();
+    expect(Object.getOwnPropertyDescriptor(document.documentElement, "requestFullscreen")).toBeUndefined();
+    expect(Object.getOwnPropertyDescriptor(document, "exitFullscreen")).toBeUndefined();
   });
 });
 
