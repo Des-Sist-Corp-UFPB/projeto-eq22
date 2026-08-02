@@ -175,6 +175,20 @@ class AuthenticationIntegrationTest extends PostgresIntegrationTest {
         mockMvc.perform(get("/ping")).andExpect(status().isOk());
     }
 
+    /**
+     * The MCP transport is exempted from authentication only while the MCP server is enabled.
+     * This suite runs with the default (disabled), so the exemption must not apply — otherwise the
+     * carve-out would be an unconditional hole in every deployment.
+     */
+    @Test
+    void mcpTransportIsNotExemptedWhileTheMcpServerIsDisabled() throws Exception {
+        // Authentication still applies to the SSE channel.
+        mockMvc.perform(get("/sse")).andExpect(status().isUnauthorized());
+        // And CSRF still applies to the message channel: the CsrfFilter runs ahead of
+        // authentication, so an un-tokened POST is refused at 403 rather than reaching a handler.
+        mockMvc.perform(post("/mcp/message")).andExpect(status().isForbidden());
+    }
+
     @Test
     void logoutInvalidatesTheSession() throws Exception {
         MockHttpSession session = sessionOf(login(email, PASSWORD).andExpect(status().isOk()).andReturn());

@@ -1,6 +1,7 @@
 package com.iwrite.auth;
 
 import jakarta.servlet.http.HttpServletResponse;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.authentication.AuthenticationManager;
@@ -22,10 +23,17 @@ import org.springframework.security.web.csrf.CsrfTokenRequestAttributeHandler;
 @Configuration
 public class SecurityConfig {
 
+    /**
+     * Spring AI's MCP transport (SSE + message channel). Not a browser surface: an MCP client
+     * carries no session and cannot perform a CSRF double-submit.
+     */
+    private static final String[] MCP_TRANSPORT_PATHS = { "/sse", "/mcp/message" };
+
     @Bean
     SecurityFilterChain securityFilterChain(
             HttpSecurity http,
-            RestAuthenticationEntryPoint authenticationEntryPoint
+            RestAuthenticationEntryPoint authenticationEntryPoint,
+            @Value("${spring.ai.mcp.server.enabled:false}") boolean mcpServerEnabled
     ) throws Exception {
         // Spring Security 6 defaults to the BREACH-protecting handler, which defers token
         // resolution and breaks the plain double-submit contract the SPA relies on. Clearing the
@@ -37,12 +45,25 @@ public class SecurityConfig {
                 // Reuses the CORS mapping already declared in WebConfig via the MVC introspector,
                 // so the cross-origin setup keeps working until the same-origin proxy is proven.
                 .cors(Customizer.withDefaults())
-                .csrf(csrf -> csrf
-                        .csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
-                        .csrfTokenRequestHandler(csrfTokenRequestHandler))
-                .authorizeHttpRequests(authorize -> authorize
-                        .requestMatchers("/ping", "/api/auth/login", "/api/auth/csrf").permitAll()
-                        .anyRequest().authenticated())
+                .csrf(csrf -> {
+                    csrf.csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
+                            .csrfTokenRequestHandler(csrfTokenRequestHandler);
+                    if (mcpServerEnabled) {
+                        csrf.ignoringRequestMatchers(MCP_TRANSPORT_PATHS);
+                    }
+                })
+                .authorizeHttpRequests(authorize -> {
+                    authorize.requestMatchers("/ping", "/api/auth/login", "/api/auth/csrf").permitAll();
+                    if (mcpServerEnabled) {
+                        // Deliberately conditional: when MCP is disabled — the default, and the
+                        // posture for the demo and for production — these paths are not mapped and
+                        // no exemption exists. When it is enabled, McpLoopbackGuard has already
+                        // refused startup unless the process is bound to loopback with the
+                        // development identity, so this cannot widen a remote surface.
+                        authorize.requestMatchers(MCP_TRANSPORT_PATHS).permitAll();
+                    }
+                    authorize.anyRequest().authenticated();
+                })
                 .exceptionHandling(exceptions -> exceptions.authenticationEntryPoint(authenticationEntryPoint))
                 .logout(logout -> logout
                         .logoutUrl("/api/auth/logout")
