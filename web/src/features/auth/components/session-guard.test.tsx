@@ -1,0 +1,181 @@
+import { useQuery } from "@tanstack/react-query";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { beforeEach, describe, expect, test, vi } from "vitest";
+import { QueryProvider } from "@/components/providers/query-provider";
+import { SessionGuard } from "@/features/auth/components/session-guard";
+import { renderWithClient } from "@/test/test-utils";
+import { ApiError } from "@/lib/api/client";
+
+/** Stands in for any authenticated screen whose data call is the one that finds the session gone. */
+function BooksThatFailWith401() {
+  useQuery({
+    queryKey: ["books"],
+    queryFn: () => Promise.reject(new ApiError("Sua sessão expirou.", 401)),
+    retry: false,
+  });
+  return <p>Conteúdo protegido</p>;
+}
+
+const authApi = vi.hoisted(() => ({ login: vi.fn(), fetchSession: vi.fn(), logout: vi.fn() }));
+const navigation = vi.hoisted(() => ({ replace: vi.fn(), pathname: "/library" }));
+
+vi.mock("@/features/auth/api/auth-api", () => authApi);
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ replace: navigation.replace }),
+  usePathname: () => navigation.pathname,
+}));
+
+const session = {
+  user: { displayName: "Autor A", email: "autor-a@iwrite.local" },
+  activeWorkspace: { name: "Espaço do Autor A", role: "OWNER" },
+};
+
+describe("SessionGuard", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    navigation.pathname = "/library";
+    authApi.logout.mockResolvedValue(undefined);
+  });
+
+  test("restaura a sessão e mostra usuário e workspace resolvidos pelo backend", async () => {
+    authApi.fetchSession.mockResolvedValue(session);
+
+    renderWithClient(
+      <SessionGuard>
+        <p>Conteúdo protegido</p>
+      </SessionGuard>,
+    );
+
+    expect(await screen.findByText("Conteúdo protegido")).toBeInTheDocument();
+    expect(screen.getByText("Autor A")).toBeInTheDocument();
+    expect(screen.getByText("Espaço do Autor A")).toBeInTheDocument();
+    expect(navigation.replace).not.toHaveBeenCalled();
+  });
+
+  test("consulta a sessão uma única vez para toda a aplicação", async () => {
+    authApi.fetchSession.mockResolvedValue(session);
+
+    renderWithClient(
+      <SessionGuard>
+        <SessionGuard>
+          <p>Conteúdo protegido</p>
+        </SessionGuard>
+      </SessionGuard>,
+    );
+
+    await screen.findByText("Conteúdo protegido");
+    expect(authApi.fetchSession).toHaveBeenCalledTimes(1);
+  });
+
+  test("rota protegida sem sessão vai para o login, sem mencionar expiração", async () => {
+    authApi.fetchSession.mockResolvedValue(null);
+
+    renderWithClient(
+      <SessionGuard>
+        <p>Conteúdo protegido</p>
+      </SessionGuard>,
+    );
+
+    await waitFor(() => expect(navigation.replace).toHaveBeenCalledWith("/login"));
+    expect(screen.queryByText("Conteúdo protegido")).not.toBeInTheDocument();
+  });
+
+  test("sessão perdida durante o uso redireciona anunciando expiração", async () => {
+    authApi.fetchSession.mockResolvedValue(session);
+
+    const { queryClient } = renderWithClient(
+      <SessionGuard>
+        <p>Conteúdo protegido</p>
+      </SessionGuard>,
+    );
+    await screen.findByText("Conteúdo protegido");
+
+    // What the global 401 handler does when any request finds the session gone.
+    queryClient.setQueryData(["auth", "session"], null);
+
+    await waitFor(() => expect(navigation.replace).toHaveBeenCalledWith("/login?reason=expired"));
+  });
+
+  test("um 401 em qualquer requisição encerra a sessão e leva ao login", async () => {
+    authApi.fetchSession.mockResolvedValue(session);
+
+    // The real provider, because the 401 handler that closes the session lives on its caches.
+    render(
+      <QueryProvider>
+        <SessionGuard>
+          <BooksThatFailWith401 />
+        </SessionGuard>
+      </QueryProvider>,
+    );
+    await screen.findByText("Conteúdo protegido");
+
+    await waitFor(() => expect(navigation.replace).toHaveBeenCalledWith("/login?reason=expired"));
+  });
+
+  test("não redireciona em loop quando já está no login", async () => {
+    navigation.pathname = "/login";
+    authApi.fetchSession.mockResolvedValue(null);
+
+    renderWithClient(
+      <SessionGuard>
+        <p>Formulário de login</p>
+      </SessionGuard>,
+    );
+
+    // The login screen renders regardless of the session, and must not bounce anywhere.
+    expect(await screen.findByText("Formulário de login")).toBeInTheDocument();
+    await waitFor(() => expect(authApi.fetchSession).toHaveBeenCalled());
+    expect(navigation.replace).not.toHaveBeenCalled();
+  });
+
+  test("quem já tem sessão é levado do login para a biblioteca, uma vez só", async () => {
+    navigation.pathname = "/login";
+    authApi.fetchSession.mockResolvedValue(session);
+
+    renderWithClient(
+      <SessionGuard>
+        <p>Formulário de login</p>
+      </SessionGuard>,
+    );
+
+    await waitFor(() => expect(navigation.replace).toHaveBeenCalledWith("/library"));
+    expect(navigation.replace).toHaveBeenCalledTimes(1);
+  });
+
+  test("backend fora do ar não é tratado como falta de sessão", async () => {
+    authApi.fetchSession.mockRejectedValue(new TypeError("Failed to fetch"));
+
+    renderWithClient(
+      <SessionGuard>
+        <p>Conteúdo protegido</p>
+      </SessionGuard>,
+    );
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Não conseguimos acessar o IWrite agora. Tente novamente em instantes.",
+    );
+    // Bouncing to the login screen would suggest the credentials were the problem.
+    expect(navigation.replace).not.toHaveBeenCalled();
+  });
+
+  test("logout encerra a sessão, limpa o cache e volta ao login", async () => {
+    authApi.fetchSession.mockResolvedValue(session);
+
+    const { queryClient } = renderWithClient(
+      <SessionGuard>
+        <p>Conteúdo protegido</p>
+      </SessionGuard>,
+    );
+    await screen.findByText("Conteúdo protegido");
+
+    queryClient.setQueryData(["books"], [{ id: "book-1", title: "Livro do Autor A" }]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Sair" }));
+
+    await waitFor(() => expect(authApi.logout).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(navigation.replace).toHaveBeenCalledWith("/login"));
+    // Nothing fetched as the previous user may survive the logout.
+    expect(queryClient.getQueryData(["books"])).toBeUndefined();
+    expect(queryClient.getQueryData(["auth", "session"])).toBeUndefined();
+  });
+});
