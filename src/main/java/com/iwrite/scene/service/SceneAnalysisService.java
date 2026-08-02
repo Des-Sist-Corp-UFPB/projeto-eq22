@@ -5,9 +5,11 @@ import com.iwrite.export.service.TipTapPlainTextRenderer;
 import com.iwrite.audit.entity.AuditResourceType;
 import com.iwrite.llm.LlmFeature;
 import com.iwrite.llm.gateway.LlmCallResult;
+import com.iwrite.llm.gateway.LlmExecutionException;
 import com.iwrite.llm.gateway.LlmExecutionGateway;
 import com.iwrite.llm.gateway.LlmExecutionSpec;
 import com.iwrite.llm.gateway.LlmInvalidResponseException;
+import com.iwrite.observability.BusinessTelemetry;
 import com.iwrite.scene.ai.SceneAnalysisPrompt;
 import com.iwrite.scene.ai.WritingAssistant;
 import com.iwrite.scene.dto.SceneAnalysisRequest;
@@ -32,13 +34,15 @@ public class SceneAnalysisService {
     private final TipTapPlainTextRenderer tipTapPlainTextRenderer;
     private final TransactionTemplate readOnlyTransactionTemplate;
     private final LlmExecutionGateway llmExecutionGateway;
+    private final BusinessTelemetry businessTelemetry;
 
     public SceneAnalysisService(
             SceneService sceneService,
             WritingAssistant writingAssistant,
             TipTapPlainTextRenderer tipTapPlainTextRenderer,
             PlatformTransactionManager transactionManager,
-            LlmExecutionGateway llmExecutionGateway
+            LlmExecutionGateway llmExecutionGateway,
+            BusinessTelemetry businessTelemetry
     ) {
         this.sceneService = sceneService;
         this.writingAssistant = writingAssistant;
@@ -46,10 +50,44 @@ public class SceneAnalysisService {
         this.readOnlyTransactionTemplate = new TransactionTemplate(transactionManager);
         this.readOnlyTransactionTemplate.setReadOnly(true);
         this.llmExecutionGateway = llmExecutionGateway;
+        this.businessTelemetry = businessTelemetry;
     }
 
+    /*
+     * Telemetry wrapper only: the business body below is unchanged, and the
+     * span is a child of whatever HTTP trace is active. See
+     * docs/otel-business-signals.md.
+     */
     public SceneAnalysisResponse analyze(UUID sceneId, SceneAnalysisRequest request) {
+        try (BusinessTelemetry.Operation telemetry = businessTelemetry.sceneAnalysis()) {
+            try {
+                return analyze(sceneId, request, telemetry);
+            } catch (BadRequestException validationError) {
+                telemetry.failure(BusinessTelemetry.RESULT_VALIDATION_ERROR, validationError);
+                throw validationError;
+            } catch (LlmExecutionException executionFailure) {
+                telemetry.failure(telemetryResult(executionFailure), executionFailure);
+                throw executionFailure;
+            } catch (RuntimeException failure) {
+                telemetry.failure(BusinessTelemetry.RESULT_FAILURE, failure);
+                throw failure;
+            }
+        }
+    }
+
+    private SceneAnalysisResponse analyze(
+            UUID sceneId,
+            SceneAnalysisRequest request,
+            BusinessTelemetry.Operation telemetry
+    ) {
+        telemetry.attribute(BusinessTelemetry.AI_FOCUS_PRESENT, usableFocus(request) != null);
+        telemetry.attribute(BusinessTelemetry.AI_PROVIDER, writingAssistant.provider());
+        telemetry.attribute(BusinessTelemetry.AI_MODEL, writingAssistant.model());
         SceneAnalysisPrompt prompt = readOnlyTransactionTemplate.execute(status -> loadPrompt(sceneId, request));
+        telemetry.attribute(
+                BusinessTelemetry.AI_INPUT_SIZE_BUCKET,
+                BusinessTelemetry.modelInputSizeBucket(prompt.sceneText().length(), prompt.truncated())
+        );
         LlmExecutionSpec spec = LlmExecutionSpec.of(
                         LlmFeature.SCENE_ANALYSIS,
                         writingAssistant.provider(),
@@ -57,7 +95,22 @@ public class SceneAnalysisService {
                         PROMPT_VERSION
                 )
                 .withResource(AuditResourceType.SCENE, sceneId);
-        return llmExecutionGateway.execute(spec, context -> sanitize(writingAssistant.analyzeScene(prompt)));
+        return llmExecutionGateway.execute(spec, context -> {
+            LlmCallResult<SceneAnalysisResponse> result = sanitize(writingAssistant.analyzeScene(prompt));
+            telemetry.attribute(BusinessTelemetry.AI_FALLBACK_USED, result.fallbackUsed());
+            return result;
+        });
+    }
+
+    /* Stable error category -> controlled result token; the message never travels. */
+    private static String telemetryResult(LlmExecutionException failure) {
+        return switch (failure.getErrorCategory()) {
+            case INVALID_STRUCTURED_RESPONSE -> BusinessTelemetry.RESULT_INVALID_RESPONSE;
+            case PROVIDER_TIMEOUT, PROVIDER_UNAVAILABLE, PROVIDER_REQUEST_REJECTED ->
+                    BusinessTelemetry.RESULT_PROVIDER_ERROR;
+            case CONFIGURATION_ERROR, FEATURE_DISABLED, AUDIT_PERSISTENCE_FAILURE, INTERNAL_EXECUTION_ERROR ->
+                    BusinessTelemetry.RESULT_FAILURE;
+        };
     }
 
     private SceneAnalysisPrompt loadPrompt(UUID sceneId, SceneAnalysisRequest request) {

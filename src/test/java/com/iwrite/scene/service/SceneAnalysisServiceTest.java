@@ -14,7 +14,9 @@ import com.iwrite.llm.gateway.LlmExecutionException;
 import com.iwrite.llm.gateway.LlmExecutionGateway;
 import com.iwrite.llm.gateway.LlmExecutionSpec;
 import com.iwrite.llm.gateway.LlmProviderCall;
+import com.iwrite.observability.BusinessTelemetry;
 import com.iwrite.scene.ai.SceneAnalysisPrompt;
+import io.opentelemetry.api.OpenTelemetry;
 import com.iwrite.scene.ai.WritingAssistant;
 import com.iwrite.scene.dto.SceneAnalysisRequest;
 import com.iwrite.scene.dto.SceneAnalysisResponse;
@@ -81,7 +83,8 @@ class SceneAnalysisServiceTest {
                 writingAssistant,
                 new TipTapPlainTextRenderer(new ObjectMapper()),
                 new TestTransactionManager(),
-                llmExecutionGateway
+                llmExecutionGateway,
+                new BusinessTelemetry(OpenTelemetry.noop())
         );
     }
 
