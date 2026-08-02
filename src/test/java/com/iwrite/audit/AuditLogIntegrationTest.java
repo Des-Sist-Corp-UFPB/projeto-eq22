@@ -24,7 +24,8 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-@AutoConfigureMockMvc
+// Pre-auth domain test: exercises tenant authorization via CurrentUserProvider, not the session.
+@AutoConfigureMockMvc(addFilters = false)
 class AuditLogIntegrationTest extends PostgresIntegrationTest {
 
     @Autowired

@@ -27,7 +27,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-@AutoConfigureMockMvc
+// Pre-auth domain test: exercises export contracts via CurrentUserProvider, not the session.
+@AutoConfigureMockMvc(addFilters = false)
 class BookExportIntegrationTest extends PostgresIntegrationTest {
 
     @Autowired
