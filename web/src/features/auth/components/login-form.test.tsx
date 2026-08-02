@@ -5,13 +5,10 @@ import { renderWithClient } from "@/test/test-utils";
 import { ApiError } from "@/lib/api/client";
 
 const authApi = vi.hoisted(() => ({ login: vi.fn(), fetchSession: vi.fn(), logout: vi.fn() }));
-const navigation = vi.hoisted(() => ({ replace: vi.fn(), searchParams: new URLSearchParams() }));
+const navigation = vi.hoisted(() => ({ replace: vi.fn() }));
 
 vi.mock("@/features/auth/api/auth-api", () => authApi);
-vi.mock("next/navigation", () => ({
-  useRouter: () => ({ replace: navigation.replace }),
-  useSearchParams: () => navigation.searchParams,
-}));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ replace: navigation.replace }) }));
 
 const session = {
   user: { displayName: "Autor A", email: "autor-a@iwrite.local" },
@@ -30,7 +27,6 @@ function submit() {
 describe("LoginForm", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    navigation.searchParams = new URLSearchParams();
     authApi.login.mockResolvedValue(session);
   });
 
@@ -135,9 +131,7 @@ describe("LoginForm", () => {
   });
 
   test("anuncia sessão expirada quando chega redirecionado por expiração", () => {
-    navigation.searchParams = new URLSearchParams("reason=expired");
-
-    renderWithClient(<LoginForm />);
+    renderWithClient(<LoginForm expired />);
 
     expect(screen.getByRole("status")).toHaveTextContent("Sua sessão expirou. Entre novamente para continuar.");
   });

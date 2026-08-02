@@ -1,6 +1,5 @@
 "use client";
 
-import { useSearchParams } from "next/navigation";
 import { useState, type FormEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { FeedbackMessage } from "@/components/ui/feedback-message";
@@ -12,15 +11,12 @@ export const INVALID_CREDENTIALS_MESSAGE = "Não foi possível entrar. Confira s
 export const BACKEND_UNAVAILABLE_MESSAGE = "Não conseguimos acessar o IWrite agora. Tente novamente em instantes.";
 export const SESSION_EXPIRED_MESSAGE = "Sua sessão expirou. Entre novamente para continuar.";
 
-export function LoginForm() {
-  const searchParams = useSearchParams();
+export function LoginForm({ expired = false }: { expired?: boolean }) {
   const login = useLogin();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [passwordVisible, setPasswordVisible] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
-
-  const expired = searchParams.get("reason") === "expired";
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();

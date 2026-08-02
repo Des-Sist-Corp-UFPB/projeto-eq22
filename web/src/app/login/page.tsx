@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import { Suspense } from "react";
 import { LoginForm } from "@/features/auth/components/login-form";
 import { ManuscriptArtwork } from "@/features/auth/components/manuscript-artwork";
 
@@ -7,7 +6,19 @@ export const metadata: Metadata = {
   title: "Entrar — IWrite",
 };
 
-export default function LoginPage() {
+/**
+ * Reads `?reason=expired` on the server and hands it down. Doing it with useSearchParams instead
+ * would force this subtree to render on the client, and the form would be missing from the
+ * server-rendered HTML - a visible flash of a login page with no login form.
+ */
+export default async function LoginPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ reason?: string }>;
+}) {
+  const { reason } = await searchParams;
+
+
   return (
     <main className="min-h-screen bg-[#f7f7f2] text-zinc-950 lg:grid lg:grid-cols-2">
       <section className="flex flex-col justify-center gap-6 px-5 py-10 md:px-10 lg:px-14 lg:py-16">
@@ -32,10 +43,7 @@ export default function LoginPage() {
             <p className="text-sm leading-6 text-zinc-600">Entre para continuar de onde parou.</p>
           </div>
 
-          {/* useSearchParams needs a boundary, otherwise the route cannot be statically rendered. */}
-          <Suspense fallback={null}>
-            <LoginForm />
-          </Suspense>
+          <LoginForm expired={reason === "expired"} />
 
           <p className="text-xs leading-5 text-zinc-500">
             Seus manuscritos permanecem privados em seu espaço de trabalho.
