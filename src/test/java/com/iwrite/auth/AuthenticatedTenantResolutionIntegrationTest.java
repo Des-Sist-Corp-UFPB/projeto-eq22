@@ -101,6 +101,7 @@ class AuthenticatedTenantResolutionIntegrationTest {
     private UUID tenantAId;
 
     private String emailB;
+    private UUID userBId;
     private UUID tenantBId;
 
     @BeforeEach
@@ -112,7 +113,8 @@ class AuthenticatedTenantResolutionIntegrationTest {
 
         emailB = "autor-b-" + UUID.randomUUID() + "@iwrite.local";
         tenantBId = createTenant("Espaço do Autor B");
-        addMembership(createUser(emailB, "Autor B"), tenantBId);
+        userBId = createUser(emailB, "Autor B");
+        addMembership(userBId, tenantBId);
     }
 
     // 1, 16 — the context is resolved from the session, and the development identity is not even
@@ -223,17 +225,14 @@ class AuthenticatedTenantResolutionIntegrationTest {
     // 9 — userId and role in the request cannot replace the authenticated identity.
     @Test
     void userIdAndRoleInTheRequestCannotReplaceTheAuthenticatedIdentity() throws Exception {
-        UUID foreignUserId = membershipRepository.findByTenant_IdAndUser_Id(
-                tenantBId, ownerOfTenant(tenantBId)).orElseThrow().getUser().getId();
-
         MockHttpSession sessionA = login(emailA);
 
         MvcResult created = mockMvc.perform(withCsrf(post("/api/books")).session(sessionA)
-                        .header("X-User-Id", foreignUserId.toString())
+                        .header("X-User-Id", userBId.toString())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(Map.of(
                                 "title", "Tentativa de trocar de autor",
-                                "userId", foreignUserId,
+                                "userId", userBId,
                                 "role", "OWNER"))))
                 .andExpect(status().isCreated())
                 .andReturn();
@@ -388,13 +387,6 @@ class AuthenticatedTenantResolutionIntegrationTest {
         ObjectNode error = (ObjectNode) objectMapper.readTree(body);
         error.remove("timestamp");
         return error.toString().replace(echoedId.toString(), "ID");
-    }
-
-    private UUID ownerOfTenant(UUID tenantId) {
-        return entityManager
-                .createQuery("select m.user.id from TenantMembership m where m.tenant.id = :tenantId", UUID.class)
-                .setParameter("tenantId", tenantId)
-                .getSingleResult();
     }
 
     private UUID createTenant(String name) {
