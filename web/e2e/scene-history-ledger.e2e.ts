@@ -1,7 +1,9 @@
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 
-const API_URL = "http://localhost:8086";
+// Relative, so calls go through the frontend proxy on baseURL and carry the session cookie.
+// Hitting the backend port directly would be cross-site: no cookie, and CORS in the way.
+const API_URL = "";
 const AUTOSAVE_DEBOUNCE_BUFFER_MS = 1_600;
 
 type Book = {
@@ -333,6 +335,12 @@ async function exportMarkdown(request: APIRequestContext, bookId: string) {
   return response.text();
 }
 
+/** The double-submit contract: the token already in the cookie jar, echoed as a header. */
+async function csrfHeaders(request: APIRequestContext) {
+  const cookies = (await request.storageState()).cookies;
+  return { "X-XSRF-TOKEN": cookies.find((cookie) => cookie.name === "XSRF-TOKEN")?.value ?? "" };
+}
+
 async function getJson<T>(request: APIRequestContext, path: string): Promise<T> {
   const response = await request.get(`${API_URL}${path}`);
   expect(response.ok(), `${response.status()} ${path}: ${await response.text()}`).toBeTruthy();
@@ -340,13 +348,13 @@ async function getJson<T>(request: APIRequestContext, path: string): Promise<T> 
 }
 
 async function postJson<T>(request: APIRequestContext, path: string, data: unknown): Promise<T> {
-  const response = await request.post(`${API_URL}${path}`, { data });
+  const response = await request.post(`${API_URL}${path}`, { data, headers: await csrfHeaders(request) });
   expect(response.ok(), `${response.status()} ${path}: ${await response.text()}`).toBeTruthy();
   return response.json() as Promise<T>;
 }
 
 async function patchJson<T>(request: APIRequestContext, path: string, data: unknown): Promise<T> {
-  const response = await request.patch(`${API_URL}${path}`, { data });
+  const response = await request.patch(`${API_URL}${path}`, { data, headers: await csrfHeaders(request) });
   expect(response.ok(), `${response.status()} ${path}: ${await response.text()}`).toBeTruthy();
   return response.json() as Promise<T>;
 }

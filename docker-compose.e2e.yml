@@ -24,10 +24,16 @@ services:
       DB_URL: jdbc:postgresql://db:5432/iwrite_e2e
       DB_USERNAME: postgres
       DB_PASSWORD: postgres
-      SERVER_PORT: 8086
       APP_CORS_ALLOWED_ORIGINS: http://localhost:3001
+      # The suite authenticates before it does anything, so the stack needs an account.
+      SPRING_PROFILES_ACTIVE: demo
+      IWRITE_DEMO_SEED_ENABLED: "true"
+      IWRITE_DEMO_AUTOR_A_PASSWORD: ${IWRITE_DEMO_AUTOR_A_PASSWORD:?defina no .env, sem valor padrão}
+      IWRITE_DEMO_AUTOR_B_PASSWORD: ${IWRITE_DEMO_AUTOR_B_PASSWORD:?defina no .env, sem valor padrão}
     ports:
-      - "8086:8086"
+      # docker/start.sh pins the Spring port at 8085 inside the image (the combined image proxies
+      # to 127.0.0.1:8085), so SERVER_PORT here never took effect. Publish the real port instead.
+      - "8086:8085"
     depends_on:
       db:
         condition: service_healthy
@@ -37,9 +43,9 @@ services:
       context: ./web
       dockerfile: Dockerfile
       args:
-        BACKEND_ORIGIN: http://backend:8086
+        BACKEND_ORIGIN: http://backend:8085
     environment:
-      BACKEND_ORIGIN: http://backend:8086
+      BACKEND_ORIGIN: http://backend:8085
     ports:
       - "3001:3001"
     command: ["npm", "run", "start", "--", "-p", "3001"]

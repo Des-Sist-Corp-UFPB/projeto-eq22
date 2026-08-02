@@ -13,7 +13,7 @@ test("creates, saves, reloads, and exports a Markdown manuscript", async ({ page
 
   await expect
     .poll(async () => {
-      const response = await page.request.get("http://localhost:8086/api/books");
+      const response = await page.request.get("/api/books");
       return response.status();
     })
     .toBe(200);
