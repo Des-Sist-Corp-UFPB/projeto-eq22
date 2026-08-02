@@ -1,12 +1,11 @@
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8085";
-
 type DownloadFileOptions = {
   path: string;
   fallbackFileName: string;
 };
 
 export async function downloadFile({ path, fallbackFileName }: DownloadFileOptions) {
-  const response = await fetch(`${API_URL}${path}`);
+  // Same-origin relative path, so the session cookie is sent with the download too.
+  const response = await fetch(path, { credentials: "same-origin" });
 
   if (!response.ok) {
     throw new Error(await readDownloadErrorMessage(response));
