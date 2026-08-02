@@ -53,6 +53,17 @@ spring:
 
 server:
   port: ${SERVER_PORT:8085}
+  servlet:
+    session:
+      timeout: ${IWRITE_SESSION_TIMEOUT:30m}
+      cookie:
+        http-only: true
+        # Lax is correct for the current topology: the browser origin and the API differ only by
+        # port, and ports are not part of a "site", so the cookie is still sent. Set to none only
+        # if the API ever moves to a different registrable domain — and that requires secure=true.
+        same-site: lax
+        # Must be true wherever the app is served over HTTPS.
+        secure: ${IWRITE_COOKIE_SECURE:false}
 
 logging:
   level:

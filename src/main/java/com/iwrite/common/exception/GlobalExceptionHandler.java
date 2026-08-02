@@ -1,10 +1,13 @@
 package com.iwrite.common.exception;
 
+import com.iwrite.auth.AuthMessages;
 import com.iwrite.llm.gateway.LlmExecutionException;
 import jakarta.validation.ConstraintViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.security.core.AuthenticationException;
+import org.springframework.security.web.authentication.session.SessionAuthenticationException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -49,6 +52,26 @@ public class GlobalExceptionHandler {
                 HttpStatus.SERVICE_UNAVAILABLE,
                 List.of("AI scene analysis could not be completed.")
         );
+    }
+
+    /**
+     * A session whose backing user, tenant or membership no longer resolves. Reported separately
+     * from a failed login so the client can tell "log in again" from "those credentials are wrong",
+     * without either message revealing whether an account exists.
+     */
+    @ExceptionHandler(SessionAuthenticationException.class)
+    public ResponseEntity<ApiErrorResponse> handleInvalidSession(SessionAuthenticationException exception) {
+        return buildResponse(HttpStatus.UNAUTHORIZED, List.of(AuthMessages.SESSION_EXPIRED));
+    }
+
+    /**
+     * Every authentication failure collapses to one message. Unknown email, wrong password, missing
+     * membership and ambiguous membership are indistinguishable from outside, and the exception
+     * message is deliberately discarded so no internal cause leaks into the response.
+     */
+    @ExceptionHandler(AuthenticationException.class)
+    public ResponseEntity<ApiErrorResponse> handleAuthentication(AuthenticationException exception) {
+        return buildResponse(HttpStatus.UNAUTHORIZED, List.of(AuthMessages.INVALID_CREDENTIALS));
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
