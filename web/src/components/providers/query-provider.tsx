@@ -7,18 +7,20 @@ import { ApiError } from "@/lib/api/client";
 
 export function QueryProvider({ children }: { children: React.ReactNode }) {
   const [queryClient] = useState(() => {
-    let client!: QueryClient;
+    // The handler needs the client the caches belong to, and the caches are built before it
+    // exists, so it reaches the client through a holder filled in below.
+    const created: { client?: QueryClient } = {};
 
     // A session can expire or be revoked while the app is open. Whichever request notices it first,
     // the answer is the same: the session is gone. Recording it here lets the route guard redirect
     // once, instead of every screen inventing its own handling of a 401.
     const onError = (error: unknown) => {
       if (error instanceof ApiError && error.status === 401) {
-        client.setQueryData(SESSION_QUERY_KEY, null);
+        created.client?.setQueryData(SESSION_QUERY_KEY, null);
       }
     };
 
-    client = new QueryClient({
+    const client = new QueryClient({
       queryCache: new QueryCache({ onError }),
       mutationCache: new MutationCache({ onError }),
       defaultOptions: {
@@ -29,6 +31,7 @@ export function QueryProvider({ children }: { children: React.ReactNode }) {
       },
     });
 
+    created.client = client;
     return client;
   });
 
