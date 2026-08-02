@@ -147,16 +147,28 @@ docker compose -f docker-compose.yml -f docker-compose.observability.yml exec ot
   --data-urlencode 'limit=50' | head -c 3000
 ```
 
-**Procurar termos proibidos sem imprimir secrets** (confirma ausência de `Authorization`, tokens ou conteúdo de manuscrito nos logs — o grep só reporta se o termo aparece, nunca o valor ao redor):
+**Procurar indicadores sensíveis sem imprimir secrets:** verificação booleana — procura só por indicadores genéricos (`Authorization`, `Bearer`), nunca pelo token institucional real, e nunca imprime o trecho encontrado, só se algo bateu:
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.observability.yml exec otel-lgtm \
-  curl -s -G 'http://localhost:3100/loki/api/v1/query_range' \
-  --data-urlencode 'query={service_name="dsc-eq22"}' --data-urlencode 'limit=1000' \
-  | grep -o -E 'Authorization|Bearer|<TOKEN_REAL_AQUI>' | sort -u || echo "nenhum termo proibido encontrado"
+if docker compose \
+  -f docker-compose.yml \
+  -f docker-compose.observability.yml \
+  exec -T otel-lgtm sh -c \
+  "curl -s -G 'http://localhost:3100/loki/api/v1/query_range' \
+    --data-urlencode 'query={service_name=\"dsc-eq22\"}' \
+    --data-urlencode 'limit=1000' |
+    grep -Eq 'Authorization|Bearer'"
+then
+  echo "Possível termo sensível encontrado"
+  exit 1
+else
+  echo "Nenhum indicador sensível encontrado"
+fi
 ```
 
-Todos os comandos acima usam placeholders (`<TRACE_ID>`, `<TOKEN_REAL_AQUI>`) — nenhum token, conteúdo privado ou ID pessoal real.
+Sintaxe validada contra o LGTM real: com um canário local (`echo 'Authorization: Bearer canary' | grep -Eq ...` dentro do mesmo container) o comando reporta "Possível termo sensível encontrado" e sai com status 1, sem nunca imprimir o valor encontrado; sem correspondência, reporta "Nenhum indicador sensível encontrado" e sai com status 0. Use tokens-canário falsos só nesse tipo de teste específico de vazamento — nunca informe ou substitua pelo token institucional real, aqui ou em qualquer comando desta página.
+
+Todos os comandos acima usam placeholders (`<TRACE_ID>`) — nenhum token, conteúdo privado ou ID pessoal real.
 
 ## Limitações conhecidas
 
