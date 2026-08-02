@@ -48,7 +48,8 @@ describe("ExportManuscriptButton", () => {
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
-        "http://localhost:8085/api/books/book-1/exports/manuscript?format=md&includeSceneTitles=true&includeEmptyScenes=true"
+        "/api/books/book-1/exports/manuscript?format=md&includeSceneTitles=true&includeEmptyScenes=true",
+        { credentials: "same-origin" }
       );
     });
   });
@@ -71,7 +72,8 @@ describe("ExportManuscriptButton", () => {
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
-        "http://localhost:8085/api/books/book-1/exports/manuscript?format=docx&includeSceneTitles=true&includeEmptyScenes=true"
+        "/api/books/book-1/exports/manuscript?format=docx&includeSceneTitles=true&includeEmptyScenes=true",
+        { credentials: "same-origin" }
       );
     });
   });
@@ -92,7 +94,8 @@ describe("ExportManuscriptButton", () => {
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
-        "http://localhost:8085/api/books/book-1/exports/manuscript?format=txt&includeSceneTitles=false&includeEmptyScenes=false"
+        "/api/books/book-1/exports/manuscript?format=txt&includeSceneTitles=false&includeEmptyScenes=false",
+        { credentials: "same-origin" }
       );
     });
   });

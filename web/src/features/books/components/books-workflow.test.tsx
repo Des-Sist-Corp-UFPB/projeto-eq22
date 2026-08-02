@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, test, vi } from "vitest";
-import HomePage from "@/app/page";
+import LibraryPage from "@/app/library/page";
 import { BooksList } from "@/features/books/components/books-list";
 import type { Book } from "@/features/books/types";
 
@@ -61,7 +61,7 @@ describe("books workflow", () => {
   });
 
   test("renders the library and creates, updates, cancels, and deletes a book", async () => {
-    renderWithClient(<HomePage />);
+    renderWithClient(<LibraryPage />);
 
     let ownerCard = (await screen.findByText(ownerBook.title)).closest("article")!;
     const collaboratorCard = screen.getByText(collaboratorBook.title).closest("article")!;
@@ -131,6 +131,6 @@ describe("books workflow", () => {
     api.listBooks.mockRejectedValueOnce(new Error("offline"));
     renderWithClient(<BooksList />);
     expect(await screen.findByText(/carregar a biblioteca/)).toBeInTheDocument();
-    expect(screen.getByText(/localhost:8085/)).toBeInTheDocument();
+    expect(screen.getByText(/Tente novamente em instantes/)).toBeInTheDocument();
   });
 });

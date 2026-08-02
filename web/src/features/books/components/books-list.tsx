@@ -27,7 +27,7 @@ export function BooksList() {
           description="Nenhum livro foi carregado porque a API não respondeu como esperado."
         />
         <FeedbackMessage variant="error">
-          Verifique se o backend está rodando em localhost:8085 e tente novamente.
+          Não conseguimos acessar o IWrite agora. Tente novamente em instantes.
         </FeedbackMessage>
       </div>
     );

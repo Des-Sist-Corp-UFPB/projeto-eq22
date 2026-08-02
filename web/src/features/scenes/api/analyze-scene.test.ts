@@ -4,6 +4,8 @@ import {
   type SceneAnalysisResult,
 } from "@/features/scenes/api/analyze-scene";
 
+const CSRF_TOKEN = "token-de-teste";
+
 const analysisResult: SceneAnalysisResult = {
   summary: "Uma descoberta muda o rumo da cena.",
   tone: "Tenso",
@@ -16,6 +18,9 @@ const analysisResult: SceneAnalysisResult = {
 describe("analyzeScene", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    // Seeded so apiRequest uses it directly instead of fetching /api/auth/csrf first, which would
+    // otherwise be the call under index 0.
+    document.cookie = `XSRF-TOKEN=${CSRF_TOKEN}`;
   });
 
   test("usa o endpoint POST correto", async () => {
@@ -24,8 +29,8 @@ describe("analyzeScene", () => {
     await analyzeScene("scene-1", {});
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "http://localhost:8085/api/scenes/scene-1/ai-analysis",
-      expect.objectContaining({ method: "POST" })
+      "/api/scenes/scene-1/ai-analysis",
+      expect.objectContaining({ method: "POST", credentials: "same-origin" })
     );
   });
 
@@ -37,7 +42,7 @@ describe("analyzeScene", () => {
     expect(fetchMock).toHaveBeenCalledWith(
       expect.any(String),
       expect.objectContaining({
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "X-XSRF-TOKEN": CSRF_TOKEN },
         body: JSON.stringify({ focus: "ritmo e tensão" }),
       })
     );
@@ -50,7 +55,8 @@ describe("analyzeScene", () => {
 
     const requestInit = fetchMock.mock.calls[0][1];
     expect(requestInit?.body).toBeUndefined();
-    expect(requestInit?.headers).toBeUndefined();
+    // No JSON content type without a body, but a mutation still carries the CSRF header.
+    expect(requestInit?.headers).toEqual({ "X-XSRF-TOKEN": CSRF_TOKEN });
   });
 
   test("encaminha o AbortSignal ao fetch", async () => {
