@@ -29,9 +29,13 @@ services:
       SERVER_PORT: 8085
       # Off, so identity comes from the session and each user resolves to their own tenant.
       # Leaving it on would register the fixed development identity instead, and every logged-in
-      # user would land in the same workspace. Demo credentials are seeded by #137; until then this
-      # environment has no account to log in with.
+      # user would land in the same workspace. Accounts to log in with come from the demo overlay
+      # (docker-compose.demo.yml); this file alone starts an environment with no accounts.
       IWRITE_DEVELOPMENT_CURRENT_USER_ENABLED: "false"
+      # Explícito porque o proxy do Next repassa o header Origin do navegador: mesmo com chamadas
+      # de mesma origem, o backend continua aplicando CORS e responde 403 se a origem real do
+      # frontend não estiver aqui.
+      APP_CORS_ALLOWED_ORIGINS: http://localhost:3000
     ports:
       - "8085:8085"
     depends_on:
