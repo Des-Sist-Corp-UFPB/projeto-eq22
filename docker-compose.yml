@@ -46,10 +46,14 @@ services:
     build:
       context: ./web
       dockerfile: Dockerfile
+      args:
+        # Needed at build time: next build bakes the rewrite destination into the routes manifest.
+        BACKEND_ORIGIN: http://backend:8085
     container_name: iwrite-frontend
     environment:
       # The browser talks only to the frontend origin; Next rewrites /api to the backend over the
-      # compose network, so the session cookie stays same-site.
+      # compose network, so the session cookie stays same-site. Kept at runtime as well, which is
+      # what `next dev` reads.
       BACKEND_ORIGIN: http://backend:8085
     ports:
       - "3000:3000"

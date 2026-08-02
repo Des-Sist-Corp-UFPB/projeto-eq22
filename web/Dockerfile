@@ -9,6 +9,12 @@ FROM node:24-alpine AS build
 
 WORKDIR /app
 
+# next build serialises the rewrites into .next/routes-manifest.json, and `next start` reads that
+# manifest rather than re-running next.config.ts. So the backend origin has to be known here at
+# build time - supplying it only at runtime leaves the image pinned to the local fallback.
+ARG BACKEND_ORIGIN=http://127.0.0.1:8085
+ENV BACKEND_ORIGIN=$BACKEND_ORIGIN
+
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 

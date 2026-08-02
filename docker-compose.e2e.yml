@@ -36,6 +36,8 @@ services:
     build:
       context: ./web
       dockerfile: Dockerfile
+      args:
+        BACKEND_ORIGIN: http://backend:8086
     environment:
       BACKEND_ORIGIN: http://backend:8086
     ports:
