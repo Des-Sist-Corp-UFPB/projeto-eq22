@@ -87,6 +87,14 @@ iwrite:
           max-tokens: ${OPENAI_MAX_TOKENS:}
           max-completion-tokens: ${OPENAI_MAX_COMPLETION_TOKENS:}
           reasoning-effort: ${OPENAI_REASONING_EFFORT:}
+  demo:
+    # Read only when the `demo` profile is active as well. Both passwords are required once the
+    # seed is enabled and deliberately have no defaults: a default password in a repository is a
+    # published password.
+    seed:
+      enabled: ${IWRITE_DEMO_SEED_ENABLED:false}
+      autor-a-password: ${IWRITE_DEMO_AUTOR_A_PASSWORD:}
+      autor-b-password: ${IWRITE_DEMO_AUTOR_B_PASSWORD:}
   current-user:
     development:
       enabled: ${IWRITE_DEVELOPMENT_CURRENT_USER_ENABLED:false}
