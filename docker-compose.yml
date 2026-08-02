@@ -38,11 +38,11 @@ services:
     build:
       context: ./web
       dockerfile: Dockerfile
-      args:
-        NEXT_PUBLIC_API_URL: http://localhost:8085
     container_name: iwrite-frontend
     environment:
-      NEXT_PUBLIC_API_URL: http://localhost:8085
+      # The browser talks only to the frontend origin; Next rewrites /api to the backend over the
+      # compose network, so the session cookie stays same-site.
+      BACKEND_ORIGIN: http://backend:8085
     ports:
       - "3000:3000"
     depends_on:

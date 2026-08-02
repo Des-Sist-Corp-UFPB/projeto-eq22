@@ -36,10 +36,8 @@ services:
     build:
       context: ./web
       dockerfile: Dockerfile
-      args:
-        NEXT_PUBLIC_API_URL: http://localhost:8086
     environment:
-      NEXT_PUBLIC_API_URL: http://localhost:8086
+      BACKEND_ORIGIN: http://backend:8086
     ports:
       - "3001:3001"
     command: ["npm", "run", "start", "--", "-p", "3001"]
