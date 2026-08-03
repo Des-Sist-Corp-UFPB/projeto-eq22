@@ -194,6 +194,43 @@ No fluxo local (perfil `development`), o alvo natural é o usuário legado da V2
 negócio, independentemente de qual conta autenticou a sessão — só a barreira do Spring Security
 precisava de uma sessão real, a identidade de negócio em desenvolvimento já era fixa.
 
+## Limitação de tentativas de login
+
+`POST /api/auth/login` é público (necessariamente — é como a sessão começa), então nada além do
+próprio `LoginRateLimiter` (`com.iwrite.auth`) impede tentativas ilimitadas. Duas dimensões
+independentes, cada uma com janela fixa e contagem em memória:
+
+- **origem** (`request.getRemoteAddr()` — nunca `X-Forwarded-For`, que qualquer cliente forja
+  livremente; atrás de um proxy confiável, resolva o peer real via
+  `server.forward-headers-strategy=framework`, não neste código);
+- **conta** (email normalizado — minúsculas, sem espaço nas pontas), para impedir força bruta
+  concentrada numa conta específica ainda que distribuída entre muitas origens.
+
+Toda chamada conta, sucesso ou falha (mesma política do `McpSceneAnalysisLimiter`). Ao exceder
+qualquer uma das duas, a resposta é sempre `429` com a mesma mensagem genérica
+(`AuthMessages.TOO_MANY_LOGIN_ATTEMPTS`) — nunca revela qual dimensão estourou nem se a conta existe.
+
+É uma janela, não um bloqueio permanente: ela sempre reabre sozinha, então ninguém consegue manter a
+conta de outra pessoa fechada só enviando o email dela em tentativas com falha por mais que uma
+janela — parar de tentar já é suficiente para a conta voltar a responder normalmente na janela
+seguinte.
+
+Armazenamento limitado (`iwrite.auth.login-rate-limit.max-tracked-keys`, padrão 10000): cada
+dimensão descarta janelas expiradas e, se ainda estiver no limite, a chave mais antiga, para que o
+mapa em memória não cresça sem limite sob um ataque distribuído por muitas origens ou contas
+inexistentes.
+
+Estado em memória por instância. Implantação com múltiplas réplicas precisa de armazenamento
+compartilhado (ex.: Redis) para um limite único combinado; sem isso, cada réplica aplica sua própria
+janela independente.
+
+Variáveis: `IWRITE_LOGIN_RATE_LIMIT_MAX_PER_ORIGIN` (padrão 20),
+`IWRITE_LOGIN_RATE_LIMIT_MAX_PER_ACCOUNT` (padrão 8), `IWRITE_LOGIN_RATE_LIMIT_MAX_TRACKED_KEYS`
+(padrão 10000), `IWRITE_LOGIN_RATE_LIMIT_WINDOW` (padrão `1m`).
+
+Testado deterministicamente com relógio injetável (`LoginRateLimiterTest`, sem `sleep`) e fim a fim
+via `MockMvc` (`LoginRateLimitingIntegrationTest`).
+
 ## Limitações desta fatia acadêmica
 
 - **Seleção de workspace adiada.** Usuários com mais de uma membership não conseguem entrar. O

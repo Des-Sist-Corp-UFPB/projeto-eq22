@@ -37,17 +37,20 @@ public class AuthController {
     private final AuthSessionService authSessionService;
     private final SecurityContextRepository securityContextRepository;
     private final SessionAuthenticationStrategy sessionAuthenticationStrategy;
+    private final LoginRateLimiter loginRateLimiter;
 
     public AuthController(
             AuthenticationManager authenticationManager,
             AuthSessionService authSessionService,
             SecurityContextRepository securityContextRepository,
-            SessionAuthenticationStrategy sessionAuthenticationStrategy
+            SessionAuthenticationStrategy sessionAuthenticationStrategy,
+            LoginRateLimiter loginRateLimiter
     ) {
         this.authenticationManager = authenticationManager;
         this.authSessionService = authSessionService;
         this.securityContextRepository = securityContextRepository;
         this.sessionAuthenticationStrategy = sessionAuthenticationStrategy;
+        this.loginRateLimiter = loginRateLimiter;
     }
 
     /** Issues the {@code XSRF-TOKEN} cookie the SPA echoes back as {@code X-XSRF-TOKEN}. */
@@ -63,6 +66,8 @@ public class AuthController {
             HttpServletRequest httpRequest,
             HttpServletResponse httpResponse
     ) {
+        loginRateLimiter.checkAllowed(httpRequest.getRemoteAddr(), request.email());
+
         if (request.email() == null || request.password() == null) {
             throw new BadCredentialsException("Missing credentials");
         }

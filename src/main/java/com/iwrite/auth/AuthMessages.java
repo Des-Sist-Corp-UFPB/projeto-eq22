@@ -15,6 +15,10 @@ public final class AuthMessages {
     public static final String SESSION_EXPIRED =
             "Sua sessão expirou. Entre novamente para continuar.";
 
+    /** Deliberately silent on which dimension (origin or account) tripped, and on account existence. */
+    public static final String TOO_MANY_LOGIN_ATTEMPTS =
+            "Muitas tentativas de login. Aguarde um momento e tente novamente.";
+
     private AuthMessages() {
     }
 }

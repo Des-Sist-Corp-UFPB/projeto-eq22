@@ -1,0 +1,135 @@
+package com.iwrite.auth;
+
+import org.junit.jupiter.api.Test;
+
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+class LoginRateLimiterTest {
+
+    private final MutableClock clock = new MutableClock();
+
+    @Test
+    void permiteAteOLimitePorContaEDepoisRejeita() {
+        LoginRateLimiter limiter = new LoginRateLimiter(100, 2, 10_000, Duration.ofMinutes(1), clock);
+
+        assertThatCode(() -> limiter.checkAllowed("1.2.3.4", "victim@iwrite.local")).doesNotThrowAnyException();
+        assertThatCode(() -> limiter.checkAllowed("1.2.3.4", "victim@iwrite.local")).doesNotThrowAnyException();
+
+        assertThatThrownBy(() -> limiter.checkAllowed("1.2.3.4", "victim@iwrite.local"))
+                .isInstanceOf(LoginRateLimitExceededException.class);
+    }
+
+    @Test
+    void distribuirTentativasEntreOrigensNaoEscapaOLimitePorConta() {
+        LoginRateLimiter limiter = new LoginRateLimiter(100, 2, 10_000, Duration.ofMinutes(1), clock);
+
+        limiter.checkAllowed("1.1.1.1", "victim@iwrite.local");
+        limiter.checkAllowed("2.2.2.2", "victim@iwrite.local");
+
+        // A third origin, same targeted account: the account budget is what is spent, not the origin's.
+        assertThatThrownBy(() -> limiter.checkAllowed("3.3.3.3", "victim@iwrite.local"))
+                .isInstanceOf(LoginRateLimitExceededException.class);
+    }
+
+    @Test
+    void concentrarContasDistintasNaMesmaOrigemNaoEscapaOLimitePorOrigem() {
+        LoginRateLimiter limiter = new LoginRateLimiter(2, 100, 10_000, Duration.ofMinutes(1), clock);
+
+        limiter.checkAllowed("9.9.9.9", "a@iwrite.local");
+        limiter.checkAllowed("9.9.9.9", "b@iwrite.local");
+
+        assertThatThrownBy(() -> limiter.checkAllowed("9.9.9.9", "c@iwrite.local"))
+                .isInstanceOf(LoginRateLimitExceededException.class);
+    }
+
+    @Test
+    void contaENormalizadaPorEmailSemDiferenciarCaixaOuEspacos() {
+        LoginRateLimiter limiter = new LoginRateLimiter(100, 1, 10_000, Duration.ofMinutes(1), clock);
+
+        limiter.checkAllowed("1.2.3.4", " Victim@IWrite.local ");
+
+        assertThatThrownBy(() -> limiter.checkAllowed("5.6.7.8", "victim@iwrite.local"))
+                .isInstanceOf(LoginRateLimitExceededException.class);
+    }
+
+    @Test
+    void janelaExpiradaLiberaTentativasParaAMesmaConta() {
+        LoginRateLimiter limiter = new LoginRateLimiter(100, 1, 10_000, Duration.ofMinutes(1), clock);
+
+        limiter.checkAllowed("1.2.3.4", "victim@iwrite.local");
+        assertThatThrownBy(() -> limiter.checkAllowed("1.2.3.4", "victim@iwrite.local"))
+                .isInstanceOf(LoginRateLimitExceededException.class);
+
+        clock.advance(Duration.ofSeconds(61));
+
+        // The account is never held shut past its own window, regardless of how many attempts hit it.
+        assertThatCode(() -> limiter.checkAllowed("1.2.3.4", "victim@iwrite.local")).doesNotThrowAnyException();
+    }
+
+    @Test
+    void requisicaoSemEmailAindaContaNoOrcamentoDaOrigem() {
+        LoginRateLimiter limiter = new LoginRateLimiter(1, 100, 10_000, Duration.ofMinutes(1), clock);
+
+        limiter.checkAllowed("1.2.3.4", null);
+
+        assertThatThrownBy(() -> limiter.checkAllowed("1.2.3.4", "someone@iwrite.local"))
+                .isInstanceOf(LoginRateLimitExceededException.class);
+    }
+
+    @Test
+    void limiteDeChavesRastreadasEhRespeitadoAoInvesDeCrescerSemLimite() {
+        LoginRateLimiter limiter = new LoginRateLimiter(1, 100, 2, Duration.ofMinutes(1), clock);
+
+        assertThatCode(() -> {
+            for (int i = 0; i < 500; i++) {
+                limiter.checkAllowed("origin-" + i, "user-" + i + "@iwrite.local");
+            }
+        }).doesNotThrowAnyException();
+    }
+
+    @Test
+    void configuracaoInvalidaFalhaNaConstrucao() {
+        assertThatThrownBy(() -> new LoginRateLimiter(0, 1, 10, Duration.ofMinutes(1), clock))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new LoginRateLimiter(1, 0, 10, Duration.ofMinutes(1), clock))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new LoginRateLimiter(1, 1, 0, Duration.ofMinutes(1), clock))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new LoginRateLimiter(1, 1, 10, Duration.ZERO, clock))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new LoginRateLimiter(1, 1, 10, Duration.ofSeconds(-1), clock))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    private static final class MutableClock extends Clock {
+
+        private Instant instant = Instant.parse("2026-08-02T12:00:00Z");
+
+        void advance(Duration duration) {
+            instant = instant.plus(duration);
+        }
+
+        @Override
+        public ZoneId getZone() {
+            return ZoneOffset.UTC;
+        }
+
+        @Override
+        public Clock withZone(ZoneId zone) {
+            return this;
+        }
+
+        @Override
+        public Instant instant() {
+            return instant;
+        }
+    }
+}

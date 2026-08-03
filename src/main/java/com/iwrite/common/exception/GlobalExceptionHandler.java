@@ -1,6 +1,7 @@
 package com.iwrite.common.exception;
 
 import com.iwrite.auth.AuthMessages;
+import com.iwrite.auth.LoginRateLimitExceededException;
 import com.iwrite.llm.gateway.LlmExecutionException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpSession;
@@ -87,6 +88,12 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(AuthenticationException.class)
     public ResponseEntity<ApiErrorResponse> handleAuthentication(AuthenticationException exception) {
         return buildResponse(HttpStatus.UNAUTHORIZED, List.of(AuthMessages.INVALID_CREDENTIALS));
+    }
+
+    /** Silent on which dimension (origin or account) tripped and on whether the account exists. */
+    @ExceptionHandler(LoginRateLimitExceededException.class)
+    public ResponseEntity<ApiErrorResponse> handleLoginRateLimited(LoginRateLimitExceededException exception) {
+        return buildResponse(HttpStatus.TOO_MANY_REQUESTS, List.of(AuthMessages.TOO_MANY_LOGIN_ATTEMPTS));
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)

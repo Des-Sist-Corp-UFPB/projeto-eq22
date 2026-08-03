@@ -103,6 +103,13 @@ iwrite:
       enabled: ${IWRITE_CREDENTIAL_PROVISIONING_ENABLED:false}
       email: ${IWRITE_CREDENTIAL_PROVISIONING_EMAIL:}
       password: ${IWRITE_CREDENTIAL_PROVISIONING_PASSWORD:}
+    # Bounded in-memory login throttling; see LoginRateLimiter. A single instance's own memory —
+    # multiple replicas need a shared store to enforce one combined limit.
+    login-rate-limit:
+      max-attempts-per-origin: ${IWRITE_LOGIN_RATE_LIMIT_MAX_PER_ORIGIN:20}
+      max-attempts-per-account: ${IWRITE_LOGIN_RATE_LIMIT_MAX_PER_ACCOUNT:8}
+      max-tracked-keys: ${IWRITE_LOGIN_RATE_LIMIT_MAX_TRACKED_KEYS:10000}
+      window: ${IWRITE_LOGIN_RATE_LIMIT_WINDOW:1m}
   current-user:
     development:
       enabled: ${IWRITE_DEVELOPMENT_CURRENT_USER_ENABLED:false}
