@@ -103,6 +103,12 @@ iwrite:
       enabled: ${IWRITE_CREDENTIAL_PROVISIONING_ENABLED:false}
       email: ${IWRITE_CREDENTIAL_PROVISIONING_EMAIL:}
       password: ${IWRITE_CREDENTIAL_PROVISIONING_PASSWORD:}
+    # Peers allowed to supply X-Forwarded-For/Forwarded for the login rate limiter's origin
+    # dimension; see ClientAddressResolver. Comma-separated IPs, CIDRs, or hostnames (resolved by
+    # DNS on every check). Empty by default: no peer is trusted and the TCP peer address is always
+    # used. In the Compose topology, the frontend container is the only hop between the browser and
+    # this backend, so it is the only entry set below.
+    trusted-proxies: ${IWRITE_AUTH_TRUSTED_PROXIES:}
     # Bounded in-memory login throttling; see LoginRateLimiter. A single instance's own memory —
     # multiple replicas need a shared store to enforce one combined limit.
     login-rate-limit:

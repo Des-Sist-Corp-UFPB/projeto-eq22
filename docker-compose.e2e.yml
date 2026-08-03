@@ -30,6 +30,9 @@ services:
       IWRITE_DEMO_SEED_ENABLED: "true"
       IWRITE_DEMO_AUTOR_A_PASSWORD: ${IWRITE_DEMO_AUTOR_A_PASSWORD:?defina no .env, sem valor padrão}
       IWRITE_DEMO_AUTOR_B_PASSWORD: ${IWRITE_DEMO_AUTOR_B_PASSWORD:?defina no .env, sem valor padrão}
+      # Same trust boundary as docker-compose.yml: only the frontend container may supply a
+      # forwarded client address.
+      IWRITE_AUTH_TRUSTED_PROXIES: frontend
     ports:
       # docker/start.sh pins the Spring port at 8085 inside the image (the combined image proxies
       # to 127.0.0.1:8085), so SERVER_PORT here never took effect. Publish the real port instead.
@@ -46,9 +49,9 @@ services:
         BACKEND_ORIGIN: http://backend:8085
     environment:
       BACKEND_ORIGIN: http://backend:8085
+      PORT: "3001"
     ports:
       - "3001:3001"
-    command: ["npm", "run", "start", "--", "-p", "3001"]
     depends_on:
       - backend
 

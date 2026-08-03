@@ -9,6 +9,7 @@ import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
+import org.springframework.security.core.AuthenticationException;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.core.context.SecurityContext;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -38,19 +39,22 @@ public class AuthController {
     private final SecurityContextRepository securityContextRepository;
     private final SessionAuthenticationStrategy sessionAuthenticationStrategy;
     private final LoginRateLimiter loginRateLimiter;
+    private final ClientAddressResolver clientAddressResolver;
 
     public AuthController(
             AuthenticationManager authenticationManager,
             AuthSessionService authSessionService,
             SecurityContextRepository securityContextRepository,
             SessionAuthenticationStrategy sessionAuthenticationStrategy,
-            LoginRateLimiter loginRateLimiter
+            LoginRateLimiter loginRateLimiter,
+            ClientAddressResolver clientAddressResolver
     ) {
         this.authenticationManager = authenticationManager;
         this.authSessionService = authSessionService;
         this.securityContextRepository = securityContextRepository;
         this.sessionAuthenticationStrategy = sessionAuthenticationStrategy;
         this.loginRateLimiter = loginRateLimiter;
+        this.clientAddressResolver = clientAddressResolver;
     }
 
     /** Issues the {@code XSRF-TOKEN} cookie the SPA echoes back as {@code X-XSRF-TOKEN}. */
@@ -66,14 +70,23 @@ public class AuthController {
             HttpServletRequest httpRequest,
             HttpServletResponse httpResponse
     ) {
-        loginRateLimiter.checkAllowed(httpRequest.getRemoteAddr(), request.email());
+        loginRateLimiter.checkOrigin(clientAddressResolver.resolve(httpRequest));
+        loginRateLimiter.checkAccountBudget(request.email());
 
-        if (request.email() == null || request.password() == null) {
-            throw new BadCredentialsException("Missing credentials");
+        Authentication authentication;
+        try {
+            if (request.email() == null || request.password() == null) {
+                throw new BadCredentialsException("Missing credentials");
+            }
+            authentication = authenticationManager.authenticate(
+                    UsernamePasswordAuthenticationToken.unauthenticated(request.email(), request.password()));
+        } catch (AuthenticationException e) {
+            // Only a failure spends the account's budget: a real owner logging in from several
+            // tabs or devices must never be throttled out of their own account by their own
+            // successful logins.
+            loginRateLimiter.recordFailedAttempt(request.email());
+            throw e;
         }
-
-        Authentication authentication = authenticationManager.authenticate(
-                UsernamePasswordAuthenticationToken.unauthenticated(request.email(), request.password()));
 
         sessionAuthenticationStrategy.onAuthentication(authentication, httpRequest, httpResponse);
 

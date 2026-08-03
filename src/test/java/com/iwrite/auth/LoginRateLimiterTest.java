@@ -16,14 +16,21 @@ class LoginRateLimiterTest {
 
     private final MutableClock clock = new MutableClock();
 
+    /** One full failed login, in the order AuthController drives the limiter for a real request. */
+    private static void attemptAndFail(LoginRateLimiter limiter, String origin, String email) {
+        limiter.checkOrigin(origin);
+        limiter.checkAccountBudget(email);
+        limiter.recordFailedAttempt(email);
+    }
+
     @Test
     void permiteAteOLimitePorContaEDepoisRejeita() {
         LoginRateLimiter limiter = new LoginRateLimiter(100, 2, 10_000, Duration.ofMinutes(1), clock);
 
-        assertThatCode(() -> limiter.checkAllowed("1.2.3.4", "victim@iwrite.local")).doesNotThrowAnyException();
-        assertThatCode(() -> limiter.checkAllowed("1.2.3.4", "victim@iwrite.local")).doesNotThrowAnyException();
+        assertThatCode(() -> attemptAndFail(limiter, "1.2.3.4", "victim@iwrite.local")).doesNotThrowAnyException();
+        assertThatCode(() -> attemptAndFail(limiter, "1.2.3.4", "victim@iwrite.local")).doesNotThrowAnyException();
 
-        assertThatThrownBy(() -> limiter.checkAllowed("1.2.3.4", "victim@iwrite.local"))
+        assertThatThrownBy(() -> limiter.checkAccountBudget("victim@iwrite.local"))
                 .isInstanceOf(LoginRateLimitExceededException.class);
     }
 
@@ -31,11 +38,12 @@ class LoginRateLimiterTest {
     void distribuirTentativasEntreOrigensNaoEscapaOLimitePorConta() {
         LoginRateLimiter limiter = new LoginRateLimiter(100, 2, 10_000, Duration.ofMinutes(1), clock);
 
-        limiter.checkAllowed("1.1.1.1", "victim@iwrite.local");
-        limiter.checkAllowed("2.2.2.2", "victim@iwrite.local");
+        attemptAndFail(limiter, "1.1.1.1", "victim@iwrite.local");
+        attemptAndFail(limiter, "2.2.2.2", "victim@iwrite.local");
 
         // A third origin, same targeted account: the account budget is what is spent, not the origin's.
-        assertThatThrownBy(() -> limiter.checkAllowed("3.3.3.3", "victim@iwrite.local"))
+        limiter.checkOrigin("3.3.3.3");
+        assertThatThrownBy(() -> limiter.checkAccountBudget("victim@iwrite.local"))
                 .isInstanceOf(LoginRateLimitExceededException.class);
     }
 
@@ -43,10 +51,10 @@ class LoginRateLimiterTest {
     void concentrarContasDistintasNaMesmaOrigemNaoEscapaOLimitePorOrigem() {
         LoginRateLimiter limiter = new LoginRateLimiter(2, 100, 10_000, Duration.ofMinutes(1), clock);
 
-        limiter.checkAllowed("9.9.9.9", "a@iwrite.local");
-        limiter.checkAllowed("9.9.9.9", "b@iwrite.local");
+        attemptAndFail(limiter, "9.9.9.9", "a@iwrite.local");
+        attemptAndFail(limiter, "9.9.9.9", "b@iwrite.local");
 
-        assertThatThrownBy(() -> limiter.checkAllowed("9.9.9.9", "c@iwrite.local"))
+        assertThatThrownBy(() -> limiter.checkOrigin("9.9.9.9"))
                 .isInstanceOf(LoginRateLimitExceededException.class);
     }
 
@@ -54,9 +62,9 @@ class LoginRateLimiterTest {
     void contaENormalizadaPorEmailSemDiferenciarCaixaOuEspacos() {
         LoginRateLimiter limiter = new LoginRateLimiter(100, 1, 10_000, Duration.ofMinutes(1), clock);
 
-        limiter.checkAllowed("1.2.3.4", " Victim@IWrite.local ");
+        attemptAndFail(limiter, "1.2.3.4", " Victim@IWrite.local ");
 
-        assertThatThrownBy(() -> limiter.checkAllowed("5.6.7.8", "victim@iwrite.local"))
+        assertThatThrownBy(() -> limiter.checkAccountBudget("victim@iwrite.local"))
                 .isInstanceOf(LoginRateLimitExceededException.class);
     }
 
@@ -64,23 +72,23 @@ class LoginRateLimiterTest {
     void janelaExpiradaLiberaTentativasParaAMesmaConta() {
         LoginRateLimiter limiter = new LoginRateLimiter(100, 1, 10_000, Duration.ofMinutes(1), clock);
 
-        limiter.checkAllowed("1.2.3.4", "victim@iwrite.local");
-        assertThatThrownBy(() -> limiter.checkAllowed("1.2.3.4", "victim@iwrite.local"))
+        attemptAndFail(limiter, "1.2.3.4", "victim@iwrite.local");
+        assertThatThrownBy(() -> limiter.checkAccountBudget("victim@iwrite.local"))
                 .isInstanceOf(LoginRateLimitExceededException.class);
 
         clock.advance(Duration.ofSeconds(61));
 
         // The account is never held shut past its own window, regardless of how many attempts hit it.
-        assertThatCode(() -> limiter.checkAllowed("1.2.3.4", "victim@iwrite.local")).doesNotThrowAnyException();
+        assertThatCode(() -> attemptAndFail(limiter, "1.2.3.4", "victim@iwrite.local")).doesNotThrowAnyException();
     }
 
     @Test
     void requisicaoSemEmailAindaContaNoOrcamentoDaOrigem() {
         LoginRateLimiter limiter = new LoginRateLimiter(1, 100, 10_000, Duration.ofMinutes(1), clock);
 
-        limiter.checkAllowed("1.2.3.4", null);
+        limiter.checkOrigin("1.2.3.4");
 
-        assertThatThrownBy(() -> limiter.checkAllowed("1.2.3.4", "someone@iwrite.local"))
+        assertThatThrownBy(() -> limiter.checkOrigin("1.2.3.4"))
                 .isInstanceOf(LoginRateLimitExceededException.class);
     }
 
@@ -90,7 +98,7 @@ class LoginRateLimiterTest {
 
         assertThatCode(() -> {
             for (int i = 0; i < 500; i++) {
-                limiter.checkAllowed("origin-" + i, "user-" + i + "@iwrite.local");
+                attemptAndFail(limiter, "origin-" + i, "user-" + i + "@iwrite.local");
             }
         }).doesNotThrowAnyException();
     }
@@ -107,6 +115,30 @@ class LoginRateLimiterTest {
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> new LoginRateLimiter(1, 1, 10, Duration.ofSeconds(-1), clock))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void loginsValidosRepetidosNaoBloqueiamAConta() {
+        LoginRateLimiter limiter = new LoginRateLimiter(100, 2, 10_000, Duration.ofMinutes(1), clock);
+
+        // A real owner logging in successfully, several times: checkAccountBudget alone (never
+        // followed by recordFailedAttempt) must never spend the account's budget.
+        for (int i = 0; i < 10; i++) {
+            limiter.checkOrigin("1.2.3.4");
+            assertThatCode(() -> limiter.checkAccountBudget("owner@iwrite.local")).doesNotThrowAnyException();
+        }
+    }
+
+    @Test
+    void contaJaEsgotadaERecusadaAntesDeAutenticar() {
+        LoginRateLimiter limiter = new LoginRateLimiter(100, 1, 10_000, Duration.ofMinutes(1), clock);
+
+        attemptAndFail(limiter, "1.2.3.4", "victim@iwrite.local");
+
+        // A distributed attack that already spent the account's budget through other origins must
+        // be refused before bcrypt runs again for this one — recordFailedAttempt is never reached.
+        assertThatThrownBy(() -> limiter.checkAccountBudget("victim@iwrite.local"))
+                .isInstanceOf(LoginRateLimitExceededException.class);
     }
 
     private static final class MutableClock extends Clock {

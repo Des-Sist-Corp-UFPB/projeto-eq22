@@ -14,9 +14,17 @@ import java.util.concurrent.ConcurrentHashMap;
  * Bounded, in-memory login throttling on two independent dimensions — the calling origin and the
  * targeted account — so a distributed attempt against one account and a concentrated attempt from
  * one source are both caught, and a busy shared origin (an office NAT, a proxy) cannot exhaust the
- * budget of every account behind it. Every call counts, success or failure: the goal is to bound
- * attempts, not just failures, the same policy {@link com.iwrite.mcp.McpSceneAnalysisLimiter}
- * already uses for scene analysis.
+ * budget of every account behind it.
+ *
+ * <p>The two dimensions count differently, on purpose. The origin budget ({@link #checkOrigin})
+ * counts every call, success or failure, and is spent before any password is checked: its job is
+ * to bound how much bcrypt one source can trigger, including from an attacker who never sends a
+ * real account. The account budget only counts failures ({@link #recordFailedAttempt}, called
+ * only from a catch block): a real owner logging in from several tabs or devices must never be
+ * throttled out of their own account by their own successful logins. What the account dimension
+ * still does before authenticating ({@link #checkAccountBudget}) is refuse an already-exhausted
+ * account outright, so a distributed attack that already tripped the account limit through other
+ * origins cannot keep spending bcrypt on this one either.
  *
  * <p>Refusing never says which dimension tripped, and {@link AuthMessages#TOO_MANY_LOGIN_ATTEMPTS}
  * is as silent about account existence as a wrong password. It is a fixed window, not a lockout: it
@@ -25,12 +33,9 @@ import java.util.concurrent.ConcurrentHashMap;
  * never locks it, and stopping the attempts is enough to let the real owner back in immediately at
  * the next window.
  *
- * <p>The origin is {@code request.getRemoteAddr()}, never a client-supplied header:
- * {@code X-Forwarded-For} is trivially spoofed by whoever sends the request, so trusting it here
- * would let an attacker pick a fresh "origin" on every attempt and defeat the whole dimension.
- * Behind a real reverse proxy, resolve the true peer with Spring's own
- * {@code server.forward-headers-strategy=framework} (from a trusted hop) — this class only ever
- * reads the value the servlet container already resolved.
+ * <p>The origin is whatever {@link ClientAddressResolver} resolves — the real per-browser address
+ * behind the frontend's proxy when it is a configured trusted peer, {@code remoteAddr} otherwise —
+ * never a client-supplied header taken on faith.
  */
 // ponytail: per-instance in-memory state, bounded by max-tracked-keys with fixed-window eviction.
 // A multi-instance deployment needs a shared store (e.g. Redis) or each instance only enforces its
@@ -82,35 +87,70 @@ public class LoginRateLimiter {
         this.clock = clock;
     }
 
-    /**
-     * Records one login attempt and throws once either dimension's budget for its current window
-     * is spent. {@code email} may be {@code null} (a malformed request still consumes the origin
-     * budget); a blank one is normalized away rather than tracked as a shared "" account key.
-     */
-    public void checkAllowed(String origin, String email) {
+    /** Spends one unit of the calling origin's budget for this window, success or failure alike. */
+    public void checkOrigin(String origin) {
         if (!tryIncrement(byOrigin, normalizedOrigin(origin), maxAttemptsPerOrigin)) {
-            throw new LoginRateLimitExceededException();
-        }
-        String account = normalizedAccount(email);
-        if (account != null && !tryIncrement(byAccount, account, maxAttemptsPerAccount)) {
             throw new LoginRateLimitExceededException();
         }
     }
 
+    /**
+     * Refuses an account that already spent its failure budget, without spending anything itself —
+     * a login that turns out to be valid must never count against the account it just authenticated.
+     */
+    public void checkAccountBudget(String email) {
+        String account = normalizedAccount(email);
+        if (account != null && !hasRemainingBudget(byAccount, account, maxAttemptsPerAccount)) {
+            throw new LoginRateLimitExceededException();
+        }
+    }
+
+    /** Spends one unit of the targeted account's budget. Call only after authentication failed. */
+    public void recordFailedAttempt(String email) {
+        String account = normalizedAccount(email);
+        if (account != null) {
+            increment(byAccount, account);
+        }
+    }
+
     private boolean tryIncrement(ConcurrentHashMap<String, Window> states, String key, int maxAttempts) {
-        long now = clock.millis();
-        prune(states, now);
-        Window state = states.computeIfAbsent(key, ignored -> new Window());
+        Window state = statesGet(states, key);
         synchronized (state) {
-            if (now - state.startMillis >= window.toMillis()) {
-                state.startMillis = now;
-                state.count = 0;
-            }
+            resetIfExpired(state);
             if (state.count >= maxAttempts) {
                 return false;
             }
             state.count++;
             return true;
+        }
+    }
+
+    private boolean hasRemainingBudget(ConcurrentHashMap<String, Window> states, String key, int maxAttempts) {
+        Window state = statesGet(states, key);
+        synchronized (state) {
+            resetIfExpired(state);
+            return state.count < maxAttempts;
+        }
+    }
+
+    private void increment(ConcurrentHashMap<String, Window> states, String key) {
+        Window state = statesGet(states, key);
+        synchronized (state) {
+            resetIfExpired(state);
+            state.count++;
+        }
+    }
+
+    private Window statesGet(ConcurrentHashMap<String, Window> states, String key) {
+        prune(states, clock.millis());
+        return states.computeIfAbsent(key, ignored -> new Window());
+    }
+
+    private void resetIfExpired(Window state) {
+        long now = clock.millis();
+        if (now - state.startMillis >= window.toMillis()) {
+            state.startMillis = now;
+            state.count = 0;
         }
     }
 
