@@ -95,6 +95,14 @@ iwrite:
       enabled: ${IWRITE_DEMO_SEED_ENABLED:false}
       autor-a-password: ${IWRITE_DEMO_AUTOR_A_PASSWORD:}
       autor-b-password: ${IWRITE_DEMO_AUTOR_B_PASSWORD:}
+  auth:
+    # Off by default. Sets the login credential for one existing user (never creates one); used to
+    # unlock the documented development workflow and to roll an existing installation forward past
+    # V30. No default email or password: unset all three again once the credential is provisioned.
+    credential-provisioning:
+      enabled: ${IWRITE_CREDENTIAL_PROVISIONING_ENABLED:false}
+      email: ${IWRITE_CREDENTIAL_PROVISIONING_EMAIL:}
+      password: ${IWRITE_CREDENTIAL_PROVISIONING_PASSWORD:}
   current-user:
     development:
       enabled: ${IWRITE_DEVELOPMENT_CURRENT_USER_ENABLED:false}

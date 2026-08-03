@@ -156,6 +156,37 @@ Nada de sessão em `localStorage` ou `sessionStorage`. A identidade vive no cook
 devolver como afirmação de identidade — mesmo que a requisição traga um, o servidor resolve tudo
 pela membership.
 
+## Provisionamento de credencial (rollout e desenvolvimento)
+
+`V30__create_user_credentials.sql` cria a tabela `user_credentials` vazia: nenhum usuário existente
+(incluindo o usuário legado determinístico da V20) ganha uma credencial automaticamente. Sem uma delas,
+`/api/auth/login` não tem o que verificar, e como não há cadastro público nem endpoint administrativo,
+uma instalação que já existia antes da V30 fica sem nenhuma conta capaz de autenticar.
+
+`CredentialProvisioningRunner` (`com.iwrite.auth`) resolve isso com um mecanismo único, usado tanto no
+rollout de uma instalação existente quanto no fluxo local de desenvolvimento:
+
+- desligado por padrão (`iwrite.auth.credential-provisioning.enabled`, `IWRITE_CREDENTIAL_PROVISIONING_ENABLED`);
+- exige email e senha do usuário (`IWRITE_CREDENTIAL_PROVISIONING_EMAIL`/`_PASSWORD`), sem padrão — falha
+  claramente no boot se o flag estiver ligado e faltar um dos dois;
+- só provisiona a senha de um usuário que **já existe**; falha claramente no boot se o email não
+  corresponder a nenhum `users.email` — nunca cria um usuário;
+- armazena somente o hash (`PasswordEncoder` já configurado, `{bcrypt}`); nunca loga o email, a senha
+  ou o hash;
+- idempotente: se o usuário já tem credencial, não sobrescreve e não falha;
+- não existe endpoint HTTP equivalente — é exclusivamente um `ApplicationRunner` de boot, então só
+  quem controla as variáveis de ambiente do processo pode disparar o provisionamento.
+
+Depois de provisionar, remova as três variáveis do ambiente: elas não têm efeito quando a credencial
+já existe (o runner é idempotente), mas deixar a senha configurada no processo não tem motivo.
+
+No fluxo local (perfil `development`), o alvo natural é o usuário legado da V20
+(`carlos.legacy@iwrite.local`, id `00000000-0000-0000-0000-000000000002`), que também é o id padrão de
+`IWRITE_DEVELOPMENT_CURRENT_USER_ID`. Depois de logar com a credencial provisionada, o
+`DevelopmentCurrentUserProvider` continua resolvendo o mesmo tenant/usuário fixo para as chamadas de
+negócio, independentemente de qual conta autenticou a sessão — só a barreira do Spring Security
+precisava de uma sessão real, a identidade de negócio em desenvolvimento já era fixa.
+
 ## Limitações desta fatia acadêmica
 
 - **Seleção de workspace adiada.** Usuários com mais de uma membership não conseguem entrar. O

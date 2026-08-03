@@ -64,11 +64,31 @@ Compile o backend no Windows:
 .\mvnw.cmd -s .mvn/local-settings.xml -DskipTests compile
 ```
 
-Execute o backend no Windows com o perfil de desenvolvimento, que habilita explicitamente a identidade temporária local:
+O perfil de desenvolvimento habilita a identidade temporária local (`DevelopmentCurrentUserProvider`)
+para resolução de tenant/usuário nos services, mas o Spring Security continua exigindo uma sessão
+autenticada em toda API — a identidade temporária não dispensa o login. Antes do primeiro uso,
+provisione a credencial do usuário legado determinístico (criado pela V20, id
+`00000000-0000-0000-0000-000000000002`, o mesmo da identidade temporária por padrão), com o backend
+já compilado e o banco no ar:
 
 ```powershell
+$env:IWRITE_CREDENTIAL_PROVISIONING_ENABLED = "true"
+$env:IWRITE_CREDENTIAL_PROVISIONING_EMAIL = "carlos.legacy@iwrite.local"
+$env:IWRITE_CREDENTIAL_PROVISIONING_PASSWORD = "<escolha uma senha local>"
 .\mvnw.cmd spring-boot:run -Dspring-boot.run.profiles=development
 ```
+
+O provisionamento roda uma vez no boot e é idempotente (não sobrescreve uma credencial já existente).
+Depois do primeiro boot, remova as três variáveis do ambiente — a senha não deve permanecer
+configurada — e reinicie normalmente:
+
+```powershell
+Remove-Item Env:\IWRITE_CREDENTIAL_PROVISIONING_ENABLED, Env:\IWRITE_CREDENTIAL_PROVISIONING_EMAIL, Env:\IWRITE_CREDENTIAL_PROVISIONING_PASSWORD
+.\mvnw.cmd spring-boot:run -Dspring-boot.run.profiles=development
+```
+
+Autentique com `POST /api/auth/login` usando o email e a senha provisionados; o cookie de sessão
+resultante já é suficiente para chamar qualquer API protegida.
 
 Compile o backend no Linux/macOS:
 
@@ -76,9 +96,16 @@ Compile o backend no Linux/macOS:
 ./mvnw -s .mvn/local-settings.xml -DskipTests compile
 ```
 
-Execute o backend no Linux/macOS com o perfil de desenvolvimento:
+Execute o backend no Linux/macOS com o perfil de desenvolvimento (mesmo provisionamento acima, com
+sintaxe de shell):
 
 ```bash
+IWRITE_CREDENTIAL_PROVISIONING_ENABLED=true \
+IWRITE_CREDENTIAL_PROVISIONING_EMAIL=carlos.legacy@iwrite.local \
+IWRITE_CREDENTIAL_PROVISIONING_PASSWORD='<escolha uma senha local>' \
+./mvnw spring-boot:run -Dspring-boot.run.profiles=development
+
+# Depois do primeiro boot, sem as três variáveis:
 ./mvnw spring-boot:run -Dspring-boot.run.profiles=development
 ```
 
@@ -101,6 +128,7 @@ Banco e runtime:
 - `NEXT_PUBLIC_API_URL`: URL pública da API para o frontend.
 - `IWRITE_DEVELOPMENT_CURRENT_USER_ENABLED`: habilita somente a identidade temporária de desenvolvimento.
 - `IWRITE_DEVELOPMENT_CURRENT_USER_ID`, `IWRITE_DEVELOPMENT_TENANT_ID`, `IWRITE_DEVELOPMENT_TIME_ZONE_ID`: identidade temporária local.
+- `IWRITE_CREDENTIAL_PROVISIONING_ENABLED`, `IWRITE_CREDENTIAL_PROVISIONING_EMAIL`, `IWRITE_CREDENTIAL_PROVISIONING_PASSWORD`: provisiona a credencial de login de um usuário já existente (nunca cria um usuário); sem padrão de senha, remova as três depois de usar. Ver [docs/authentication-multitenancy.md](docs/authentication-multitenancy.md).
 
 Observabilidade (opcional):
 
