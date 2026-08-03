@@ -29,17 +29,24 @@ import java.util.regex.Pattern;
  * class changes business behaviour — every telemetry failure is swallowed, and
  * a rejected attribute is dropped rather than reported.
  *
- * <p>Privacy contract: only the keys in {@link #ALLOWED_KEYS} can be written.
- * Every key with a fixed set of legitimate values — operation, result, scene
- * source, size bucket, AI provider, AI model family — is validated against a
- * small closed vocabulary in {@link #CLOSED_VOCABULARIES}: a value outside
- * that vocabulary is dropped, never forwarded as-is. This is what stops a
- * misconfigured value (e.g. a credential placed in {@code OPENAI_MODEL}) from
- * being exported; {@link #modelFamily(String)} in particular never lets the
- * raw model string reach a span. The one remaining open-ended string
- * attribute, {@code iwrite.error.type}, only ever receives an exception's
- * simple class name, so it keeps the shape filter in {@link #isControlled}
- * instead, with a credential-prefix rejection as an extra layer.
+ * <p>{@code iwrite.operation} and {@code iwrite.result} are never writable
+ * through the public {@link Operation#attribute(AttributeKey, String)} API:
+ * they are absent from {@link #ATTRIBUTE_KEYS} and set only internally, by
+ * the {@link Operation} constructor and by {@link Operation#result},
+ * {@link Operation#failure} and {@link Operation#close()} respectively.
+ *
+ * <p>Privacy contract for every other attribute: only the keys in
+ * {@link #ATTRIBUTE_KEYS} can be written. Every key with a fixed set of
+ * legitimate values — scene source, size bucket, AI provider, AI model
+ * family — is validated against a small closed vocabulary in
+ * {@link #CLOSED_VOCABULARIES}: a value outside that vocabulary is dropped,
+ * never forwarded as-is. This is what stops a misconfigured value (e.g. a
+ * credential placed in {@code OPENAI_MODEL}) from being exported;
+ * {@link #modelFamily(String)} in particular never lets the raw model string
+ * reach a span. The one remaining open-ended string attribute,
+ * {@code iwrite.error.type}, only ever receives an exception's simple class
+ * name, so it keeps the shape filter in {@link #isControlled} instead, with
+ * a credential-prefix rejection as an extra layer.
  *
  * <p>Duration unit: milliseconds, recorded from {@link System#nanoTime()}.
  */
@@ -111,9 +118,15 @@ public class BusinessTelemetry {
     private static final AttributeKey<String> METRIC_OPERATION = AttributeKey.stringKey("operation");
     private static final AttributeKey<String> METRIC_RESULT = AttributeKey.stringKey("result");
 
-    private static final Set<AttributeKey<?>> ALLOWED_KEYS = Set.of(
-            OPERATION,
-            RESULT,
+    /**
+     * Keys the public {@link Operation#attribute(AttributeKey, String)} /
+     * {@link Operation#attribute(AttributeKey, boolean)} API accepts.
+     * {@link #OPERATION} and {@link #RESULT} are deliberately absent: they
+     * are controlled attributes set only internally (constructor, {@link
+     * Operation#result}, {@link Operation#failure} and {@link
+     * Operation#close()}), never through the generic attribute API.
+     */
+    private static final Set<AttributeKey<?>> ATTRIBUTE_KEYS = Set.of(
             ERROR_TYPE,
             SCENE_SOURCE,
             SCENE_CONTENT_SIZE_BUCKET,
@@ -260,7 +273,7 @@ public class BusinessTelemetry {
     }
 
     private static boolean isAllowedValue(AttributeKey<String> key, String value) {
-        if (value == null || !ALLOWED_KEYS.contains(key)) {
+        if (value == null || !ATTRIBUTE_KEYS.contains(key)) {
             return false;
         }
         Set<String> vocabulary = CLOSED_VOCABULARIES.get(key);
@@ -306,7 +319,7 @@ public class BusinessTelemetry {
         }
 
         public Operation attribute(AttributeKey<Boolean> key, boolean value) {
-            if (!ended && ALLOWED_KEYS.contains(key)) {
+            if (!ended && ATTRIBUTE_KEYS.contains(key)) {
                 setSafely(key, value);
             }
             return this;

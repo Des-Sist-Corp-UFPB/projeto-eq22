@@ -138,6 +138,29 @@ class BusinessTelemetryTest {
     }
 
     @Test
+    void theGenericAttributeApiCanNeverOverwriteOperationOrResult() {
+        String canary = "sk-test-canary";
+        try (BusinessTelemetry.Operation operation = recording.telemetry().sceneContentSave()) {
+            operation.attribute(BusinessTelemetry.OPERATION, canary);
+            operation.attribute(BusinessTelemetry.RESULT, canary);
+        }
+
+        SpanData span = recording.span(BusinessTelemetry.SPAN_SCENE_CONTENT_SAVE);
+        assertThat(span.getAttributes().get(BusinessTelemetry.OPERATION))
+                .isEqualTo(BusinessTelemetry.OPERATION_SCENE_CONTENT_SAVE);
+        assertThat(span.getAttributes().get(BusinessTelemetry.RESULT))
+                .isEqualTo(BusinessTelemetry.RESULT_SUCCESS);
+        assertThat(span.getAttributes().asMap().values().stream().map(String::valueOf))
+                .noneMatch(value -> value.contains(canary));
+        assertThat(recording.counterValue(
+                BusinessTelemetry.OPERATION_SCENE_CONTENT_SAVE,
+                BusinessTelemetry.RESULT_SUCCESS)).isEqualTo(1);
+        assertThat(recording.labels(BusinessTelemetry.METRIC_OPERATION_COUNT))
+                .allSatisfy(labels -> assertThat(labels.asMap().values().stream().map(String::valueOf))
+                        .noneMatch(value -> value.contains(canary)));
+    }
+
+    @Test
     void normalizesResultsOutsideTheOperationVocabularyToFailure() {
         try (BusinessTelemetry.Operation operation = recording.telemetry().sceneContentSave()) {
             // valid for scene_analysis, not for scene_content_save
@@ -283,7 +306,9 @@ class BusinessTelemetryTest {
                         .attribute(BusinessTelemetry.SCENE_SOURCE, canary)
                         .attribute(BusinessTelemetry.SCENE_CONTENT_SIZE_BUCKET, canary)
                         .attribute(BusinessTelemetry.AI_INPUT_SIZE_BUCKET, canary)
-                        .attribute(BusinessTelemetry.ERROR_TYPE, canary);
+                        .attribute(BusinessTelemetry.ERROR_TYPE, canary)
+                        .attribute(BusinessTelemetry.OPERATION, canary)
+                        .attribute(BusinessTelemetry.RESULT, canary);
             }
 
             List<String> exportedValues = recording.span(BusinessTelemetry.SPAN_SCENE_ANALYSIS)
