@@ -12,8 +12,16 @@ WORKDIR /app
 # next build serialises the rewrites into .next/routes-manifest.json, and `next start` reads that
 # manifest rather than re-running next.config.ts. So the backend origin has to be known here at
 # build time - supplying it only at runtime leaves the image pinned to the local fallback.
-ARG BACKEND_ORIGIN=http://127.0.0.1:8085
+#
+# Neither ARG has a default: an unset build-arg becomes an empty ENV value, and next.config.ts's
+# resolveBackendOrigin() already treats an empty string as absent, falling through to
+# NEXT_PUBLIC_API_URL and then to its own local fallback. Giving BACKEND_ORIGIN a non-empty default
+# here would short-circuit that fallback chain before next.config.ts ever saw it, permanently
+# breaking existing deployments that only ever set the legacy NEXT_PUBLIC_API_URL.
+ARG BACKEND_ORIGIN
+ARG NEXT_PUBLIC_API_URL
 ENV BACKEND_ORIGIN=$BACKEND_ORIGIN
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
