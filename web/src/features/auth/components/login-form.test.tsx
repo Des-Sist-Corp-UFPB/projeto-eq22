@@ -130,6 +130,33 @@ describe("LoginForm", () => {
     );
   });
 
+  test("limite de tentativas (429) orienta a aguardar, não mensagem arbitrária do backend", async () => {
+    authApi.login.mockRejectedValue(new ApiError("origin bucket exhausted for 10.0.0.7", 429));
+
+    renderWithClient(<LoginForm />);
+    fillCredentials();
+    submit();
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Muitas tentativas de login. Aguarde um momento e tente novamente.");
+    // The fixed frontend string is shown, never whatever the backend actually sent.
+    expect(alert.textContent).not.toContain("origin bucket");
+    expect(alert.textContent).not.toContain("10.0.0.7");
+    expect(navigation.replace).not.toHaveBeenCalled();
+  });
+
+  test("erro 500 é reportado como indisponibilidade, não como limite de tentativas", async () => {
+    authApi.login.mockRejectedValue(new ApiError("stack trace interno", 500));
+
+    renderWithClient(<LoginForm />);
+    fillCredentials();
+    submit();
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Não conseguimos acessar o IWrite agora. Tente novamente em instantes.");
+    expect(alert.textContent).not.toContain("stack trace");
+  });
+
   test("anuncia sessão expirada quando chega redirecionado por expiração", () => {
     renderWithClient(<LoginForm expired />);
 

@@ -10,6 +10,10 @@ import { ApiError } from "@/lib/api/client";
 export const INVALID_CREDENTIALS_MESSAGE = "Não foi possível entrar. Confira seus dados e tente novamente.";
 export const BACKEND_UNAVAILABLE_MESSAGE = "Não conseguimos acessar o IWrite agora. Tente novamente em instantes.";
 export const SESSION_EXPIRED_MESSAGE = "Sua sessão expirou. Entre novamente para continuar.";
+// Matches AuthMessages.TOO_MANY_LOGIN_ATTEMPTS on the backend — a frontend constant instead of the
+// response body itself, so this stays as silent on which limit tripped as every other rejection
+// here, independent of what the backend happens to send for any other status.
+export const RATE_LIMITED_MESSAGE = "Muitas tentativas de login. Aguarde um momento e tente novamente.";
 
 export function LoginForm({ expired = false }: { expired?: boolean }) {
   const login = useLogin();
@@ -106,14 +110,24 @@ function validate(email: string, password: string) {
 
 /**
  * Every rejected credential collapses to one message, matching the backend: distinguishing an
- * unknown email from a wrong password would let anyone test whether an account exists. Anything
- * that is not a rejection is reported as the service being unreachable.
+ * unknown email from a wrong password would let anyone test whether an account exists. A 429 gets
+ * its own actionable message instead of falling into "service unavailable", which would just
+ * encourage retrying into the same limit. Every other status — 5xx, a network failure, anything
+ * else — is reported as the service being unreachable; the backend's own message text is never
+ * shown here for any status, only these fixed, audited strings.
  */
 function failureMessage(error: unknown) {
   if (!error) {
     return null;
   }
-  return error instanceof ApiError && error.status === 401
-    ? INVALID_CREDENTIALS_MESSAGE
-    : BACKEND_UNAVAILABLE_MESSAGE;
+  if (!(error instanceof ApiError)) {
+    return BACKEND_UNAVAILABLE_MESSAGE;
+  }
+  if (error.status === 401) {
+    return INVALID_CREDENTIALS_MESSAGE;
+  }
+  if (error.status === 429) {
+    return RATE_LIMITED_MESSAGE;
+  }
+  return BACKEND_UNAVAILABLE_MESSAGE;
 }
