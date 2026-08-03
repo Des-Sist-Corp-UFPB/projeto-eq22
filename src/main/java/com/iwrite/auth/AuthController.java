@@ -4,7 +4,6 @@ import com.iwrite.auth.dto.AuthenticatedUserResponse;
 import com.iwrite.auth.dto.LoginRequest;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
-import jakarta.servlet.http.HttpSession;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.BadCredentialsException;
@@ -80,36 +79,25 @@ public class AuthController {
         SecurityContextHolder.setContext(context);
         securityContextRepository.saveContext(context, httpRequest, httpResponse);
 
-        return currentSession((IWriteUserDetails) authentication.getPrincipal(), httpRequest);
+        return currentSession((IWriteUserDetails) authentication.getPrincipal());
     }
 
     @GetMapping("/me")
-    public AuthenticatedUserResponse me(
-            @AuthenticationPrincipal IWriteUserDetails principal,
-            HttpServletRequest httpRequest
-    ) {
-        return currentSession(principal, httpRequest);
+    public AuthenticatedUserResponse me(@AuthenticationPrincipal IWriteUserDetails principal) {
+        return currentSession(principal);
     }
 
     /**
      * Resolves the session payload straight from the database. The session is never allowed to
-     * answer from its own frozen copy: if the membership disappeared, the session is destroyed and
-     * the caller has to authenticate again.
+     * answer from its own frozen copy: if the membership disappeared, {@link GlobalExceptionHandler}
+     * destroys the session when it catches the {@link SessionAuthenticationException} thrown here,
+     * so the caller has to authenticate again.
      */
-    private AuthenticatedUserResponse currentSession(IWriteUserDetails principal, HttpServletRequest httpRequest) {
+    private AuthenticatedUserResponse currentSession(IWriteUserDetails principal) {
         Optional<AuthenticatedUserResponse> session = authSessionService.revalidate(principal);
         if (session.isEmpty()) {
-            invalidateSession(httpRequest);
             throw new SessionAuthenticationException("Membership backing this session is no longer valid");
         }
         return session.get();
-    }
-
-    private void invalidateSession(HttpServletRequest httpRequest) {
-        HttpSession session = httpRequest.getSession(false);
-        if (session != null) {
-            session.invalidate();
-        }
-        SecurityContextHolder.clearContext();
     }
 }

@@ -301,6 +301,36 @@ class AuthenticatedTenantResolutionIntegrationTest {
         mockMvc.perform(get("/api/books").session(author)).andExpect(status().isOk());
     }
 
+    // Revocation destroys the HttpSession, not just the authorization decision: recreating the same
+    // membership must not silently reauthorize the old cookie, because the old session no longer
+    // exists to reauthorize. A fresh login is the only way back in.
+    @Test
+    void recreatingTheMembershipDoesNotReviveTheOldSessionAfterRevocation() throws Exception {
+        String revokedEmail = "revogado-recriado-" + UUID.randomUUID() + "@iwrite.local";
+        UUID revokedUserId = createUser(revokedEmail, "Membro Revogado e Recriado");
+        addMembership(revokedUserId, tenantAId);
+
+        MockHttpSession session = login(revokedEmail);
+        mockMvc.perform(get("/api/books").session(session)).andExpect(status().isOk());
+
+        membershipRepository.deleteAll(membershipRepository.findByUser_Id(revokedUserId));
+        entityManager.flush();
+
+        mockMvc.perform(get("/api/books").session(session))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.messages[0]").value(AuthMessages.SESSION_EXPIRED));
+
+        // Same user, same tenant, a brand new membership row — and the old cookie still gets 401,
+        // because the session behind it was destroyed, not merely refused.
+        addMembership(revokedUserId, tenantAId);
+
+        mockMvc.perform(get("/api/books").session(session))
+                .andExpect(status().isUnauthorized());
+
+        MockHttpSession freshSession = login(revokedEmail);
+        mockMvc.perform(get("/api/books").session(freshSession)).andExpect(status().isOk());
+    }
+
     // 14 — after logout the same session resolves nothing at all.
     @Test
     void logoutStopsCurrentUserAndTenantResolution() throws Exception {

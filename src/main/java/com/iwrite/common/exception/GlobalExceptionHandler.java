@@ -2,11 +2,14 @@ package com.iwrite.common.exception;
 
 import com.iwrite.auth.AuthMessages;
 import com.iwrite.llm.gateway.LlmExecutionException;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpSession;
 import jakarta.validation.ConstraintViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.security.core.AuthenticationException;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.web.authentication.session.SessionAuthenticationException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -58,9 +61,21 @@ public class GlobalExceptionHandler {
      * A session whose backing user, tenant or membership no longer resolves. Reported separately
      * from a failed login so the client can tell "log in again" from "those credentials are wrong",
      * without either message revealing whether an account exists.
+     *
+     * <p>Applies regardless of which endpoint first notices the revoked membership: the old
+     * {@code JSESSIONID} is invalidated and the security context cleared here, not only on
+     * {@code /api/auth/me}. Otherwise a session revoked on a tenant-scoped endpoint like
+     * {@code /api/books} would keep answering 401 without ever being destroyed, and recreating the
+     * same membership would silently re-authorize the old cookie without a new login.
      */
     @ExceptionHandler(SessionAuthenticationException.class)
-    public ResponseEntity<ApiErrorResponse> handleInvalidSession(SessionAuthenticationException exception) {
+    public ResponseEntity<ApiErrorResponse> handleInvalidSession(
+            SessionAuthenticationException exception, HttpServletRequest request) {
+        HttpSession session = request.getSession(false);
+        if (session != null) {
+            session.invalidate();
+        }
+        SecurityContextHolder.clearContext();
         return buildResponse(HttpStatus.UNAUTHORIZED, List.of(AuthMessages.SESSION_EXPIRED));
     }
 
