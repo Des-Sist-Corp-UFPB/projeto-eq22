@@ -3,10 +3,14 @@ package com.iwrite.observability;
 import io.opentelemetry.api.OpenTelemetry;
 import io.opentelemetry.api.common.AttributeKey;
 import io.opentelemetry.api.common.Attributes;
+import io.opentelemetry.api.metrics.MeterProvider;
 import io.opentelemetry.api.trace.Span;
+import io.opentelemetry.api.trace.SpanBuilder;
 import io.opentelemetry.api.trace.StatusCode;
 import io.opentelemetry.api.trace.Tracer;
+import io.opentelemetry.api.trace.TracerProvider;
 import io.opentelemetry.context.Scope;
+import io.opentelemetry.context.propagation.ContextPropagators;
 import io.opentelemetry.sdk.trace.data.SpanData;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -21,7 +25,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.CALLS_REAL_METHODS;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 class BusinessTelemetryTest {
 
@@ -377,7 +386,7 @@ class BusinessTelemetryTest {
         try {
             BusinessTelemetry.Operation operation = recording.telemetry().sceneContentSave();
 
-            assertThat(operation.deferCloseToTransaction()).isTrue();
+            assertThat(operation.deferEndToTransaction()).isTrue();
             assertThat(recording.spans()).isEmpty();
 
             completeTransaction(TransactionSynchronization.STATUS_COMMITTED);
@@ -395,7 +404,7 @@ class BusinessTelemetryTest {
         TransactionSynchronizationManager.initSynchronization();
         try {
             BusinessTelemetry.Operation operation = recording.telemetry().sceneContentSave();
-            assertThat(operation.deferCloseToTransaction()).isTrue();
+            assertThat(operation.deferEndToTransaction()).isTrue();
             // no result() call: the body returned normally, which defaults to success.
 
             completeTransaction(TransactionSynchronization.STATUS_ROLLED_BACK);
@@ -416,7 +425,7 @@ class BusinessTelemetryTest {
             TransactionSynchronizationManager.initSynchronization();
             try {
                 BusinessTelemetry.Operation operation = recording.telemetry().sceneContentSave();
-                assertThat(operation.deferCloseToTransaction()).isTrue();
+                assertThat(operation.deferEndToTransaction()).isTrue();
                 operation.result(preRollbackResult);
 
                 completeTransaction(TransactionSynchronization.STATUS_ROLLED_BACK);
@@ -436,7 +445,7 @@ class BusinessTelemetryTest {
         TransactionSynchronizationManager.initSynchronization();
         try {
             BusinessTelemetry.Operation operation = recording.telemetry().sceneContentSave();
-            assertThat(operation.deferCloseToTransaction()).isTrue();
+            assertThat(operation.deferEndToTransaction()).isTrue();
             operation.failure(BusinessTelemetry.RESULT_CONFLICT, new IllegalStateException("stale revision"));
 
             completeTransaction(TransactionSynchronization.STATUS_ROLLED_BACK);
@@ -454,7 +463,7 @@ class BusinessTelemetryTest {
         TransactionSynchronizationManager.initSynchronization();
         try {
             BusinessTelemetry.Operation operation = recording.telemetry().sceneContentSave();
-            assertThat(operation.deferCloseToTransaction()).isTrue();
+            assertThat(operation.deferEndToTransaction()).isTrue();
 
             completeTransaction(TransactionSynchronization.STATUS_UNKNOWN);
         } finally {
@@ -471,7 +480,7 @@ class BusinessTelemetryTest {
         assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
 
         BusinessTelemetry.Operation operation = recording.telemetry().sceneContentSave();
-        assertThat(operation.deferCloseToTransaction()).isFalse();
+        assertThat(operation.deferEndToTransaction()).isFalse();
         assertThat(recording.spans()).isEmpty();
 
         operation.close();
@@ -486,7 +495,7 @@ class BusinessTelemetryTest {
         BusinessTelemetry.Operation operation = recording.telemetry().sceneContentSave();
         TransactionSynchronizationManager.initSynchronization();
         try {
-            operation.deferCloseToTransaction();
+            operation.deferEndToTransaction();
             completeTransaction(TransactionSynchronization.STATUS_COMMITTED);
         } finally {
             TransactionSynchronizationManager.clearSynchronization();
@@ -502,22 +511,161 @@ class BusinessTelemetryTest {
     }
 
     @Test
-    void aFailureRegisteringTheTransactionCallbackFallsBackWithoutBreakingTheOperation() {
-        BusinessTelemetry.Operation operation = recording.telemetry().sceneContentSave();
+    void aFailureRegisteringTheTransactionCallbackFallsBackWithoutBreakingTheOperationOrLeakingTheScope() {
+        Tracer tracer = recording.sdk().getTracer("test-http");
+        Span parent = tracer.spanBuilder("PATCH /api/scenes/{sceneId}/content").startSpan();
         boolean deferred;
-        try (MockedStatic<TransactionSynchronizationManager> mocked =
-                     mockStatic(TransactionSynchronizationManager.class, CALLS_REAL_METHODS)) {
-            mocked.when(TransactionSynchronizationManager::isSynchronizationActive).thenReturn(true);
-            mocked.when(() -> TransactionSynchronizationManager.registerSynchronization(any()))
-                    .thenThrow(new IllegalStateException("telemetry infrastructure failure"));
+        try (Scope ignored = parent.makeCurrent()) {
+            BusinessTelemetry.Operation operation = recording.telemetry().sceneContentSave();
+            try (MockedStatic<TransactionSynchronizationManager> mocked =
+                         mockStatic(TransactionSynchronizationManager.class, CALLS_REAL_METHODS)) {
+                mocked.when(TransactionSynchronizationManager::isSynchronizationActive).thenReturn(true);
+                mocked.when(() -> TransactionSynchronizationManager.registerSynchronization(any()))
+                        .thenThrow(new IllegalStateException("telemetry infrastructure failure"));
 
-            deferred = operation.deferCloseToTransaction();
+                deferred = operation.deferEndToTransaction();
+            }
+            operation.detachScope();
+            if (!deferred) {
+                operation.close();
+            }
+
+            assertThat(Span.current().getSpanContext().getSpanId())
+                    .as("a failed deferral must still leave the scope detached, not leaked")
+                    .isEqualTo(parent.getSpanContext().getSpanId());
+        } finally {
+            parent.end();
         }
-        operation.close();
 
         assertThat(deferred).isFalse();
         SpanData span = recording.span(BusinessTelemetry.SPAN_SCENE_CONTENT_SAVE);
         assertThat(span.getAttributes().get(BusinessTelemetry.RESULT)).isEqualTo(BusinessTelemetry.RESULT_SUCCESS);
+    }
+
+    @Test
+    void detachScopeRestoresContextWithoutEndingTheSpanAndIsIdempotent() {
+        Tracer tracer = recording.sdk().getTracer("test-http");
+        Span parent = tracer.spanBuilder("PATCH /api/scenes/{sceneId}/content").startSpan();
+        try (Scope ignored = parent.makeCurrent()) {
+            BusinessTelemetry.Operation operation = recording.telemetry().sceneContentSave();
+
+            operation.detachScope();
+            assertThat(Span.current().getSpanContext().getSpanId()).isEqualTo(parent.getSpanContext().getSpanId());
+            assertThat(recording.spans()).as("detachScope must not end the span").isEmpty();
+
+            assertThatCode(operation::detachScope).doesNotThrowAnyException();
+            assertThat(recording.spans()).isEmpty();
+
+            operation.close();
+            assertThat(recording.spans()).hasSize(1);
+
+            assertThatCode(operation::close).doesNotThrowAnyException();
+            assertThatCode(operation::detachScope).doesNotThrowAnyException();
+            assertThat(recording.spans()).hasSize(1);
+            assertThat(recording.counterValue(
+                    BusinessTelemetry.OPERATION_SCENE_CONTENT_SAVE,
+                    BusinessTelemetry.RESULT_SUCCESS)).isEqualTo(1);
+        } finally {
+            parent.end();
+        }
+    }
+
+    /**
+     * Two sequential deferred saves under the same external transaction and
+     * parent span: each detaches its own scope right after its body runs,
+     * so both end up siblings of the parent, never nested in each other, and
+     * running their afterCompletion callbacks in registration order never
+     * disturbs {@link Span#current()}.
+     */
+    @Test
+    void deferredCompletionCallbacksNeverCorruptSpanCurrentForSequentialSaves() {
+        Tracer tracer = recording.sdk().getTracer("test-http");
+        Span parent = tracer.spanBuilder("PATCH /api/scenes/{sceneId}/content").startSpan();
+        TransactionSynchronizationManager.initSynchronization();
+        try (Scope ignored = parent.makeCurrent()) {
+            BusinessTelemetry.Operation first = recording.telemetry().sceneContentSave();
+            assertThat(first.deferEndToTransaction()).isTrue();
+            first.detachScope();
+            assertThat(Span.current().getSpanContext().getSpanId()).isEqualTo(parent.getSpanContext().getSpanId());
+
+            BusinessTelemetry.Operation second = recording.telemetry().sceneContentSave();
+            assertThat(second.deferEndToTransaction()).isTrue();
+            second.detachScope();
+            assertThat(Span.current().getSpanContext().getSpanId()).isEqualTo(parent.getSpanContext().getSpanId());
+
+            assertThat(recording.spans())
+                    .as("neither save span may be exported/ended before the transaction completes")
+                    .isEmpty();
+
+            completeTransaction(TransactionSynchronization.STATUS_COMMITTED);
+
+            assertThat(Span.current().getSpanContext().getSpanId())
+                    .as("running registered afterCompletion callbacks must not change what's current")
+                    .isEqualTo(parent.getSpanContext().getSpanId());
+        } finally {
+            TransactionSynchronizationManager.clearSynchronization();
+            parent.end();
+        }
+
+        List<SpanData> saveSpans = recording.spans().stream()
+                .filter(span -> span.getName().equals(BusinessTelemetry.SPAN_SCENE_CONTENT_SAVE))
+                .toList();
+        assertThat(saveSpans).hasSize(2);
+        assertThat(saveSpans).allMatch(span -> span.getParentSpanId().equals(parent.getSpanContext().getSpanId()));
+        assertThat(saveSpans.get(0).getSpanId()).isNotEqualTo(saveSpans.get(1).getParentSpanId());
+        assertThat(saveSpans.get(1).getSpanId()).isNotEqualTo(saveSpans.get(0).getParentSpanId());
+    }
+
+    /**
+     * The internal {@link Scope} is swapped for one whose {@code close()}
+     * restores context correctly but then throws, simulating a misbehaving
+     * agent. {@link BusinessTelemetry.Operation#detachScope()} must swallow
+     * that failure, stay idempotent, and let {@code close()} still end the
+     * span and record metrics exactly once.
+     */
+    @Test
+    void aFailureClosingTheScopeNeverBreaksTheBusinessOperation() {
+        Span mockSpan = mock(Span.class);
+        when(mockSpan.setAttribute(any(AttributeKey.class), any())).thenReturn(mockSpan);
+        Scope throwingScope = mock(Scope.class);
+        doThrow(new IllegalStateException("scope close failed")).when(throwingScope).close();
+        when(mockSpan.makeCurrent()).thenReturn(throwingScope);
+
+        SpanBuilder mockSpanBuilder = mock(SpanBuilder.class);
+        when(mockSpanBuilder.startSpan()).thenReturn(mockSpan);
+        Tracer mockTracer = spanName -> mockSpanBuilder;
+
+        OpenTelemetry mixed = new OpenTelemetry() {
+            @Override
+            public TracerProvider getTracerProvider() {
+                return TracerProvider.noop();
+            }
+
+            @Override
+            public Tracer getTracer(String instrumentationScopeName) {
+                return mockTracer;
+            }
+
+            @Override
+            public MeterProvider getMeterProvider() {
+                return recording.sdk().getMeterProvider();
+            }
+
+            @Override
+            public ContextPropagators getPropagators() {
+                return recording.sdk().getPropagators();
+            }
+        };
+
+        BusinessTelemetry telemetry = new BusinessTelemetry(mixed);
+        BusinessTelemetry.Operation operation = telemetry.sceneContentSave();
+
+        assertThatCode(operation::detachScope).doesNotThrowAnyException();
+        assertThatCode(operation::detachScope).doesNotThrowAnyException();
+        assertThatCode(operation::close).doesNotThrowAnyException();
+
+        verify(throwingScope, times(1)).close();
+        verify(mockSpan, times(1)).end();
     }
 
     private static void completeTransaction(int status) {

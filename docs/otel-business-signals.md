@@ -45,17 +45,24 @@ try (BusinessTelemetry.Operation telemetry = businessTelemetry.sceneAnalysis()) 
 
 A `Operation` torna o span **corrente** enquanto está aberta, então spans automáticos gerados dentro dela (JDBC, HTTP client) ficam aninhados sob o span de negócio, que por sua vez é filho do span HTTP do agente.
 
-### Ciclo de vida do span em `updateContent`: acompanha a transação, não o retorno do método
+### Ciclo de vida em `updateContent`: o `Scope` acompanha o método, o span acompanha a transação
 
-`SceneAnalysisService.analyze` não é `@Transactional`, então `try`-with-resources fecha a `Operation` no retorno do método sem perda: não há commit pendente depois dele.
+`Operation` separa dois ciclos de vida independentes, com durações deliberadamente diferentes:
 
-`SceneService.updateContent` **é** `@Transactional`. O proxy do Spring inicia a transação antes de chamar o método e só faz `flush`/commit **depois** que ele retorna. Fechar a `Operation` com `try`-with-resources nesse caso classificaria o span como `success` antes de o commit acontecer — uma falha exclusiva do flush/commit apareceria para o cliente como erro HTTP enquanto o span e a métrica de negócio já teriam sido gravados como sucesso.
+```text
+Scope corrente: somente durante o corpo do método.
+Span aberto: até afterCompletion.
+```
 
-Por isso `updateContent` não usa `try`-with-resources. Em vez disso:
+O `Scope` (o que torna o span **corrente**, e portanto pai de spans automáticos como JDBC) só faz sentido pela duração léxica do método Java: ele precisa estar fechado assim que o método retorna, senão trabalho não relacionado gerado depois — em outra chamada, em outro span de negócio — apareceria incorretamente aninhado sob o salvamento. O **span em si** (e o resultado gravado nele) só pode ser dado como definitivo depois que a transação realmente termina: fechá-lo no retorno do método classificaria como `success` uma operação cujo commit ainda pode falhar.
+
+`SceneAnalysisService.analyze` não é `@Transactional`: `try`-with-resources fecha os dois — `Scope` e span — juntos no retorno do método, sem perda, porque não há commit pendente depois dele.
+
+`SceneService.updateContent` **é** `@Transactional`. O proxy do Spring inicia a transação antes de chamar o método e só faz `flush`/commit **depois** que ele retorna, então o span (e a classificação de resultado) precisam esperar por isso. O `Scope`, no entanto, não precisa — e não deve — esperar: ele é sempre destacado no `finally`, imediatamente no retorno do método, esteja o span terminando agora ou só na conclusão transacional.
 
 ```java
 BusinessTelemetry.Operation telemetry = businessTelemetry.sceneContentSave();
-boolean closesWithTransaction = telemetry.deferCloseToTransaction();
+boolean endsWithTransaction = telemetry.deferEndToTransaction();
 try {
     return updateContent(sceneId, request, telemetry);
 } catch (ConflictException conflict) {
@@ -65,15 +72,18 @@ try {
     telemetry.failure(BusinessTelemetry.RESULT_FAILURE, failure);
     throw failure;
 } finally {
-    if (!closesWithTransaction) {
+    telemetry.detachScope();
+    if (!endsWithTransaction) {
         telemetry.close();
     }
 }
 ```
 
-`Operation.deferCloseToTransaction()` registra um `TransactionSynchronization` via `TransactionSynchronizationManager` quando há sincronização transacional ativa, e devolve `true`. Nesse caso o método **não fecha o span ao retornar**: o `afterCompletion` do callback é quem fecha, depois que o proxy já fez `flush` e commit (ou rollback) — a duração do span passa a incluir esse tempo. Quando não há transação ativa (ou o registro falha), `deferCloseToTransaction()` devolve `false` e o `finally` fecha a `Operation` imediatamente, exatamente como antes.
+`Operation.deferEndToTransaction()` registra um `TransactionSynchronization` via `TransactionSynchronizationManager` quando há sincronização transacional ativa, e devolve `true`. Nesse caso o método **não termina o span ao retornar**: o `afterCompletion` do callback é quem termina, depois que o proxy já fez `flush` e commit (ou rollback) — a duração do span passa a incluir esse tempo. Quando não há transação ativa (ou o registro falha), `deferEndToTransaction()` devolve `false` e o `finally` chama `close()` (que destaca o `Scope` — de novo, idempotente — e termina o span) imediatamente, exatamente como antes.
 
-Como o `afterCompletion` roda no mesmo thread, antes de o proxy devolver o controle ao chamador, o `Scope` é sempre fechado exatamente uma vez, no lugar certo — nunca vaza para fora da requisição.
+`detachScope()` é público e idempotente: restaura só o contexto anterior, fecha o `Scope` exatamente uma vez, nunca termina o span nem grava métricas, e engole qualquer falha de telemetria. `close()` continua sendo a operação completa para o fluxo não transacional: `detachScope()` seguido da finalização interna (`finish()`, privada) que calcula a duração, grava `iwrite.result`, o counter e o histograma, e termina o span — sem depender de o `Scope` ainda estar corrente, e sem jamais tentar fechar um `Scope` que foi aberto em outro momento ou thread. O callback de `afterCompletion` chama só essa finalização interna: ele nunca mantém nem tenta restaurar o `Scope` do corpo do método, que a essa altura já foi destacado.
+
+Como consequência, dois salvamentos sequenciais na mesma transação externa nunca ficam aninhados um no outro: cada um destaca seu próprio `Scope` assim que retorna, então o segundo abre como irmão do primeiro sob o span pai — nunca como filho dele. E trabalho gerado depois que `updateContent` retorna, mas antes da transação externa concluir, também nunca aparece como filho do salvamento.
 
 No callback:
 
@@ -82,7 +92,7 @@ No callback:
 | `STATUS_COMMITTED` | Mantém o resultado como estava (inclui `success`, `no_change`, `idempotent_retry`, `conflict`) |
 | `STATUS_ROLLED_BACK` ou `STATUS_UNKNOWN` | Um resultado já classificado por `failure(...)` (ex.: `conflict`) é preservado; qualquer outro — inclusive `success`, `no_change` e `idempotent_retry` — é rebaixado para `failure`. O span sempre recebe `StatusCode.ERROR`. Nenhuma mensagem ou tipo de exceção é inventado: o callback não tem acesso seguro à causa. |
 
-Falha ao registrar a sincronização (infraestrutura de telemetria) nunca propaga: `deferCloseToTransaction()` engole `RuntimeException` e devolve `false`, caindo no fechamento imediato pelo `finally`.
+Falha ao registrar a sincronização (infraestrutura de telemetria) nunca propaga: `deferEndToTransaction()` engole `RuntimeException` e devolve `false`; o `finally` do chamador ainda destaca o `Scope` e fecha a `Operation` imediatamente, então nada vaza.
 
 ## Spans
 
@@ -185,7 +195,7 @@ Resultado fora do vocabulário da operação é normalizado para `failure`, ent�
 
 ## Falha de telemetria não derruba a operação
 
-Toda escrita de span/métrica está em `try/catch` que engole `RuntimeException`. Se o tracer falhar na criação, a `Operation` cai para `Span.getInvalid()` + `Scope.noop()` e o fluxo de negócio segue normalmente. Sem agente, tudo vira no-op. `deferCloseToTransaction()` segue a mesma regra: se registrar a sincronização falhar, ela devolve `false` em vez de propagar, e o `finally` do chamador fecha a `Operation` imediatamente.
+Toda escrita de span/métrica está em `try/catch` que engole `RuntimeException`. Se o tracer falhar na criação, a `Operation` cai para `Span.getInvalid()` + `Scope.noop()` e o fluxo de negócio segue normalmente. Sem agente, tudo vira no-op. `deferEndToTransaction()` segue a mesma regra: se registrar a sincronização falhar, ela devolve `false` em vez de propagar, e o `finally` do chamador ainda destaca o `Scope` e fecha a `Operation` imediatamente. `detachScope()` também engole falha ao fechar o `Scope` (por exemplo um agente mal comportado): a operação de negócio nunca é afetada.
 
 ## Testes
 
@@ -195,9 +205,9 @@ Toda escrita de span/métrica está em `try/catch` que engole `RuntimeException`
 
 | Arquivo | Cobre |
 |---|---|
-| `BusinessTelemetryTest` | span + counter + histograma, aninhamento sob pai, sucesso ≠ falha, só nome de classe da exceção, descarte de valor/chave inválidos, normalização de resultado, labels limitadas, buckets, no-op sem SDK, `close()` idempotente, ciclo de vida `deferCloseToTransaction()` (span aberto até a conclusão, commit vira sucesso, rollback rebaixa sucesso/`no_change`/`idempotent_retry` para falha, `conflict` já classificado sobrevive ao rollback, `STATUS_UNKNOWN` nunca vira sucesso, ausência de transação não vaza span/`Scope`, falha ao registrar a sincronização não quebra o negócio), `modelFamily(...)` normaliza para o vocabulário fechado, vocabulário fechado aceita todo valor válido e rejeita todo canário de credencial em qualquer atributo exportado |
+| `BusinessTelemetryTest` | span + counter + histograma, aninhamento sob pai, sucesso ≠ falha, só nome de classe da exceção, descarte de valor/chave inválidos, normalização de resultado, labels limitadas, buckets, no-op sem SDK, `close()` idempotente, ciclo de vida `deferEndToTransaction()` (span aberto até a conclusão, commit vira sucesso, rollback rebaixa sucesso/`no_change`/`idempotent_retry` para falha, `conflict` já classificado sobrevive ao rollback, `STATUS_UNKNOWN` nunca vira sucesso, ausência de transação não vaza span/`Scope`, falha ao registrar a sincronização não quebra o negócio nem vaza o `Scope`), `detachScope()` restaura o contexto sem terminar o span e é idempotente antes e depois de `close()`, dois salvamentos adiados sob o mesmo span pai nunca ficam aninhados um no outro e a ordem dos callbacks de `afterCompletion` não corrompe `Span.current()`, falha ao fechar o `Scope` (agente mal comportado) nunca quebra o negócio e o span ainda termina exatamente uma vez, `modelFamily(...)` normaliza para o vocabulário fechado, vocabulário fechado aceita todo valor válido e rejeita todo canário de credencial em qualquer atributo exportado |
 | `SceneAnalysisTelemetryTest` | serviço real com SDK em memória: sucesso, aninhamento, fallback só booleano, `validation_error`, `provider_error` sem vazar mensagem, `invalid_response`, bucket `truncated`, ausência de conteúdo/título/focus/resposta/UUID, `iwrite.ai.model_family` para modelo reconhecido/desconhecido/ausente/em formato de credencial |
-| `SceneContentSaveTelemetryIntegrationTest` | fluxo real contra PostgreSQL: `success`, `autosave` vs `manual_save`, `no_change`, `idempotent_retry`, `conflict`, aninhamento sob span HTTP, rollback de uma transação externa **depois** de `updateContent` já ter retornado com sucesso rebaixa o span para `failure` |
+| `SceneContentSaveTelemetryIntegrationTest` | fluxo real contra PostgreSQL: `success`, `autosave` vs `manual_save`, `no_change`, `idempotent_retry`, `conflict`, aninhamento sob span HTTP, rollback de uma transação externa **depois** de `updateContent` já ter retornado com sucesso rebaixa o span para `failure`; com uma transação externa (`TransactionTemplate`) e um span HTTP pai correntes: `Span.current()` volta a ser o span pai assim que `updateContent` retorna e o span de salvamento ainda não está exportado/encerrado; um span não relacionado criado depois é filho do span pai, nunca do salvamento; e dois salvamentos sequenciais na mesma transação externa compartilham o mesmo pai, nunca ficam aninhados um no outro, permanecem abertos até a conclusão e então fecham exatamente uma vez cada |
 
 Os testes usam exporters em memória e verificam os spans e métricas **efetivamente produzidos** — nenhum deles procura strings no código-fonte.
 
@@ -400,7 +410,9 @@ Varredura nos seis traces do período procurando os textos privados usados no te
 
 Mesma stack (`docker compose -p iwrite-otel -f docker-compose.yml -f docker-compose.observability.yml -f docker-compose.llm-stub.yml`), agente 2.30.0. Reproduz as duas correções descritas em "Ciclo de vida do span em `updateContent`" e "Atributos permitidos" acima.
 
-### 1. O span de salvamento agora inclui o commit da transação
+### 1. O span de salvamento continua incluindo o tempo até o commit da transação
+
+> Esta seção substitui a evidência anterior desta mesma rodada, que mostrava `Transaction.commit` como **filho** de `iwrite.scene.content.save`. Essa relação de aninhamento era produzida pelo bug corrigido depois (ver seção 3 abaixo): o `Scope` ficava corrente até `afterCompletion`, então qualquer span automático criado durante o commit — inclusive de uma chamada totalmente não relacionada feita depois do retorno do método — aparecia aninhado sob o salvamento. Não é o desenho final; a seção 3 tem os traces corrigidos.
 
 Trace de salvamento bem-sucedido (`PATCH`, 396 ms no total):
 
@@ -412,7 +424,7 @@ Trace de salvamento bem-sucedido (`PATCH`, 396 ms no total):
  66.4ms      └─ Transaction.commit                    (hibernate-6.0)
 ```
 
-`Transaction.commit` (66,4 ms) é filho direto de `iwrite.scene.content.save` — o commit acontece **dentro** do span de negócio, não depois dele. Antes da correção o span fechava no retorno do método Java, antes do proxy `@Transactional` chamar commit; agora `Operation.deferCloseToTransaction()` só fecha em `afterCompletion`, então o commit está incluído na duração e uma falha de commit seria classificada como `failure`, não `success` (comportamento validado por teste, não reproduzido ao vivo — ver limitações abaixo).
+Antes da correção o span fechava no retorno do método Java, antes do proxy `@Transactional` chamar commit; `Operation.deferEndToTransaction()` (então `deferCloseToTransaction()`) só fechava em `afterCompletion`, então o commit ficava incluído na duração e uma falha de commit seria classificada como `failure`, não `success`. Essa parte da conclusão continua válida — é só a posição de `Transaction.commit` na árvore que estava errada; ver seção 3.
 
 Também encontrados nesta rodada, cada um pelo próprio atributo:
 
@@ -455,6 +467,46 @@ Nenhum canário apareceu em nenhum span, atributo, evento ou linha de log — ne
 
 - **Falha de commit não foi provocada ao vivo.** Forçar um `flush`/commit falhar sem alterar código de produção (sem `sleep`, sem `flush()` artificial, sem endpoint novo) não é reproduzível de forma limpa via API neste ambiente; essa cobertura vem do teste de integração `SceneContentSaveTelemetryIntegrationTest.rollbackAfterTheTransactionalMethodReturnsDemotesSuccessToFailure`, que rola de volta uma transação real do Postgres **depois** que `updateContent` já retornou com sucesso e comprova que o span vira `failure`.
 - **O override `OPENAI_MODEL=sk-test-canary`** existiu apenas no container local desta coleta (arquivo de override fora do repositório), nunca em `docker-compose.llm-stub.yml` nem em qualquer arquivo versionado.
+
+## Evidência da correção do P2 do Codex sobre `Scope` vs. span (2026-08-03, LGTM local, head `7896a5e` + correção)
+
+Mesma stack (`docker compose -f docker-compose.yml -f docker-compose.observability.yml -f docker-compose.llm-stub.yml`), agente 2.30.0 confirmado no log do backend. Reproduz a correção descrita em "Ciclo de vida em `updateContent`: o `Scope` acompanha o método, o span acompanha a transação" acima: `Operation.detachScope()` no `finally` de `updateContent`, `deferEndToTransaction()` só terminando o span/métricas em `afterCompletion`.
+
+Três chamadas reais a `PATCH /api/scenes/{sceneId}/content` na mesma cena: um salvamento (`expectedContentRevision=0`), um segundo salvamento sequencial sobre o resultado do primeiro (`expectedContentRevision=1`) e uma tentativa com revisão obsoleta (`expectedContentRevision=0` de novo) que produz `409` / `conflict`.
+
+### 1. `Transaction.commit` aparece como irmão do salvamento sob o span HTTP, nunca como filho
+
+Trace do primeiro salvamento (`PATCH`, 416,9 ms no total; tempos relativos ao início do span HTTP):
+
+```text
+0.0ms    PATCH /api/scenes/{sceneId}/content            (agente)
+ 21.7ms  ├─ iwrite.scene.content.save    → até 397.2ms   (manual)
+ …          │    iwrite.result = success
+ …          ├─ SELECT/UPDATE/INSERT (jdbc + hibernate, ~26 spans, filhos do salvamento)
+361.8ms  ├─ Transaction.commit           → até 371.1ms   (hibernate, irmão do salvamento)
+397.2ms     (iwrite.scene.content.save termina aqui — depois do commit)
+403.2ms  └─ Transaction.commit (audit log) → até 410.3ms (irmão, gerado depois do salvamento já ter terminado)
+```
+
+`Transaction.commit` (361,8–371,1 ms) começa e termina **dentro** da janela de vida do span `iwrite.scene.content.save` (21,7–397,2 ms) — o commit da própria transação de `updateContent` acontece enquanto o span ainda está aberto, então a duração do span continua incluindo o tempo até o commit, exatamente como pretendido. Mas o pai de `Transaction.commit` é o span HTTP, não `iwrite.scene.content.save`: o `Scope` já tinha sido destacado no `finally` do método antes do proxy `@Transactional` disparar o commit, então o span automático do Hibernate se anexa a quem estiver corrente naquele momento — o span HTTP. Um segundo `Transaction.commit` (403,2–410,3 ms), do registro de auditoria feito depois do salvamento, também aparece como irmão, começando só depois que `iwrite.scene.content.save` já tinha terminado (397,2 ms) — prova direta de que trabalho gerado depois do retorno do método não vira filho do salvamento.
+
+O trace do segundo salvamento sequencial (mesma transação HTTP, span de 279,3 ms) repete exatamente o mesmo padrão: `Transaction.commit` (271,3–278,6 ms) dentro da janela do salvamento (23,4–279,3 ms) e como irmão dele sob o span HTTP; um segundo `Transaction.commit` do audit log (283,5–299,9 ms) de novo depois do salvamento já ter terminado, também irmão.
+
+O trace do conflito confirma o caminho de erro: `iwrite.result = conflict`, `iwrite.error.type = ConflictException`, `status = STATUS_CODE_ERROR`, e o `Transaction.commit` daquela chamada (96,6–110,8 ms) também aparece como irmão do salvamento (7,4–89,2 ms) sob o span HTTP, nunca como filho.
+
+### 2. Métricas e atributos sem regressão
+
+```text
+operation            result     valor
+scene_content_save   success    2
+scene_content_save   conflict   1
+```
+
+Labels confirmadas via `/api/v1/series` para `iwrite_business_operation_count_total`: só `operation` e `result`, mais as labels de recurso fixas do agente — nenhuma cardinalidade nova. Os três trace JSON completos (salvamento, segundo salvamento, conflito) não contêm o texto privado enviado em nenhum dos três `PATCH` nem o `sceneId`/`bookId` em nenhum span manual — o `sceneId` só aparece no span HTTP automático (`url`/`http.route`, fora do controle do `BusinessTelemetry`), como já documentado.
+
+### Limitações desta rodada
+
+- **Não foi reproduzida ao vivo uma transação externa controlada por código de teste** (o cenário com `TransactionTemplate` e um span pai HTTP simulado) — só o caminho real de produção, onde a "transação externa" é o próprio proxy `@Transactional` do Spring e o "span pai" é o span HTTP do agente. O cenário com uma transação verdadeiramente externa (dois `updateContent` dentro do mesmo `TransactionTemplate`, sem passar por HTTP) está coberto pelos testes de integração `SceneContentSaveTelemetryIntegrationTest.afterUpdateContentReturnsTheParentSpanIsCurrentAndTheSaveSpanIsStillOpenUntilCommit` e `...twoSequentialSavesInTheSameExternalTransactionShareTheSameParentAndBothCloseOnCommit`, que inspecionam relações de parent/child reais via SDK em memória.
 
 <a id="gargalo"></a>
 

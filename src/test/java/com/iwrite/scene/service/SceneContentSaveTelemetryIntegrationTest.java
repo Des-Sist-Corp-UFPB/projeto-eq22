@@ -35,7 +35,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  *
  * <p>{@code updateContent} now defers closing its telemetry span until its
  * own transaction actually completes (see {@link BusinessTelemetry.Operation
- * #deferCloseToTransaction()}). {@link PostgresIntegrationTest} runs every
+ * #deferEndToTransaction()}). {@link PostgresIntegrationTest} runs every
  * test inside one outer Spring-managed transaction that only rolls back
  * *after* the test method returns, which would delay every span past this
  * class's own assertions. {@code NOT_SUPPORTED} opts this class out of that
@@ -247,6 +247,93 @@ class SceneContentSaveTelemetryIntegrationTest extends PostgresIntegrationTest {
         SpanData span = recording.span(BusinessTelemetry.SPAN_SCENE_CONTENT_SAVE);
         assertThat(span.getParentSpanId()).isEqualTo(httpSpan.getSpanContext().getSpanId());
         assertThat(span.getTraceId()).isEqualTo(httpSpan.getSpanContext().getTraceId());
+    }
+
+    @Test
+    void afterUpdateContentReturnsTheParentSpanIsCurrentAndTheSaveSpanIsStillOpenUntilCommit() {
+        StoryWorld world = createStoryWorld("telemetry scope detach outer");
+        TransactionTemplate outerTransaction = new TransactionTemplate(transactionManager);
+        Span httpSpan = recording.sdk().getTracer("test-http")
+                .spanBuilder("PATCH /api/scenes/{sceneId}/content").startSpan();
+
+        try (Scope ignored = httpSpan.makeCurrent()) {
+            outerTransaction.executeWithoutResult(status -> {
+                sceneService.updateContent(
+                        world.scene().id(),
+                        new SceneContentRequest("{}", "scope detach test", SceneVersionSource.MANUAL_SAVE,
+                                world.scene().contentRevision(), UUID.randomUUID())
+                );
+
+                assertThat(Span.current().getSpanContext().getSpanId())
+                        .as("the Scope must be detached back to the HTTP span as soon as updateContent returns")
+                        .isEqualTo(httpSpan.getSpanContext().getSpanId());
+                assertThat(recording.spans())
+                        .as("the save span must not be exported/ended before the transaction completes")
+                        .noneMatch(span -> span.getName().equals(BusinessTelemetry.SPAN_SCENE_CONTENT_SAVE));
+
+                Span unrelated = recording.sdk().getTracer("test-unrelated")
+                        .spanBuilder("unrelated-work").startSpan();
+                unrelated.end();
+
+                assertThat(recording.span("unrelated-work").getParentSpanId())
+                        .as("work issued after updateContent returns must be a child of the HTTP span, not the save span")
+                        .isEqualTo(httpSpan.getSpanContext().getSpanId());
+            });
+        } finally {
+            httpSpan.end();
+        }
+
+        SpanData saveSpan = recording.span(BusinessTelemetry.SPAN_SCENE_CONTENT_SAVE);
+        assertThat(saveSpan.getAttributes().get(BusinessTelemetry.RESULT)).isEqualTo(BusinessTelemetry.RESULT_SUCCESS);
+        assertThat(saveSpan.getParentSpanId()).isEqualTo(httpSpan.getSpanContext().getSpanId());
+    }
+
+    @Test
+    void twoSequentialSavesInTheSameExternalTransactionShareTheSameParentAndBothCloseOnCommit() {
+        StoryWorld world = createStoryWorld("telemetry scope detach sequential");
+        TransactionTemplate outerTransaction = new TransactionTemplate(transactionManager);
+        Span httpSpan = recording.sdk().getTracer("test-http")
+                .spanBuilder("PATCH /api/scenes/{sceneId}/content").startSpan();
+
+        try (Scope ignored = httpSpan.makeCurrent()) {
+            outerTransaction.executeWithoutResult(status -> {
+                SceneResponse first = sceneService.updateContent(
+                        world.scene().id(),
+                        new SceneContentRequest("{}", "first save", SceneVersionSource.MANUAL_SAVE,
+                                world.scene().contentRevision(), UUID.randomUUID())
+                );
+                assertThat(Span.current().getSpanContext().getSpanId())
+                        .as("the parent Scope must be restored after the first save returns")
+                        .isEqualTo(httpSpan.getSpanContext().getSpanId());
+
+                sceneService.updateContent(
+                        world.scene().id(),
+                        new SceneContentRequest("{}", "second save", SceneVersionSource.MANUAL_SAVE,
+                                first.contentRevision(), UUID.randomUUID())
+                );
+                assertThat(Span.current().getSpanContext().getSpanId())
+                        .as("the parent Scope must be restored after the second save returns")
+                        .isEqualTo(httpSpan.getSpanContext().getSpanId());
+
+                assertThat(recording.spans())
+                        .as("neither save span may be exported/ended before the transaction completes")
+                        .isEmpty();
+            });
+        } finally {
+            httpSpan.end();
+        }
+
+        List<SpanData> saveSpans = recording.spans().stream()
+                .filter(span -> span.getName().equals(BusinessTelemetry.SPAN_SCENE_CONTENT_SAVE))
+                .toList();
+        assertThat(saveSpans).hasSize(2);
+        assertThat(saveSpans).as("both saves must be siblings under the HTTP span, ending exactly once each")
+                .allMatch(span -> span.getParentSpanId().equals(httpSpan.getSpanContext().getSpanId()))
+                .allMatch(span -> span.getAttributes().get(BusinessTelemetry.RESULT).equals(BusinessTelemetry.RESULT_SUCCESS));
+        assertThat(saveSpans.get(0).getSpanId())
+                .as("neither save span may be the other's parent")
+                .isNotEqualTo(saveSpans.get(1).getParentSpanId());
+        assertThat(saveSpans.get(1).getSpanId()).isNotEqualTo(saveSpans.get(0).getParentSpanId());
     }
 
     private static List<String> attributeValues(SpanData span) {

@@ -291,6 +291,7 @@ public class BusinessTelemetry {
         private final Span span;
         private final Scope scope;
         private String result;
+        private boolean scopeDetached;
         private boolean ended;
         private boolean failed;
 
@@ -357,12 +358,19 @@ public class BusinessTelemetry {
         }
 
         /**
-         * Defers {@link #close()} until the current transaction finishes, so
-         * flush/commit time counts toward the span and a failure that only
-         * surfaces at commit is not reported as {@code success}. Returns
-         * {@code false} when no transaction synchronization is active or
-         * registration fails; the caller must then call {@link #close()}
-         * itself (typically in a {@code finally} block).
+         * Defers span/metric completion until the current transaction
+         * finishes, so flush/commit time counts toward the span and a
+         * failure that only surfaces at commit is not reported as
+         * {@code success}. Returns {@code false} when no transaction
+         * synchronization is active or registration fails; the caller must
+         * then call {@link #close()} itself (typically in a {@code finally}
+         * block).
+         *
+         * <p>This does <strong>not</strong> keep the {@link Scope} current
+         * until commit — the caller is expected to call
+         * {@link #detachScope()} in its own {@code finally} block regardless
+         * of the return value, so the scope's lifetime always matches the
+         * calling method's body, never the transaction's.
          *
          * <p>On a non-committed completion (rollback or unknown), a result
          * not already classified via {@link #failure(String, Throwable)} is
@@ -370,7 +378,7 @@ public class BusinessTelemetry {
          * {@link StatusCode#ERROR}. No exception type or message is
          * invented: the callback has no safe access to the cause.
          */
-        public boolean deferCloseToTransaction() {
+        public boolean deferEndToTransaction() {
             try {
                 if (ended || !TransactionSynchronizationManager.isSynchronizationActive()) {
                     return false;
@@ -381,7 +389,7 @@ public class BusinessTelemetry {
                         if (status != TransactionSynchronization.STATUS_COMMITTED) {
                             demoteToFailure();
                         }
-                        close();
+                        finish();
                     }
                 });
                 return true;
@@ -402,9 +410,23 @@ public class BusinessTelemetry {
             }
         }
 
-        /** Ends the span and records both metrics. Safe to call twice. */
-        @Override
-        public void close() {
+        /**
+         * Detaches this operation's {@link Scope}, restoring whatever
+         * context was current before it, without touching the span or
+         * metrics. Idempotent and safe to call from a {@code finally} block
+         * whether or not the span itself has already ended, or will only
+         * end later at transaction completion.
+         */
+        public void detachScope() {
+            if (scopeDetached) {
+                return;
+            }
+            scopeDetached = true;
+            closeSafely(scope);
+        }
+
+        /** Ends the span and records both metrics. Idempotent; never touches the {@link Scope}. */
+        private void finish() {
             if (ended) {
                 return;
             }
@@ -419,8 +441,14 @@ public class BusinessTelemetry {
             } catch (RuntimeException telemetryFailure) {
                 // exporting telemetry must never fail the business operation
             }
-            closeSafely(scope);
             endSafely(span);
+        }
+
+        /** Full, non-transactional completion: detaches the scope and ends the span. Safe to call twice. */
+        @Override
+        public void close() {
+            detachScope();
+            finish();
         }
 
         private <T> void setSafely(AttributeKey<T> key, T value) {

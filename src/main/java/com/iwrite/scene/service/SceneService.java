@@ -197,14 +197,19 @@ public class SceneService {
      * span is a child of whatever HTTP trace is active. See
      * docs/otel-business-signals.md.
      *
-     * The span closes on transaction completion, not on method return: this
-     * method runs inside the @Transactional proxy's transaction, so closing
-     * here would report success before flush/commit has actually happened.
+     * The span ends on transaction completion, not on method return: this
+     * method runs inside the @Transactional proxy's transaction, so ending
+     * it here would report success before flush/commit has actually
+     * happened. The Scope, however, is always detached here in the
+     * finally block, whether or not the span itself ends now: a Scope only
+     * makes sense for the lexical duration of this method, and leaving it
+     * current until commit would make unrelated later work a child of this
+     * span.
      */
     @Transactional
     public SceneResponse updateContent(UUID sceneId, SceneContentRequest request) {
         BusinessTelemetry.Operation telemetry = businessTelemetry.sceneContentSave();
-        boolean closesWithTransaction = telemetry.deferCloseToTransaction();
+        boolean endsWithTransaction = telemetry.deferEndToTransaction();
         try {
             return updateContent(sceneId, request, telemetry);
         } catch (ConflictException conflict) {
@@ -214,7 +219,8 @@ public class SceneService {
             telemetry.failure(BusinessTelemetry.RESULT_FAILURE, failure);
             throw failure;
         } finally {
-            if (!closesWithTransaction) {
+            telemetry.detachScope();
+            if (!endsWithTransaction) {
                 telemetry.close();
             }
         }
