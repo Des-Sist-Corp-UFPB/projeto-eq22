@@ -2,6 +2,7 @@ package com.iwrite.observability;
 
 import io.opentelemetry.api.OpenTelemetry;
 import io.opentelemetry.api.common.AttributeKey;
+import io.opentelemetry.api.common.Attributes;
 import io.opentelemetry.api.trace.Span;
 import io.opentelemetry.api.trace.StatusCode;
 import io.opentelemetry.api.trace.Tracer;
@@ -9,12 +10,18 @@ import io.opentelemetry.context.Scope;
 import io.opentelemetry.sdk.trace.data.SpanData;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.MockedStatic;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.CALLS_REAL_METHODS;
+import static org.mockito.Mockito.mockStatic;
 
 class BusinessTelemetryTest {
 
@@ -108,7 +115,7 @@ class BusinessTelemetryTest {
     @Test
     void dropsAttributeValuesThatCouldCarryUserData() {
         try (BusinessTelemetry.Operation operation = recording.telemetry().sceneAnalysis()) {
-            operation.attribute(BusinessTelemetry.AI_MODEL, UUID.randomUUID().toString());
+            operation.attribute(BusinessTelemetry.AI_MODEL_FAMILY, UUID.randomUUID().toString());
             operation.attribute(BusinessTelemetry.AI_PROVIDER, "writer@example.com");
             operation.attribute(BusinessTelemetry.AI_INPUT_SIZE_BUCKET, "A porta se abriu devagar.");
             operation.attribute(BusinessTelemetry.SCENE_SOURCE, "Bearer sk-secret-token");
@@ -154,7 +161,7 @@ class BusinessTelemetryTest {
                     .attribute(BusinessTelemetry.SCENE_CONTENT_CHANGED, true);
         }
         try (BusinessTelemetry.Operation operation = recording.telemetry().sceneAnalysis()) {
-            operation.attribute(BusinessTelemetry.AI_MODEL, "gpt-4o-mini")
+            operation.attribute(BusinessTelemetry.AI_MODEL_FAMILY, BusinessTelemetry.MODEL_FAMILY_GPT_4O)
                     .failure(BusinessTelemetry.RESULT_PROVIDER_ERROR, new IllegalStateException("boom"));
         }
 
@@ -178,6 +185,124 @@ class BusinessTelemetryTest {
         assertThat(BusinessTelemetry.contentSizeBucket("a".repeat(20_000))).isEqualTo(BusinessTelemetry.BUCKET_LARGE);
         assertThat(BusinessTelemetry.modelInputSizeBucket(12_000, true)).isEqualTo(BusinessTelemetry.BUCKET_TRUNCATED);
         assertThat(BusinessTelemetry.modelInputSizeBucket(10, false)).isEqualTo(BusinessTelemetry.BUCKET_SMALL);
+    }
+
+    @Test
+    void modelFamilyNormalizesKnownPrefixesAndFallsBackSafely() {
+        assertThat(BusinessTelemetry.modelFamily("gpt-4o")).isEqualTo(BusinessTelemetry.MODEL_FAMILY_GPT_4O);
+        assertThat(BusinessTelemetry.modelFamily("gpt-4o-mini")).isEqualTo(BusinessTelemetry.MODEL_FAMILY_GPT_4O);
+        assertThat(BusinessTelemetry.modelFamily("GPT-4O-MINI")).isEqualTo(BusinessTelemetry.MODEL_FAMILY_GPT_4O);
+        assertThat(BusinessTelemetry.modelFamily("gpt-4.1")).isEqualTo(BusinessTelemetry.MODEL_FAMILY_GPT_4_1);
+        assertThat(BusinessTelemetry.modelFamily("gpt-4.1-mini")).isEqualTo(BusinessTelemetry.MODEL_FAMILY_GPT_4_1);
+        assertThat(BusinessTelemetry.modelFamily("gpt-5")).isEqualTo(BusinessTelemetry.MODEL_FAMILY_GPT_5);
+        assertThat(BusinessTelemetry.modelFamily("gpt-5-mini")).isEqualTo(BusinessTelemetry.MODEL_FAMILY_GPT_5);
+        assertThat(BusinessTelemetry.modelFamily("claude-opus-5")).isEqualTo(BusinessTelemetry.MODEL_FAMILY_OTHER);
+        assertThat(BusinessTelemetry.modelFamily("modelo desconhecido")).isEqualTo(BusinessTelemetry.MODEL_FAMILY_OTHER);
+        assertThat(BusinessTelemetry.modelFamily("sk-test-canary")).isEqualTo(BusinessTelemetry.MODEL_FAMILY_OTHER);
+        assertThat(BusinessTelemetry.modelFamily(null)).isEqualTo(BusinessTelemetry.MODEL_FAMILY_UNKNOWN);
+        assertThat(BusinessTelemetry.modelFamily("   ")).isEqualTo(BusinessTelemetry.MODEL_FAMILY_UNKNOWN);
+    }
+
+    @Test
+    void everySceneSourceVocabularyValueIsAccepted() {
+        for (String value : List.of(
+                BusinessTelemetry.SOURCE_MANUAL_SAVE, BusinessTelemetry.SOURCE_AUTOSAVE,
+                BusinessTelemetry.SOURCE_RESTORE, BusinessTelemetry.SOURCE_OTHER)) {
+            recording.reset();
+            recording.telemetry().sceneContentSave().attribute(BusinessTelemetry.SCENE_SOURCE, value).close();
+            assertThat(recording.span(BusinessTelemetry.SPAN_SCENE_CONTENT_SAVE).getAttributes()
+                    .get(BusinessTelemetry.SCENE_SOURCE)).as(value).isEqualTo(value);
+        }
+    }
+
+    @Test
+    void everySizeBucketVocabularyValueIsAccepted() {
+        for (String value : List.of(
+                BusinessTelemetry.BUCKET_EMPTY, BusinessTelemetry.BUCKET_SMALL, BusinessTelemetry.BUCKET_MEDIUM,
+                BusinessTelemetry.BUCKET_LARGE, BusinessTelemetry.BUCKET_TRUNCATED)) {
+            recording.reset();
+            recording.telemetry().sceneContentSave()
+                    .attribute(BusinessTelemetry.SCENE_CONTENT_SIZE_BUCKET, value)
+                    .attribute(BusinessTelemetry.AI_INPUT_SIZE_BUCKET, value)
+                    .close();
+            Attributes attributes = recording.span(BusinessTelemetry.SPAN_SCENE_CONTENT_SAVE).getAttributes();
+            assertThat(attributes.get(BusinessTelemetry.SCENE_CONTENT_SIZE_BUCKET)).as(value).isEqualTo(value);
+            assertThat(attributes.get(BusinessTelemetry.AI_INPUT_SIZE_BUCKET)).as(value).isEqualTo(value);
+        }
+    }
+
+    @Test
+    void everyProviderVocabularyValueIsAccepted() {
+        for (String value : List.of(BusinessTelemetry.PROVIDER_OPENAI, BusinessTelemetry.PROVIDER_DISABLED)) {
+            recording.reset();
+            recording.telemetry().sceneAnalysis().attribute(BusinessTelemetry.AI_PROVIDER, value).close();
+            assertThat(recording.span(BusinessTelemetry.SPAN_SCENE_ANALYSIS).getAttributes()
+                    .get(BusinessTelemetry.AI_PROVIDER)).as(value).isEqualTo(value);
+        }
+    }
+
+    @Test
+    void everyModelFamilyVocabularyValueIsAccepted() {
+        for (String value : List.of(
+                BusinessTelemetry.MODEL_FAMILY_GPT_4O, BusinessTelemetry.MODEL_FAMILY_GPT_4_1,
+                BusinessTelemetry.MODEL_FAMILY_GPT_5, BusinessTelemetry.MODEL_FAMILY_OTHER,
+                BusinessTelemetry.MODEL_FAMILY_UNKNOWN)) {
+            recording.reset();
+            recording.telemetry().sceneAnalysis().attribute(BusinessTelemetry.AI_MODEL_FAMILY, value).close();
+            assertThat(recording.span(BusinessTelemetry.SPAN_SCENE_ANALYSIS).getAttributes()
+                    .get(BusinessTelemetry.AI_MODEL_FAMILY)).as(value).isEqualTo(value);
+        }
+    }
+
+    private static final List<String> CREDENTIAL_CANARIES = List.of(
+            "sk-test-canary",
+            "sk-proj-test-canary",
+            "Bearer-test-canary",
+            "ghp_test_canary",
+            "github_pat_test_canary",
+            "eyJhbGciOiJIUzI1NiJ9.test.signature",
+            "email@example.com",
+            UUID.randomUUID().toString(),
+            "texto com espaço",
+            "{\"key\":\"value\"}"
+    );
+
+    /**
+     * Feeds every canary into every closed-vocabulary key plus the one
+     * shape-filtered key ({@link BusinessTelemetry#ERROR_TYPE}), then
+     * inspects the whole exported attribute set — not just the attribute
+     * each canary targeted — so a leak through any key would be caught.
+     */
+    @Test
+    void noCanaryEverReachesAnyExportedSpanAttribute() {
+        for (String canary : CREDENTIAL_CANARIES) {
+            recording.reset();
+            try (BusinessTelemetry.Operation operation = recording.telemetry().sceneAnalysis()) {
+                operation.attribute(BusinessTelemetry.AI_MODEL_FAMILY, canary)
+                        .attribute(BusinessTelemetry.AI_PROVIDER, canary)
+                        .attribute(BusinessTelemetry.SCENE_SOURCE, canary)
+                        .attribute(BusinessTelemetry.SCENE_CONTENT_SIZE_BUCKET, canary)
+                        .attribute(BusinessTelemetry.AI_INPUT_SIZE_BUCKET, canary)
+                        .attribute(BusinessTelemetry.ERROR_TYPE, canary);
+            }
+
+            List<String> exportedValues = recording.span(BusinessTelemetry.SPAN_SCENE_ANALYSIS)
+                    .getAttributes().asMap().values().stream().map(String::valueOf).toList();
+            assertThat(exportedValues).as("canary: %s", canary).noneMatch(value -> value.contains(canary));
+        }
+    }
+
+    @Test
+    void aCredentialShapedModelIsNeverExportedEvenThoughItLooksLikeAControlledValue() {
+        try (BusinessTelemetry.Operation operation = recording.telemetry().sceneAnalysis()) {
+            operation.attribute(BusinessTelemetry.AI_MODEL_FAMILY, BusinessTelemetry.modelFamily("sk-test-canary"));
+        }
+
+        SpanData span = recording.span(BusinessTelemetry.SPAN_SCENE_ANALYSIS);
+        assertThat(span.getAttributes().get(BusinessTelemetry.AI_MODEL_FAMILY))
+                .isEqualTo(BusinessTelemetry.MODEL_FAMILY_OTHER);
+        assertThat(span.getAttributes().asMap().values().stream().map(String::valueOf))
+                .noneMatch(value -> value.contains("sk-test-canary"));
     }
 
     @Test
@@ -218,6 +343,161 @@ class BusinessTelemetryTest {
             assertThat(Span.current().getSpanContext().getSpanId()).isEqualTo(parent.getSpanContext().getSpanId());
         } finally {
             parent.end();
+        }
+    }
+
+    @Test
+    void deferredOperationStaysOpenThenClosesAsSuccessOnCommit() {
+        TransactionSynchronizationManager.initSynchronization();
+        try {
+            BusinessTelemetry.Operation operation = recording.telemetry().sceneContentSave();
+
+            assertThat(operation.deferCloseToTransaction()).isTrue();
+            assertThat(recording.spans()).isEmpty();
+
+            completeTransaction(TransactionSynchronization.STATUS_COMMITTED);
+        } finally {
+            TransactionSynchronizationManager.clearSynchronization();
+        }
+
+        SpanData span = recording.span(BusinessTelemetry.SPAN_SCENE_CONTENT_SAVE);
+        assertThat(span.getAttributes().get(BusinessTelemetry.RESULT)).isEqualTo(BusinessTelemetry.RESULT_SUCCESS);
+        assertThat(span.getStatus().getStatusCode()).isEqualTo(StatusCode.UNSET);
+    }
+
+    @Test
+    void rollbackAfterTheBodyReturnedSuccessBecomesFailure() {
+        TransactionSynchronizationManager.initSynchronization();
+        try {
+            BusinessTelemetry.Operation operation = recording.telemetry().sceneContentSave();
+            assertThat(operation.deferCloseToTransaction()).isTrue();
+            // no result() call: the body returned normally, which defaults to success.
+
+            completeTransaction(TransactionSynchronization.STATUS_ROLLED_BACK);
+        } finally {
+            TransactionSynchronizationManager.clearSynchronization();
+        }
+
+        SpanData span = recording.span(BusinessTelemetry.SPAN_SCENE_CONTENT_SAVE);
+        assertThat(span.getAttributes().get(BusinessTelemetry.RESULT)).isEqualTo(BusinessTelemetry.RESULT_FAILURE);
+        assertThat(span.getStatus().getStatusCode()).isEqualTo(StatusCode.ERROR);
+    }
+
+    @Test
+    void rollbackAfterNoChangeOrIdempotentRetryAlsoBecomesFailure() {
+        for (String preRollbackResult : List.of(
+                BusinessTelemetry.RESULT_NO_CHANGE, BusinessTelemetry.RESULT_IDEMPOTENT_RETRY)) {
+            recording.reset();
+            TransactionSynchronizationManager.initSynchronization();
+            try {
+                BusinessTelemetry.Operation operation = recording.telemetry().sceneContentSave();
+                assertThat(operation.deferCloseToTransaction()).isTrue();
+                operation.result(preRollbackResult);
+
+                completeTransaction(TransactionSynchronization.STATUS_ROLLED_BACK);
+            } finally {
+                TransactionSynchronizationManager.clearSynchronization();
+            }
+
+            assertThat(recording.span(BusinessTelemetry.SPAN_SCENE_CONTENT_SAVE).getAttributes()
+                    .get(BusinessTelemetry.RESULT))
+                    .as("pre-rollback result was %s", preRollbackResult)
+                    .isEqualTo(BusinessTelemetry.RESULT_FAILURE);
+        }
+    }
+
+    @Test
+    void rollbackAfterAnAlreadyClassifiedConflictStaysConflict() {
+        TransactionSynchronizationManager.initSynchronization();
+        try {
+            BusinessTelemetry.Operation operation = recording.telemetry().sceneContentSave();
+            assertThat(operation.deferCloseToTransaction()).isTrue();
+            operation.failure(BusinessTelemetry.RESULT_CONFLICT, new IllegalStateException("stale revision"));
+
+            completeTransaction(TransactionSynchronization.STATUS_ROLLED_BACK);
+        } finally {
+            TransactionSynchronizationManager.clearSynchronization();
+        }
+
+        SpanData span = recording.span(BusinessTelemetry.SPAN_SCENE_CONTENT_SAVE);
+        assertThat(span.getAttributes().get(BusinessTelemetry.RESULT)).isEqualTo(BusinessTelemetry.RESULT_CONFLICT);
+        assertThat(span.getStatus().getStatusCode()).isEqualTo(StatusCode.ERROR);
+    }
+
+    @Test
+    void statusUnknownIsNeverReportedAsSuccess() {
+        TransactionSynchronizationManager.initSynchronization();
+        try {
+            BusinessTelemetry.Operation operation = recording.telemetry().sceneContentSave();
+            assertThat(operation.deferCloseToTransaction()).isTrue();
+
+            completeTransaction(TransactionSynchronization.STATUS_UNKNOWN);
+        } finally {
+            TransactionSynchronizationManager.clearSynchronization();
+        }
+
+        SpanData span = recording.span(BusinessTelemetry.SPAN_SCENE_CONTENT_SAVE);
+        assertThat(span.getAttributes().get(BusinessTelemetry.RESULT)).isEqualTo(BusinessTelemetry.RESULT_FAILURE);
+        assertThat(span.getStatus().getStatusCode()).isEqualTo(StatusCode.ERROR);
+    }
+
+    @Test
+    void withoutAnActiveTransactionTheCallerMustCloseItselfAndNothingLeaks() {
+        assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
+
+        BusinessTelemetry.Operation operation = recording.telemetry().sceneContentSave();
+        assertThat(operation.deferCloseToTransaction()).isFalse();
+        assertThat(recording.spans()).isEmpty();
+
+        operation.close();
+
+        assertThat(recording.spans()).hasSize(1);
+        assertThat(recording.span(BusinessTelemetry.SPAN_SCENE_CONTENT_SAVE).getAttributes()
+                .get(BusinessTelemetry.RESULT)).isEqualTo(BusinessTelemetry.RESULT_SUCCESS);
+    }
+
+    @Test
+    void closeAfterTransactionCompletionRemainsIdempotent() {
+        BusinessTelemetry.Operation operation = recording.telemetry().sceneContentSave();
+        TransactionSynchronizationManager.initSynchronization();
+        try {
+            operation.deferCloseToTransaction();
+            completeTransaction(TransactionSynchronization.STATUS_COMMITTED);
+        } finally {
+            TransactionSynchronizationManager.clearSynchronization();
+        }
+
+        operation.close();
+        operation.close();
+
+        assertThat(recording.spans()).hasSize(1);
+        assertThat(recording.counterValue(
+                BusinessTelemetry.OPERATION_SCENE_CONTENT_SAVE,
+                BusinessTelemetry.RESULT_SUCCESS)).isEqualTo(1);
+    }
+
+    @Test
+    void aFailureRegisteringTheTransactionCallbackFallsBackWithoutBreakingTheOperation() {
+        BusinessTelemetry.Operation operation = recording.telemetry().sceneContentSave();
+        boolean deferred;
+        try (MockedStatic<TransactionSynchronizationManager> mocked =
+                     mockStatic(TransactionSynchronizationManager.class, CALLS_REAL_METHODS)) {
+            mocked.when(TransactionSynchronizationManager::isSynchronizationActive).thenReturn(true);
+            mocked.when(() -> TransactionSynchronizationManager.registerSynchronization(any()))
+                    .thenThrow(new IllegalStateException("telemetry infrastructure failure"));
+
+            deferred = operation.deferCloseToTransaction();
+        }
+        operation.close();
+
+        assertThat(deferred).isFalse();
+        SpanData span = recording.span(BusinessTelemetry.SPAN_SCENE_CONTENT_SAVE);
+        assertThat(span.getAttributes().get(BusinessTelemetry.RESULT)).isEqualTo(BusinessTelemetry.RESULT_SUCCESS);
+    }
+
+    private static void completeTransaction(int status) {
+        for (TransactionSynchronization synchronization : TransactionSynchronizationManager.getSynchronizations()) {
+            synchronization.afterCompletion(status);
         }
     }
 }

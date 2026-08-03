@@ -87,7 +87,7 @@ public class SceneAnalysisService {
          * the assistant zero times, as SceneAnalysisAccessIntegrationTest requires.
          */
         telemetry.attribute(BusinessTelemetry.AI_PROVIDER, writingAssistant.provider());
-        telemetry.attribute(BusinessTelemetry.AI_MODEL, writingAssistant.model());
+        telemetry.attribute(BusinessTelemetry.AI_MODEL_FAMILY, BusinessTelemetry.modelFamily(writingAssistant.model()));
         telemetry.attribute(
                 BusinessTelemetry.AI_INPUT_SIZE_BUCKET,
                 BusinessTelemetry.modelInputSizeBucket(prompt.sceneText().length(), prompt.truncated())

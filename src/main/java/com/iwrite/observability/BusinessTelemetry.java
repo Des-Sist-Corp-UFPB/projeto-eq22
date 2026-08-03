@@ -12,7 +12,10 @@ import io.opentelemetry.api.trace.StatusCode;
 import io.opentelemetry.api.trace.Tracer;
 import io.opentelemetry.context.Scope;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.regex.Pattern;
@@ -26,10 +29,17 @@ import java.util.regex.Pattern;
  * class changes business behaviour — every telemetry failure is swallowed, and
  * a rejected attribute is dropped rather than reported.
  *
- * <p>Privacy contract: only the keys in {@link #ALLOWED_KEYS} can be written,
- * and every string value must match {@link #CONTROLLED_VALUE} while not looking
- * like a UUID. Manuscript content, titles, focus text, prompts, model answers,
- * e-mails, tokens and identifiers cannot pass those two filters.
+ * <p>Privacy contract: only the keys in {@link #ALLOWED_KEYS} can be written.
+ * Every key with a fixed set of legitimate values — operation, result, scene
+ * source, size bucket, AI provider, AI model family — is validated against a
+ * small closed vocabulary in {@link #CLOSED_VOCABULARIES}: a value outside
+ * that vocabulary is dropped, never forwarded as-is. This is what stops a
+ * misconfigured value (e.g. a credential placed in {@code OPENAI_MODEL}) from
+ * being exported; {@link #modelFamily(String)} in particular never lets the
+ * raw model string reach a span. The one remaining open-ended string
+ * attribute, {@code iwrite.error.type}, only ever receives an exception's
+ * simple class name, so it keeps the shape filter in {@link #isControlled}
+ * instead, with a credential-prefix rejection as an extra layer.
  *
  * <p>Duration unit: milliseconds, recorded from {@link System#nanoTime()}.
  */
@@ -68,6 +78,20 @@ public class BusinessTelemetry {
     public static final String SOURCE_RESTORE = "restore";
     public static final String SOURCE_OTHER = "other";
 
+    public static final String PROVIDER_OPENAI = "openai";
+    public static final String PROVIDER_DISABLED = "disabled";
+
+    /**
+     * Small, explicit set of model families. {@link #modelFamily(String)} is
+     * the only place allowed to turn a configured model identifier (which may
+     * be anything, including a misplaced credential) into one of these.
+     */
+    public static final String MODEL_FAMILY_GPT_4O = "gpt-4o";
+    public static final String MODEL_FAMILY_GPT_4_1 = "gpt-4.1";
+    public static final String MODEL_FAMILY_GPT_5 = "gpt-5";
+    public static final String MODEL_FAMILY_OTHER = "other";
+    public static final String MODEL_FAMILY_UNKNOWN = "unknown";
+
     public static final AttributeKey<String> OPERATION = AttributeKey.stringKey("iwrite.operation");
     public static final AttributeKey<String> RESULT = AttributeKey.stringKey("iwrite.result");
     public static final AttributeKey<String> ERROR_TYPE = AttributeKey.stringKey("iwrite.error.type");
@@ -81,7 +105,7 @@ public class BusinessTelemetry {
             AttributeKey.stringKey("iwrite.ai.input_size_bucket");
     public static final AttributeKey<Boolean> AI_FALLBACK_USED = AttributeKey.booleanKey("iwrite.ai.fallback_used");
     public static final AttributeKey<String> AI_PROVIDER = AttributeKey.stringKey("iwrite.ai.provider");
-    public static final AttributeKey<String> AI_MODEL = AttributeKey.stringKey("iwrite.ai.model");
+    public static final AttributeKey<String> AI_MODEL_FAMILY = AttributeKey.stringKey("iwrite.ai.model_family");
 
     /** Metric labels stay at these two on purpose; nothing else is ever attached. */
     private static final AttributeKey<String> METRIC_OPERATION = AttributeKey.stringKey("operation");
@@ -98,7 +122,7 @@ public class BusinessTelemetry {
             AI_INPUT_SIZE_BUCKET,
             AI_FALLBACK_USED,
             AI_PROVIDER,
-            AI_MODEL
+            AI_MODEL_FAMILY
     );
 
     private static final Map<String, Set<String>> ALLOWED_RESULTS = Map.of(
@@ -108,15 +132,45 @@ public class BusinessTelemetry {
             Set.of(RESULT_SUCCESS, RESULT_VALIDATION_ERROR, RESULT_PROVIDER_ERROR, RESULT_INVALID_RESPONSE, RESULT_FAILURE)
     );
 
+    private static final Set<String> SIZE_BUCKETS =
+            Set.of(BUCKET_EMPTY, BUCKET_SMALL, BUCKET_MEDIUM, BUCKET_LARGE, BUCKET_TRUNCATED);
+
     /**
-     * Short identifier shape: no whitespace, no accents, no {@code @}, at most
-     * 64 characters. Free text, e-mails and manuscript excerpts cannot match it.
+     * Primary barrier for every string attribute with a fixed set of
+     * legitimate values: a value outside the vocabulary for its key is
+     * dropped, regardless of shape. {@link #ERROR_TYPE} is deliberately
+     * absent — it is the one attribute without a closed vocabulary, and
+     * falls back to {@link #isControlled} instead.
+     */
+    private static final Map<AttributeKey<String>, Set<String>> CLOSED_VOCABULARIES = Map.of(
+            SCENE_SOURCE, Set.of(SOURCE_MANUAL_SAVE, SOURCE_AUTOSAVE, SOURCE_RESTORE, SOURCE_OTHER),
+            SCENE_CONTENT_SIZE_BUCKET, SIZE_BUCKETS,
+            AI_INPUT_SIZE_BUCKET, SIZE_BUCKETS,
+            AI_PROVIDER, Set.of(PROVIDER_OPENAI, PROVIDER_DISABLED),
+            AI_MODEL_FAMILY, Set.of(
+                    MODEL_FAMILY_GPT_4O, MODEL_FAMILY_GPT_4_1, MODEL_FAMILY_GPT_5,
+                    MODEL_FAMILY_OTHER, MODEL_FAMILY_UNKNOWN)
+    );
+
+    /**
+     * Fallback shape filter for {@link #ERROR_TYPE}, the one string attribute
+     * without a closed vocabulary: short identifier shape, no whitespace, no
+     * accents, no {@code @}, at most 64 characters. Free text, e-mails and
+     * manuscript excerpts cannot match it.
      */
     private static final Pattern CONTROLLED_VALUE = Pattern.compile("[A-Za-z0-9][A-Za-z0-9._:/-]{0,63}");
 
     /** Second filter: a value shaped like a UUID is rejected even if short. */
     private static final Pattern UUID_LIKE =
             Pattern.compile("(?i)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}");
+
+    /**
+     * Third filter, additional defense-in-depth and not the primary barrier:
+     * rejects common credential/token prefixes outright, even though they
+     * would otherwise match {@link #CONTROLLED_VALUE}.
+     */
+    private static final Pattern CREDENTIAL_LIKE = Pattern.compile(
+            "(?i)^(sk|pk|rk)[-_]|^gh[opsu]_|^github_pat_|^bearer[-_ ]|^eyj");
 
     private static final int SMALL_MAX_CHARS = 2_000;
     private static final int MEDIUM_MAX_CHARS = 20_000;
@@ -177,7 +231,40 @@ public class BusinessTelemetry {
     private static boolean isControlled(String value) {
         return value != null
                 && CONTROLLED_VALUE.matcher(value).matches()
-                && !UUID_LIKE.matcher(value).matches();
+                && !UUID_LIKE.matcher(value).matches()
+                && !CREDENTIAL_LIKE.matcher(value).find();
+    }
+
+    /**
+     * Normalizes a configured model identifier (e.g. {@code OPENAI_MODEL})
+     * into one of {@link #MODEL_FAMILY_GPT_4O}, {@link #MODEL_FAMILY_GPT_4_1},
+     * {@link #MODEL_FAMILY_GPT_5}, {@link #MODEL_FAMILY_OTHER} or
+     * {@link #MODEL_FAMILY_UNKNOWN}. {@code rawModel} is read only for this
+     * prefix comparison and is never attached to a span or metric.
+     */
+    public static String modelFamily(String rawModel) {
+        if (rawModel == null || rawModel.isBlank()) {
+            return MODEL_FAMILY_UNKNOWN;
+        }
+        String normalized = rawModel.trim().toLowerCase(Locale.ROOT);
+        if (normalized.startsWith("gpt-4o")) {
+            return MODEL_FAMILY_GPT_4O;
+        }
+        if (normalized.startsWith("gpt-4.1")) {
+            return MODEL_FAMILY_GPT_4_1;
+        }
+        if (normalized.startsWith("gpt-5")) {
+            return MODEL_FAMILY_GPT_5;
+        }
+        return MODEL_FAMILY_OTHER;
+    }
+
+    private static boolean isAllowedValue(AttributeKey<String> key, String value) {
+        if (value == null || !ALLOWED_KEYS.contains(key)) {
+            return false;
+        }
+        Set<String> vocabulary = CLOSED_VOCABULARIES.get(key);
+        return vocabulary != null ? vocabulary.contains(value) : isControlled(value);
     }
 
     /**
@@ -192,6 +279,7 @@ public class BusinessTelemetry {
         private final Scope scope;
         private String result;
         private boolean ended;
+        private boolean failed;
 
         private Operation(String spanName, String operation) {
             this.operation = operation;
@@ -211,7 +299,7 @@ public class BusinessTelemetry {
         }
 
         public Operation attribute(AttributeKey<String> key, String value) {
-            if (!ended && ALLOWED_KEYS.contains(key) && isControlled(value)) {
+            if (!ended && isAllowedValue(key, value)) {
                 setSafely(key, value);
             }
             return this;
@@ -242,6 +330,7 @@ public class BusinessTelemetry {
         public Operation failure(String result, Throwable failure) {
             result(result);
             if (!ended) {
+                failed = true;
                 try {
                     span.setStatus(StatusCode.ERROR);
                 } catch (RuntimeException telemetryFailure) {
@@ -252,6 +341,52 @@ public class BusinessTelemetry {
                 }
             }
             return this;
+        }
+
+        /**
+         * Defers {@link #close()} until the current transaction finishes, so
+         * flush/commit time counts toward the span and a failure that only
+         * surfaces at commit is not reported as {@code success}. Returns
+         * {@code false} when no transaction synchronization is active or
+         * registration fails; the caller must then call {@link #close()}
+         * itself (typically in a {@code finally} block).
+         *
+         * <p>On a non-committed completion (rollback or unknown), a result
+         * not already classified via {@link #failure(String, Throwable)} is
+         * demoted to {@link #RESULT_FAILURE} and the span is marked
+         * {@link StatusCode#ERROR}. No exception type or message is
+         * invented: the callback has no safe access to the cause.
+         */
+        public boolean deferCloseToTransaction() {
+            try {
+                if (ended || !TransactionSynchronizationManager.isSynchronizationActive()) {
+                    return false;
+                }
+                TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                    @Override
+                    public void afterCompletion(int status) {
+                        if (status != TransactionSynchronization.STATUS_COMMITTED) {
+                            demoteToFailure();
+                        }
+                        close();
+                    }
+                });
+                return true;
+            } catch (RuntimeException telemetryFailure) {
+                // telemetry must never break the business operation
+                return false;
+            }
+        }
+
+        private void demoteToFailure() {
+            try {
+                if (!failed) {
+                    result = RESULT_FAILURE;
+                }
+                span.setStatus(StatusCode.ERROR);
+            } catch (RuntimeException telemetryFailure) {
+                // telemetry must never break the business operation
+            }
         }
 
         /** Ends the span and records both metrics. Safe to call twice. */

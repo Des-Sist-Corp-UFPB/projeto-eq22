@@ -38,12 +38,51 @@ Só a **API** entra em `compile`. Nenhum SDK de produção concorre com o agente
 `com.iwrite.observability.BusinessTelemetry` concentra span, cronômetro (`System.nanoTime()`), counter, histograma, chaves de atributo permitidas, normalização de resultado, buckets de tamanho e tratamento seguro de falhas. Os serviços só abrem uma `Operation`, marcam atributos e classificam o resultado.
 
 ```java
-try (BusinessTelemetry.Operation telemetry = businessTelemetry.sceneContentSave()) {
+try (BusinessTelemetry.Operation telemetry = businessTelemetry.sceneAnalysis()) {
     // corpo de negócio inalterado
 }
 ```
 
 A `Operation` torna o span **corrente** enquanto está aberta, então spans automáticos gerados dentro dela (JDBC, HTTP client) ficam aninhados sob o span de negócio, que por sua vez é filho do span HTTP do agente.
+
+### Ciclo de vida do span em `updateContent`: acompanha a transação, não o retorno do método
+
+`SceneAnalysisService.analyze` não é `@Transactional`, então `try`-with-resources fecha a `Operation` no retorno do método sem perda: não há commit pendente depois dele.
+
+`SceneService.updateContent` **é** `@Transactional`. O proxy do Spring inicia a transação antes de chamar o método e só faz `flush`/commit **depois** que ele retorna. Fechar a `Operation` com `try`-with-resources nesse caso classificaria o span como `success` antes de o commit acontecer — uma falha exclusiva do flush/commit apareceria para o cliente como erro HTTP enquanto o span e a métrica de negócio já teriam sido gravados como sucesso.
+
+Por isso `updateContent` não usa `try`-with-resources. Em vez disso:
+
+```java
+BusinessTelemetry.Operation telemetry = businessTelemetry.sceneContentSave();
+boolean closesWithTransaction = telemetry.deferCloseToTransaction();
+try {
+    return updateContent(sceneId, request, telemetry);
+} catch (ConflictException conflict) {
+    telemetry.failure(BusinessTelemetry.RESULT_CONFLICT, conflict);
+    throw conflict;
+} catch (RuntimeException failure) {
+    telemetry.failure(BusinessTelemetry.RESULT_FAILURE, failure);
+    throw failure;
+} finally {
+    if (!closesWithTransaction) {
+        telemetry.close();
+    }
+}
+```
+
+`Operation.deferCloseToTransaction()` registra um `TransactionSynchronization` via `TransactionSynchronizationManager` quando há sincronização transacional ativa, e devolve `true`. Nesse caso o método **não fecha o span ao retornar**: o `afterCompletion` do callback é quem fecha, depois que o proxy já fez `flush` e commit (ou rollback) — a duração do span passa a incluir esse tempo. Quando não há transação ativa (ou o registro falha), `deferCloseToTransaction()` devolve `false` e o `finally` fecha a `Operation` imediatamente, exatamente como antes.
+
+Como o `afterCompletion` roda no mesmo thread, antes de o proxy devolver o controle ao chamador, o `Scope` é sempre fechado exatamente uma vez, no lugar certo — nunca vaza para fora da requisição.
+
+No callback:
+
+| `afterCompletion(status)` | Efeito no resultado já registrado |
+|---|---|
+| `STATUS_COMMITTED` | Mantém o resultado como estava (inclui `success`, `no_change`, `idempotent_retry`, `conflict`) |
+| `STATUS_ROLLED_BACK` ou `STATUS_UNKNOWN` | Um resultado já classificado por `failure(...)` (ex.: `conflict`) é preservado; qualquer outro — inclusive `success`, `no_change` e `idempotent_retry` — é rebaixado para `failure`. O span sempre recebe `StatusCode.ERROR`. Nenhuma mensagem ou tipo de exceção é inventado: o callback não tem acesso seguro à causa. |
+
+Falha ao registrar a sincronização (infraestrutura de telemetria) nunca propaga: `deferCloseToTransaction()` engole `RuntimeException` e devolve `false`, caindo no fechamento imediato pelo `finally`.
 
 ## Spans
 
@@ -96,8 +135,8 @@ Só estas chaves podem ser escritas; qualquer outra é descartada.
 | `iwrite.ai.focus_present` | booleano |
 | `iwrite.ai.input_size_bucket` | `small`, `medium`, `large`, `truncated` |
 | `iwrite.ai.fallback_used` | booleano |
-| `iwrite.ai.provider` | identificador configurado (`openai`, `disabled`) |
-| `iwrite.ai.model` | identificador configurado (ex.: `gpt-4o-mini`) |
+| `iwrite.ai.provider` | `openai`, `disabled` |
+| `iwrite.ai.model_family` | `gpt-4o`, `gpt-4.1`, `gpt-5`, `other`, `unknown` |
 | `iwrite.error.type` | nome simples da classe da exceção (só em falha) |
 
 ### Buckets de tamanho
@@ -136,16 +175,17 @@ Nunca aparecem como atributo, evento, nome de span, nome de métrica, label ou m
 
 `sceneId`, `bookId`, `tenantId`, `contentJson`, `contentText`, título, resumo, `focus`, prompt, resposta da IA, e-mail, token, API key, header, `operationId`, `requestFingerprint`, revisão exata, tamanho exato, mensagem completa de exceção e qualquer texto livre do usuário.
 
-Duas barreiras no `BusinessTelemetry` garantem isso mesmo diante de um erro de chamada futuro:
+Barreiras no `BusinessTelemetry` garantem isso mesmo diante de um erro de chamada futuro:
 
 1. **Chave na allowlist** — atributo com chave fora da lista acima é descartado.
-2. **Valor controlado** — string precisa casar `[A-Za-z0-9][A-Za-z0-9._:/-]{0,63}` e **não** ter formato UUID. Texto com espaços ou acentos, e-mail (`@`), `Bearer <token>`, JSON e UUID falham no filtro e são descartados silenciosamente.
+2. **Vocabulário fechado por atributo (barreira principal)** — `iwrite.scene.source`, os buckets de tamanho, `iwrite.ai.provider` e `iwrite.ai.model_family` só aceitam um conjunto pequeno e explícito de valores (`CLOSED_VOCABULARIES`); qualquer string fora desse conjunto é descartada, **independentemente do formato**. É essa barreira, e não uma lista de prefixos proibidos, que impede uma credencial colocada em `OPENAI_MODEL` de aparecer em `iwrite.ai.model_family`: `BusinessTelemetry.modelFamily(...)` normaliza o identificador configurado para um dos cinco valores da tabela acima e **nunca** encaminha o valor bruto para o span.
+3. **Filtro de formato (só para `iwrite.error.type`)** — o único atributo de string sem vocabulário fechado, porque só recebe o nome simples de uma classe de exceção. A string precisa casar `[A-Za-z0-9][A-Za-z0-9._:/-]{0,63}`, não ter formato UUID e não começar com um prefixo de credencial conhecido (`sk-`, `ghp_`, `github_pat_`, `Bearer-`, `eyJ...`, etc.) — essa última checagem é uma camada adicional, não a barreira principal. Texto com espaços ou acentos, e-mail (`@`) e JSON falham no filtro e são descartados silenciosamente.
 
 Resultado fora do vocabulário da operação é normalizado para `failure`, então uma string livre jamais vira label de métrica.
 
 ## Falha de telemetria não derruba a operação
 
-Toda escrita de span/métrica está em `try/catch` que engole `RuntimeException`. Se o tracer falhar na criação, a `Operation` cai para `Span.getInvalid()` + `Scope.noop()` e o fluxo de negócio segue normalmente. Sem agente, tudo vira no-op.
+Toda escrita de span/métrica está em `try/catch` que engole `RuntimeException`. Se o tracer falhar na criação, a `Operation` cai para `Span.getInvalid()` + `Scope.noop()` e o fluxo de negócio segue normalmente. Sem agente, tudo vira no-op. `deferCloseToTransaction()` segue a mesma regra: se registrar a sincronização falhar, ela devolve `false` em vez de propagar, e o `finally` do chamador fecha a `Operation` imediatamente.
 
 ## Testes
 
@@ -155,9 +195,9 @@ Toda escrita de span/métrica está em `try/catch` que engole `RuntimeException`
 
 | Arquivo | Cobre |
 |---|---|
-| `BusinessTelemetryTest` | span + counter + histograma, aninhamento sob pai, sucesso ≠ falha, só nome de classe da exceção, descarte de valor/chave inválidos, normalização de resultado, labels limitadas, buckets, no-op sem SDK, `close()` idempotente |
-| `SceneAnalysisTelemetryTest` | serviço real com SDK em memória: sucesso, aninhamento, fallback só booleano, `validation_error`, `provider_error` sem vazar mensagem, `invalid_response`, bucket `truncated`, ausência de conteúdo/título/focus/resposta/UUID |
-| `SceneContentSaveTelemetryIntegrationTest` | fluxo real contra PostgreSQL: `success`, `autosave` vs `manual_save`, `no_change`, `idempotent_retry`, `conflict`, aninhamento sob span HTTP |
+| `BusinessTelemetryTest` | span + counter + histograma, aninhamento sob pai, sucesso ≠ falha, só nome de classe da exceção, descarte de valor/chave inválidos, normalização de resultado, labels limitadas, buckets, no-op sem SDK, `close()` idempotente, ciclo de vida `deferCloseToTransaction()` (span aberto até a conclusão, commit vira sucesso, rollback rebaixa sucesso/`no_change`/`idempotent_retry` para falha, `conflict` já classificado sobrevive ao rollback, `STATUS_UNKNOWN` nunca vira sucesso, ausência de transação não vaza span/`Scope`, falha ao registrar a sincronização não quebra o negócio), `modelFamily(...)` normaliza para o vocabulário fechado, vocabulário fechado aceita todo valor válido e rejeita todo canário de credencial em qualquer atributo exportado |
+| `SceneAnalysisTelemetryTest` | serviço real com SDK em memória: sucesso, aninhamento, fallback só booleano, `validation_error`, `provider_error` sem vazar mensagem, `invalid_response`, bucket `truncated`, ausência de conteúdo/título/focus/resposta/UUID, `iwrite.ai.model_family` para modelo reconhecido/desconhecido/ausente/em formato de credencial |
+| `SceneContentSaveTelemetryIntegrationTest` | fluxo real contra PostgreSQL: `success`, `autosave` vs `manual_save`, `no_change`, `idempotent_retry`, `conflict`, aninhamento sob span HTTP, rollback de uma transação externa **depois** de `updateContent` já ter retornado com sucesso rebaixa o span para `failure` |
 
 Os testes usam exporters em memória e verificam os spans e métricas **efetivamente produzidos** — nenhum deles procura strings no código-fonte.
 
@@ -356,6 +396,66 @@ Só `operation` e `result` vêm da instrumentação. As demais são labels de **
 
 Varredura nos seis traces do período procurando os textos privados usados no teste (`"texto novo salvo manualmente"`, `"autosave incremental"`, título do livro, `focus` enviado, resposta do modelo e a credencial falsa do stub): **nenhuma ocorrência**. A checagem de indicadores de credencial no Loki (`Authorization|Bearer|sk-`) também retornou vazio. Todos os `db.statement` aparecem parametrizados, só com `?`.
 
+## Evidência da correção dos dois P2 do Codex (2026-08-03, LGTM local, head `db57fe1` + correções)
+
+Mesma stack (`docker compose -p iwrite-otel -f docker-compose.yml -f docker-compose.observability.yml -f docker-compose.llm-stub.yml`), agente 2.30.0. Reproduz as duas correções descritas em "Ciclo de vida do span em `updateContent`" e "Atributos permitidos" acima.
+
+### 1. O span de salvamento agora inclui o commit da transação
+
+Trace de salvamento bem-sucedido (`PATCH`, 396 ms no total):
+
+```text
+396.1ms  PATCH /api/scenes/{sceneId}/content          (agente)
+349.9ms  └─ iwrite.scene.content.save                 (manual)
+              iwrite.result = success
+   …        ├─ SELECT/UPDATE/INSERT (jdbc + hibernate, ~20 spans)
+ 66.4ms      └─ Transaction.commit                    (hibernate-6.0)
+```
+
+`Transaction.commit` (66,4 ms) é filho direto de `iwrite.scene.content.save` — o commit acontece **dentro** do span de negócio, não depois dele. Antes da correção o span fechava no retorno do método Java, antes do proxy `@Transactional` chamar commit; agora `Operation.deferCloseToTransaction()` só fecha em `afterCompletion`, então o commit está incluído na duração e uma falha de commit seria classificada como `failure`, não `success` (comportamento validado por teste, não reproduzido ao vivo — ver limitações abaixo).
+
+Também encontrados nesta rodada, cada um pelo próprio atributo:
+
+| Consulta TraceQL | Resultado |
+|---|---|
+| `{ name = "iwrite.scene.content.save" && span.iwrite.result = "success" }` | encontrado |
+| `{ name = "iwrite.scene.content.save" && span.iwrite.result = "conflict" }` | encontrado |
+| `{ name = "iwrite.scene.analysis" && span.iwrite.result = "success" }` | encontrado |
+| `{ name = "iwrite.scene.analysis" && span.iwrite.ai.model_family = "gpt-4o" }` | encontrado (modelo configurado `gpt-4o-mini`, sem override) |
+| `{ name = "iwrite.scene.analysis" && span.iwrite.ai.model_family = "other" }` | encontrado (backend recriado com `OPENAI_MODEL=sk-test-canary`) |
+
+Métricas com labels só `operation`/`result` confirmadas de novo via `iwrite_business_operation_count_total` — nenhuma label nova alterou a cardinalidade.
+
+### 2. Nenhum atributo `iwrite.ai.model` (bruto ou não) chega ao span; `iwrite.ai.model_family` sempre no vocabulário fechado
+
+Com `OPENAI_MODEL=sk-test-canary` configurado no backend (via override de `docker compose`, não commitado), o span de análise correspondente trouxe:
+
+```text
+iwrite.ai.provider      = openai
+iwrite.ai.model_family  = other
+```
+
+Não existe atributo `iwrite.ai.model` em nenhum span — o atributo foi removido, substituído por `iwrite.ai.model_family`.
+
+Busca pelos canários no JSON completo dos dois traces de análise (modelo reconhecido e modelo-canário) e nos logs do Loki do período:
+
+```text
+sk-test-canary                          -> não encontrado
+sk-proj-test-canary                     -> não encontrado
+Bearer-test-canary                      -> não encontrado
+ghp_test_canary                         -> não encontrado
+github_pat_test_canary                  -> não encontrado
+eyJhbGciOiJIUzI1NiJ9.test.signature     -> não encontrado
+email@example.com                       -> não encontrado
+```
+
+Nenhum canário apareceu em nenhum span, atributo, evento ou linha de log — nem mesmo o canário que foi realmente usado como valor de `OPENAI_MODEL` nesta rodada (`sk-test-canary`).
+
+### Limitações desta rodada
+
+- **Falha de commit não foi provocada ao vivo.** Forçar um `flush`/commit falhar sem alterar código de produção (sem `sleep`, sem `flush()` artificial, sem endpoint novo) não é reproduzível de forma limpa via API neste ambiente; essa cobertura vem do teste de integração `SceneContentSaveTelemetryIntegrationTest.rollbackAfterTheTransactionalMethodReturnsDemotesSuccessToFailure`, que rola de volta uma transação real do Postgres **depois** que `updateContent` já retornou com sucesso e comprova que o span vira `failure`.
+- **O override `OPENAI_MODEL=sk-test-canary`** existiu apenas no container local desta coleta (arquivo de override fora do repositório), nunca em `docker-compose.llm-stub.yml` nem em qualquer arquivo versionado.
+
 <a id="gargalo"></a>
 
 ## Gargalo
@@ -393,7 +493,6 @@ O planejador **ignora** `idx_scenes_book_id` e varre a tabela `scenes` inteira �
 
 - **O atraso do provider é sintético.** Os 2 500 ms vêm do stub local, não de um modelo real. A proporção entre as etapas é evidência sólida; o valor absoluto não é.
 - **`sumWordCountByBookId` foi medida com 400 cenas em Postgres local com cache quente.** Um manuscrito real maior, disco mais lento ou concorrência mudam o número; a forma do plano (Seq Scan) é o que se sustenta.
-- **O span de negócio termina antes do commit da transação.** `updateContent` é `@Transactional` e o proxy do Spring faz commit depois que o método retorna, então uma falha que só apareça no flush/commit é classificada como `success` no span, enquanto o cliente recebe erro. As métricas HTTP do agente continuam refletindo o status real.
 - **`iwrite.ai.fallback_used` é sempre `false` hoje.** `LlmCallResult.withFallbackUsed()` não é acionado por nenhum caminho de produção. O atributo existe para quando um fallback for introduzido; os testes cobrem os dois valores.
 - **Volume pequeno.** Cerca de uma dúzia de requisições, uma instância, um tenant. Serve para provar existência, aninhamento, classificação e cardinalidade dos sinais — não para caracterizar performance de produção.
 - **`truncated` não foi observado no salvamento**, apenas no vocabulário. Só a análise trunca entrada.

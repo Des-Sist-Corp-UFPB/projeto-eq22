@@ -8,6 +8,7 @@ import com.iwrite.scene.dto.SceneResponse;
 import com.iwrite.sceneversion.entity.SceneVersionSource;
 import com.iwrite.support.PostgresIntegrationTest;
 import io.opentelemetry.api.trace.Span;
+import io.opentelemetry.api.trace.StatusCode;
 import io.opentelemetry.context.Scope;
 import io.opentelemetry.sdk.trace.data.SpanData;
 import org.junit.jupiter.api.BeforeEach;
@@ -16,6 +17,10 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.List;
 import java.util.UUID;
@@ -27,8 +32,18 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * Runs the real scene-content-save flow against PostgreSQL with an in-memory
  * OpenTelemetry SDK swapped in for the global one, and asserts the spans and
  * metrics that reach the exporter.
+ *
+ * <p>{@code updateContent} now defers closing its telemetry span until its
+ * own transaction actually completes (see {@link BusinessTelemetry.Operation
+ * #deferCloseToTransaction()}). {@link PostgresIntegrationTest} runs every
+ * test inside one outer Spring-managed transaction that only rolls back
+ * *after* the test method returns, which would delay every span past this
+ * class's own assertions. {@code NOT_SUPPORTED} opts this class out of that
+ * wrapper so {@code updateContent}'s own {@code @Transactional} is really the
+ * outermost boundary and commits per call, exactly like a real HTTP request.
  */
 @SpringBootTest(properties = "spring.main.allow-bean-definition-overriding=true")
+@Transactional(propagation = Propagation.NOT_SUPPORTED)
 class SceneContentSaveTelemetryIntegrationTest extends PostgresIntegrationTest {
 
     private static final String PRIVATE_TEXT = "A porta se abriu devagar e o quarto prendeu a respiracao.";
@@ -49,6 +64,9 @@ class SceneContentSaveTelemetryIntegrationTest extends PostgresIntegrationTest {
 
     @Autowired
     private RecordingTelemetry recording;
+
+    @Autowired
+    private PlatformTransactionManager transactionManager;
 
     @BeforeEach
     void resetSpans() {
@@ -182,6 +200,32 @@ class SceneContentSaveTelemetryIntegrationTest extends PostgresIntegrationTest {
         assertThat(recording.counterValue(
                 BusinessTelemetry.OPERATION_SCENE_CONTENT_SAVE,
                 BusinessTelemetry.RESULT_CONFLICT)).isPositive();
+    }
+
+    @Test
+    void rollbackAfterTheTransactionalMethodReturnsDemotesSuccessToFailure() {
+        StoryWorld world = createStoryWorld("telemetry save rollback after return");
+        TransactionTemplate outerTransaction = new TransactionTemplate(transactionManager);
+
+        /*
+         * updateContent() joins this already-active outer transaction (default
+         * REQUIRED propagation) and returns a successful SceneResponse. The
+         * failure below happens only after that return, entirely outside
+         * updateContent's own body, forcing the surrounding transaction to
+         * roll back the content it already saved.
+         */
+        assertThatThrownBy(() -> outerTransaction.execute(status -> {
+            sceneService.updateContent(
+                    world.scene().id(),
+                    new SceneContentRequest("{}", "saved then rolled back", SceneVersionSource.MANUAL_SAVE,
+                            world.scene().contentRevision(), UUID.randomUUID())
+            );
+            throw new IllegalStateException("simulated failure after the transactional method already returned");
+        })).isInstanceOf(IllegalStateException.class);
+
+        SpanData span = recording.span(BusinessTelemetry.SPAN_SCENE_CONTENT_SAVE);
+        assertThat(span.getAttributes().get(BusinessTelemetry.RESULT)).isEqualTo(BusinessTelemetry.RESULT_FAILURE);
+        assertThat(span.getStatus().getStatusCode()).isEqualTo(StatusCode.ERROR);
     }
 
     @Test

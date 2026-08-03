@@ -113,7 +113,8 @@ class SceneAnalysisTelemetryTest {
         assertThat(span.getAttributes().get(BusinessTelemetry.AI_INPUT_SIZE_BUCKET))
                 .isEqualTo(BusinessTelemetry.BUCKET_SMALL);
         assertThat(span.getAttributes().get(BusinessTelemetry.AI_PROVIDER)).isEqualTo("openai");
-        assertThat(span.getAttributes().get(BusinessTelemetry.AI_MODEL)).isEqualTo("gpt-4o-mini");
+        assertThat(span.getAttributes().get(BusinessTelemetry.AI_MODEL_FAMILY))
+                .isEqualTo(BusinessTelemetry.MODEL_FAMILY_GPT_4O);
         assertThat(span.getAttributes().get(BusinessTelemetry.AI_FALLBACK_USED)).isFalse();
         assertThat(recording.counterValue(
                 BusinessTelemetry.OPERATION_SCENE_ANALYSIS,
@@ -152,9 +153,54 @@ class SceneAnalysisTelemetryTest {
 
         SpanData span = recording.span(BusinessTelemetry.SPAN_SCENE_ANALYSIS);
         assertThat(span.getAttributes().get(BusinessTelemetry.AI_FALLBACK_USED)).isTrue();
-        // the model attribute stays the configured one; no per-call model string is added
-        assertThat(span.getAttributes().get(BusinessTelemetry.AI_MODEL)).isEqualTo("gpt-4o-mini");
+        // the model family stays the one derived from the configured model; the
+        // per-call model string in the LLM result never reaches telemetry
+        assertThat(span.getAttributes().get(BusinessTelemetry.AI_MODEL_FAMILY))
+                .isEqualTo(BusinessTelemetry.MODEL_FAMILY_GPT_4O);
         assertThat(span.getAttributes().asMap()).hasSize(7);
+    }
+
+    @Test
+    void anUnrecognizedConfiguredModelBecomesOther() {
+        UUID sceneId = UUID.randomUUID();
+        when(sceneService.getScene(sceneId)).thenReturn(scene(PRIVATE_TEXT));
+        when(writingAssistant.model()).thenReturn("claude-opus-5");
+        when(writingAssistant.analyzeScene(any())).thenReturn(analysis());
+
+        service.analyze(sceneId, null);
+
+        assertThat(recording.span(BusinessTelemetry.SPAN_SCENE_ANALYSIS).getAttributes()
+                .get(BusinessTelemetry.AI_MODEL_FAMILY)).isEqualTo(BusinessTelemetry.MODEL_FAMILY_OTHER);
+    }
+
+    @Test
+    void aBlankConfiguredModelBecomesUnknownAndNeverLeaksTheRawValue() {
+        UUID sceneId = UUID.randomUUID();
+        when(sceneService.getScene(sceneId)).thenReturn(scene(PRIVATE_TEXT));
+        when(writingAssistant.model()).thenReturn(null);
+        when(writingAssistant.analyzeScene(any())).thenReturn(analysis());
+
+        service.analyze(sceneId, null);
+
+        SpanData span = recording.span(BusinessTelemetry.SPAN_SCENE_ANALYSIS);
+        assertThat(span.getAttributes().get(BusinessTelemetry.AI_MODEL_FAMILY))
+                .isEqualTo(BusinessTelemetry.MODEL_FAMILY_UNKNOWN);
+    }
+
+    @Test
+    void aCredentialShapedConfiguredModelIsNeverExported() {
+        UUID sceneId = UUID.randomUUID();
+        String canary = "sk-test-canary";
+        when(sceneService.getScene(sceneId)).thenReturn(scene(PRIVATE_TEXT));
+        when(writingAssistant.model()).thenReturn(canary);
+        when(writingAssistant.analyzeScene(any())).thenReturn(analysis());
+
+        service.analyze(sceneId, null);
+
+        SpanData span = recording.span(BusinessTelemetry.SPAN_SCENE_ANALYSIS);
+        assertThat(span.getAttributes().get(BusinessTelemetry.AI_MODEL_FAMILY))
+                .isEqualTo(BusinessTelemetry.MODEL_FAMILY_OTHER);
+        assertThat(attributeValues(span)).noneMatch(value -> value.contains(canary));
     }
 
     @Test

@@ -196,18 +196,26 @@ public class SceneService {
      * Telemetry wrapper only: the business body below is unchanged, and the
      * span is a child of whatever HTTP trace is active. See
      * docs/otel-business-signals.md.
+     *
+     * The span closes on transaction completion, not on method return: this
+     * method runs inside the @Transactional proxy's transaction, so closing
+     * here would report success before flush/commit has actually happened.
      */
     @Transactional
     public SceneResponse updateContent(UUID sceneId, SceneContentRequest request) {
-        try (BusinessTelemetry.Operation telemetry = businessTelemetry.sceneContentSave()) {
-            try {
-                return updateContent(sceneId, request, telemetry);
-            } catch (ConflictException conflict) {
-                telemetry.failure(BusinessTelemetry.RESULT_CONFLICT, conflict);
-                throw conflict;
-            } catch (RuntimeException failure) {
-                telemetry.failure(BusinessTelemetry.RESULT_FAILURE, failure);
-                throw failure;
+        BusinessTelemetry.Operation telemetry = businessTelemetry.sceneContentSave();
+        boolean closesWithTransaction = telemetry.deferCloseToTransaction();
+        try {
+            return updateContent(sceneId, request, telemetry);
+        } catch (ConflictException conflict) {
+            telemetry.failure(BusinessTelemetry.RESULT_CONFLICT, conflict);
+            throw conflict;
+        } catch (RuntimeException failure) {
+            telemetry.failure(BusinessTelemetry.RESULT_FAILURE, failure);
+            throw failure;
+        } finally {
+            if (!closesWithTransaction) {
+                telemetry.close();
             }
         }
     }
