@@ -111,7 +111,11 @@ IWRITE_CREDENTIAL_PROVISIONING_PASSWORD='<escolha uma senha local>' \
 
 ## Frontend local
 
-O app Next.js fica em `web/` e usa `NEXT_PUBLIC_API_URL=http://localhost:8085` por padrão.
+O app Next.js fica em `web/` e usa `BACKEND_ORIGIN=http://localhost:8085` por padrão para o rewrite
+de `/api/*` (`web/next.config.ts`). `NEXT_PUBLIC_API_URL` ainda é aceita como compatibilidade legada
+quando `BACKEND_ORIGIN` não está definida, mas está depreciada — configure `BACKEND_ORIGIN` em
+implantações novas. Um valor definido (em qualquer uma das duas) que não seja uma URL absoluta válida
+falha o build em vez de cair silenciosamente no padrão local.
 
 ```bash
 cd web
@@ -125,7 +129,8 @@ Banco e runtime:
 
 - `DB_URL`, `DB_USERNAME`, `DB_PASSWORD`: conexão PostgreSQL.
 - `SERVER_PORT`: porta do backend; padrão `8085`.
-- `NEXT_PUBLIC_API_URL`: URL pública da API para o frontend.
+- `BACKEND_ORIGIN`: origem do backend usada pelo rewrite de `/api/*` do frontend (server-side; nunca chega ao navegador).
+- `NEXT_PUBLIC_API_URL`: **legada/depreciada** — usada apenas quando `BACKEND_ORIGIN` não está definida; mantida por compatibilidade com implantações existentes.
 - `IWRITE_DEVELOPMENT_CURRENT_USER_ENABLED`: habilita somente a identidade temporária de desenvolvimento.
 - `IWRITE_DEVELOPMENT_CURRENT_USER_ID`, `IWRITE_DEVELOPMENT_TENANT_ID`, `IWRITE_DEVELOPMENT_TIME_ZONE_ID`: identidade temporária local.
 - `IWRITE_CREDENTIAL_PROVISIONING_ENABLED`, `IWRITE_CREDENTIAL_PROVISIONING_EMAIL`, `IWRITE_CREDENTIAL_PROVISIONING_PASSWORD`: provisiona a credencial de login de um usuário já existente (nunca cria um usuário); sem padrão de senha, remova as três depois de usar. Ver [docs/authentication-multitenancy.md](docs/authentication-multitenancy.md).

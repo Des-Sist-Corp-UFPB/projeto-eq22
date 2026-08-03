@@ -22,7 +22,12 @@ FROM node:24-alpine AS frontend-build
 
 WORKDIR /frontend
 
-ENV NEXT_PUBLIC_API_URL=""
+
+# next build bakes the rewrite destination into .next/routes-manifest.json, so it has to be known
+# here at build time. This image runs frontend and backend in the same container, backend on
+# 127.0.0.1:8085 — the same value next.config.ts would fall back to anyway; set explicitly so the
+# intent does not depend on that default.
+ENV BACKEND_ORIGIN="http://127.0.0.1:8085"
 
 COPY --from=frontend-deps /frontend/node_modules ./node_modules
 COPY web/ .
