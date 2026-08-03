@@ -54,6 +54,15 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
   return (await response.json()) as T;
 }
 
+export async function readErrorMessage(response: Response) {
+  try {
+    const data = (await response.json()) as { messages?: string[]; error?: string };
+    return data.messages?.join(", ") ?? data.error ?? `HTTP ${response.status}`;
+  } catch {
+    return `HTTP ${response.status}`;
+  }
+}
+
 /**
  * The backend issues the token as a readable cookie and expects it echoed as a header. Fetching
  * {@link CSRF_PATH} is what mints it, so an unauthenticated first mutation (the login itself) still
@@ -72,13 +81,4 @@ async function requireCsrfToken(): Promise<string> {
 function readCsrfCookie(): string | undefined {
   const match = document.cookie.split("; ").find((entry) => entry.startsWith(`${CSRF_COOKIE}=`));
   return match ? decodeURIComponent(match.slice(CSRF_COOKIE.length + 1)) : undefined;
-}
-
-async function readErrorMessage(response: Response) {
-  try {
-    const data = (await response.json()) as { messages?: string[]; error?: string };
-    return data.messages?.join(", ") ?? data.error ?? `HTTP ${response.status}`;
-  } catch {
-    return `HTTP ${response.status}`;
-  }
 }
