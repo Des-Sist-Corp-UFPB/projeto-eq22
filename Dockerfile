@@ -49,6 +49,11 @@ COPY --from=backend-build \
 
 COPY --from=frontend-build /frontend/package.json /app/frontend/package.json
 COPY --from=frontend-build /frontend/next.config.ts /app/frontend/next.config.ts
+# The same custom server web/Dockerfile runs, not `next start`: it strips the forwarding headers a
+# client sends and derives X-Forwarded-For from the socket peer. Without it every login inside this
+# image would reach the backend as 127.0.0.1 and share a single rate-limit bucket. It resolves the
+# Next app directory from its own location, so /app/frontend works here unchanged.
+COPY --from=frontend-build /frontend/server.mjs /app/frontend/server.mjs
 COPY --from=frontend-build /frontend/public /app/frontend/public
 COPY --from=frontend-build /frontend/.next /app/frontend/.next
 COPY --from=frontend-build /frontend/node_modules /app/frontend/node_modules
