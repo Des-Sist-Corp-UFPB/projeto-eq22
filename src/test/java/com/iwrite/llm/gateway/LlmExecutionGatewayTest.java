@@ -1,5 +1,7 @@
 package com.iwrite.llm.gateway;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.spi.ILoggingEvent;
 import com.iwrite.audit.entity.AuditResourceType;
 import com.iwrite.llm.LlmFeature;
 import com.iwrite.llm.LlmTokenUsage;
@@ -10,6 +12,7 @@ import com.iwrite.llm.audit.LlmExecutionStart;
 import com.iwrite.llm.audit.LlmExecutionStatus;
 import com.iwrite.llm.cost.ConfiguredLlmCostEstimator;
 import com.iwrite.llm.cost.LlmPricingProperties;
+import com.iwrite.observability.CapturedLogs;
 import com.iwrite.user.context.CurrentUserProvider;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -318,23 +321,87 @@ class LlmExecutionGatewayTest {
         assertThat(value).isEqualTo("analysis");
     }
 
+    /**
+     * The audit UUID is an execution/audit identifier, never the OpenTelemetry
+     * distributed {@code trace_id}, so its MDC key is named for what it is.
+     */
     @Test
-    void traceIdIsSharedBetweenAuditRowProviderCallAndMdc() {
+    void executionIdIsSharedBetweenAuditRowProviderCallAndMdc() {
         UUID auditId = stubStartedAudit();
         when(auditRecorder.complete(eq(auditId), any())).thenReturn(true);
         AtomicReference<UUID> contextTraceId = new AtomicReference<>();
-        AtomicReference<String> mdcTraceId = new AtomicReference<>();
+        AtomicReference<String> mdcExecutionId = new AtomicReference<>();
 
         gateway.execute(spec(), context -> {
             contextTraceId.set(context.traceId());
-            mdcTraceId.set(MDC.get("llmTraceId"));
+            mdcExecutionId.set(MDC.get("llmExecutionId"));
             return LlmCallResult.of("analysis");
         });
 
         UUID persistedTraceId = capturedStart().traceId();
         assertThat(contextTraceId.get()).isEqualTo(persistedTraceId);
-        assertThat(mdcTraceId.get()).isEqualTo(persistedTraceId.toString());
+        assertThat(mdcExecutionId.get()).isEqualTo(persistedTraceId.toString());
+        assertThat(MDC.get("llmExecutionId")).isNull();
         assertThat(MDC.get("llmTraceId")).isNull();
+    }
+
+    /**
+     * The structured outcome event carries only controlled vocabularies. The
+     * configured model is the dangerous one: {@link LlmExecutionSpec} accepts
+     * any short identifier, so a credential placed in {@code OPENAI_MODEL}
+     * would pass validation — only its model family may reach the event.
+     */
+    @Test
+    void outcomeEventCarriesOnlyControlledMetadataNeverTheRawModel() {
+        UUID auditId = stubStartedAudit();
+        when(auditRecorder.complete(eq(auditId), any())).thenReturn(true);
+
+        try (CapturedLogs logs = new CapturedLogs()) {
+            gateway.execute(
+                    LlmExecutionSpec.of(LlmFeature.SCENE_ANALYSIS, "fake", API_KEY_SAMPLE, "scene-analysis:v1"),
+                    context -> LlmCallResult.of("analysis").withTokenUsage(new LlmTokenUsage(10, 5, 15))
+            );
+
+            ILoggingEvent event = logs.single("iwrite.llm.execution");
+            assertThat(event.getLevel()).isEqualTo(Level.INFO);
+            assertThat(event.getThrowableProxy()).isNull();
+            assertThat(CapturedLogs.keyValues(event))
+                    .containsEntry("iwrite.llm.feature", "SCENE_ANALYSIS")
+                    .containsEntry("iwrite.ai.provider", "unknown")
+                    .containsEntry("iwrite.ai.model_family", "other")
+                    .containsEntry("iwrite.llm.prompt_version", "scene-analysis:v1")
+                    .containsEntry("iwrite.llm.status", "SUCCEEDED")
+                    .containsEntry("iwrite.llm.total_tokens", 15)
+                    .doesNotContainKey("iwrite.llm.model")
+                    .doesNotContainKey("iwrite.llm.execution_id");
+            assertThat(CapturedLogs.allSurfaces(event))
+                    .doesNotContain(API_KEY_SAMPLE)
+                    .doesNotContain(MANUSCRIPT_SAMPLE)
+                    .doesNotContain(TENANT_ID.toString())
+                    .doesNotContain(USER_ID.toString());
+        }
+    }
+
+    @Test
+    void failedOutcomeEventIsWarnAndCarriesNoProviderMessage() {
+        UUID auditId = stubStartedAudit();
+        when(auditRecorder.complete(eq(auditId), any())).thenReturn(true);
+
+        try (CapturedLogs logs = new CapturedLogs()) {
+            assertThatThrownBy(() -> gateway.execute(spec(), context -> {
+                throw new TransientAiException("provider exception with secret " + API_KEY_SAMPLE);
+            })).isInstanceOf(LlmExecutionException.class);
+
+            ILoggingEvent event = logs.single("iwrite.llm.execution");
+            assertThat(event.getLevel()).isEqualTo(Level.WARN);
+            assertThat(event.getThrowableProxy()).isNull();
+            assertThat(CapturedLogs.keyValues(event))
+                    .containsEntry("iwrite.llm.status", "UNAVAILABLE")
+                    .containsEntry("iwrite.error.category", "PROVIDER_UNAVAILABLE");
+            assertThat(CapturedLogs.allSurfaces(event))
+                    .doesNotContain(API_KEY_SAMPLE)
+                    .doesNotContain("provider exception with secret");
+        }
     }
 
     @Test

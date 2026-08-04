@@ -5,18 +5,22 @@ import com.iwrite.llm.audit.LlmExecutionAuditRecorder;
 import com.iwrite.llm.audit.LlmExecutionCompletion;
 import com.iwrite.llm.audit.LlmExecutionStart;
 import com.iwrite.llm.audit.LlmExecutionStatus;
+import com.iwrite.llm.LlmTokenUsage;
 import com.iwrite.llm.cost.LlmCostEstimate;
 import com.iwrite.llm.cost.LlmCostEstimator;
+import com.iwrite.observability.BusinessTelemetry;
 import com.iwrite.user.context.CurrentUserProvider;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
+import org.slf4j.spi.LoggingEventBuilder;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.Clock;
 import java.time.OffsetDateTime;
 import java.util.UUID;
+import java.util.function.Function;
 
 /**
  * Single instrumented entry point for every product LLM execution.
@@ -24,7 +28,10 @@ import java.util.UUID;
  * <p>Responsibilities are fixed here so features cannot diverge: audit-start
  * persistence, provider invocation, latency measurement, error classification,
  * token usage collection, optional cost estimation, terminal audit persistence,
- * and sanitized logging with one trace ID per logical execution.
+ * and sanitized logging with one audit/execution identifier per logical
+ * execution. That identifier ({@code llmExecutionId}) is an audit-table key and
+ * is never the OpenTelemetry distributed {@code trace_id}, which the Java Agent
+ * injects independently; see docs/otel-correlated-logs.md.
  *
  * <p>Transaction contract: this method must be called without an active
  * database transaction, so no connection is held open during the external
@@ -33,13 +40,24 @@ import java.util.UUID;
  * <p>Failure contract: if the start audit cannot be persisted the execution is
  * aborted before the provider is invoked (fail-closed auditing). If a terminal
  * audit write fails after the provider call, the product outcome is preserved
- * and the persistence failure is logged with the trace ID.
+ * and the persistence failure is logged with the audit/execution identifier.
  */
 @Component
 public class LlmExecutionGateway {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(LlmExecutionGateway.class);
-    private static final String TRACE_MDC_KEY = "llmTraceId";
+
+    /**
+     * MDC key for the audit UUID of one execution. Named for what it is — an
+     * execution/audit identifier — because it is <em>not</em> the OpenTelemetry
+     * distributed {@code trace_id}: it correlates log lines with a row in the
+     * LLM audit table, nothing more. It stays out of the OTLP attributes
+     * because MDC capture is deliberately not enabled for the agent.
+     */
+    private static final String EXECUTION_MDC_KEY = "llmExecutionId";
+
+    private static final String EVENT_NAME = "iwrite.llm.execution";
+    private static final String EVENT_MESSAGE = "LLM execution completed";
 
     private final LlmExecutionAuditRecorder auditRecorder;
     private final LlmErrorClassifier errorClassifier;
@@ -69,7 +87,7 @@ public class LlmExecutionGateway {
         long startedNanos = System.nanoTime();
         UUID auditId = recordStart(spec, traceId, startedAt);
 
-        try (MDC.MDCCloseable ignored = MDC.putCloseable(TRACE_MDC_KEY, traceId.toString())) {
+        try (MDC.MDCCloseable ignored = MDC.putCloseable(EXECUTION_MDC_KEY, traceId.toString())) {
             LlmCallResult<T> result;
             try {
                 result = invokeProvider(spec, providerCall, traceId);
@@ -82,7 +100,7 @@ public class LlmExecutionGateway {
                         elapsedMs(startedNanos)
                 );
                 finalizeAudit(auditId, traceId, completion);
-                logOutcome(spec, traceId, completion);
+                logOutcome(spec, completion);
                 throw failure;
             }
 
@@ -96,7 +114,7 @@ public class LlmExecutionGateway {
                     result.fallbackUsed()
             );
             finalizeAudit(auditId, traceId, completion);
-            logOutcome(spec, traceId, completion);
+            logOutcome(spec, completion);
             return result.value();
         }
     }
@@ -142,7 +160,7 @@ public class LlmExecutionGateway {
             ));
         } catch (RuntimeException persistenceFailure) {
             LOGGER.error(
-                    "LLM execution audit start failed feature={} provider={} traceId={} failureType={}",
+                    "LLM execution audit start failed feature={} provider={} llmExecutionId={} failureType={}",
                     spec.feature(),
                     spec.provider(),
                     traceId,
@@ -162,14 +180,14 @@ public class LlmExecutionGateway {
             boolean applied = auditRecorder.complete(auditId, completion);
             if (!applied) {
                 LOGGER.warn(
-                        "LLM execution audit already finalized; keeping first terminal state traceId={} auditId={}",
+                        "LLM execution audit already finalized; keeping first terminal state llmExecutionId={} auditId={}",
                         traceId,
                         auditId
                 );
             }
         } catch (RuntimeException persistenceFailure) {
             LOGGER.error(
-                    "LLM execution audit completion failed traceId={} auditId={} status={} failureType={}",
+                    "LLM execution audit completion failed llmExecutionId={} auditId={} status={} failureType={}",
                     traceId,
                     auditId,
                     completion.status(),
@@ -188,7 +206,7 @@ public class LlmExecutionGateway {
             return costEstimator.estimate(provider, effectiveModel, result.tokenUsage()).orElse(null);
         } catch (RuntimeException estimationFailure) {
             LOGGER.warn(
-                    "LLM cost estimation failed; persisting execution without cost traceId={} failureType={}",
+                    "LLM cost estimation failed; persisting execution without cost llmExecutionId={} failureType={}",
                     traceId,
                     estimationFailure.getClass().getSimpleName()
             );
@@ -203,7 +221,7 @@ public class LlmExecutionGateway {
         if (LlmExecutionSpec.isValidModel(reportedModel)) {
             return reportedModel;
         }
-        LOGGER.warn("Ignoring invalid provider-reported model metadata traceId={}", traceId);
+        LOGGER.warn("Ignoring invalid provider-reported model metadata llmExecutionId={}", traceId);
         return specModel;
     }
 
@@ -220,22 +238,44 @@ public class LlmExecutionGateway {
         return (System.nanoTime() - startedNanos) / 1_000_000;
     }
 
-    private void logOutcome(LlmExecutionSpec spec, UUID traceId, LlmExecutionCompletion completion) {
-        LOGGER.info(
-                "LLM execution feature={} provider={} model={} promptVersion={} traceId={} status={} "
-                        + "errorCategory={} latencyMs={} inputTokens={} outputTokens={} totalTokens={} fallbackUsed={}",
-                spec.feature(),
-                spec.provider(),
-                completion.model(),
-                spec.promptVersion(),
-                traceId,
-                completion.status(),
-                completion.errorCategory(),
-                completion.latencyMs(),
-                completion.tokenUsage() == null ? null : completion.tokenUsage().inputTokens(),
-                completion.tokenUsage() == null ? null : completion.tokenUsage().outputTokens(),
-                completion.tokenUsage() == null ? null : completion.tokenUsage().totalTokens(),
-                completion.fallbackUsed()
-        );
+    /**
+     * One structured event per execution, in SLF4J 2 key-value pairs so the
+     * Java Agent exports them as OTLP attributes.
+     *
+     * <p>Every value is drawn from a controlled vocabulary: {@code feature},
+     * {@code status} and {@code errorCategory} are enums, {@code promptVersion}
+     * is the {@code name:vN} identifier validated by {@link LlmExecutionSpec},
+     * and the provider passes through {@link BusinessTelemetry#providerName}.
+     * The configured model is never logged raw — it is an arbitrary string that
+     * can hold a misplaced credential, so only its
+     * {@link BusinessTelemetry#modelFamily} reaches the event. Prompt, response,
+     * provider message and stack trace never appear at all.
+     *
+     * <p>The audit UUID is deliberately absent: it identifies a row in the LLM
+     * audit table, not a distributed trace, and it is already carried in the
+     * {@code llmExecutionId} MDC entry for local correlation. Distributed
+     * correlation comes from the agent's {@code trace_id}/{@code span_id}.
+     */
+    private void logOutcome(LlmExecutionSpec spec, LlmExecutionCompletion completion) {
+        boolean succeeded = completion.status() == LlmExecutionStatus.SUCCEEDED;
+        LoggingEventBuilder event = succeeded ? LOGGER.atInfo() : LOGGER.atWarn();
+        event.addKeyValue(BusinessTelemetry.EVENT_NAME_KEY, EVENT_NAME)
+                .addKeyValue("iwrite.llm.feature", spec.feature().name())
+                .addKeyValue("iwrite.ai.provider", BusinessTelemetry.providerName(spec.provider()))
+                .addKeyValue("iwrite.ai.model_family", BusinessTelemetry.modelFamily(completion.model()))
+                .addKeyValue("iwrite.llm.prompt_version", spec.promptVersion())
+                .addKeyValue("iwrite.llm.status", completion.status().name())
+                .addKeyValue("iwrite.error.category",
+                        completion.errorCategory() == null ? null : completion.errorCategory().name())
+                .addKeyValue(BusinessTelemetry.DURATION_MS_KEY, completion.latencyMs())
+                .addKeyValue("iwrite.llm.input_tokens", tokens(completion, LlmTokenUsage::inputTokens))
+                .addKeyValue("iwrite.llm.output_tokens", tokens(completion, LlmTokenUsage::outputTokens))
+                .addKeyValue("iwrite.llm.total_tokens", tokens(completion, LlmTokenUsage::totalTokens))
+                .addKeyValue("iwrite.ai.fallback_used", completion.fallbackUsed())
+                .log(EVENT_MESSAGE);
+    }
+
+    private static Integer tokens(LlmExecutionCompletion completion, Function<LlmTokenUsage, Integer> field) {
+        return completion.tokenUsage() == null ? null : field.apply(completion.tokenUsage());
     }
 }
