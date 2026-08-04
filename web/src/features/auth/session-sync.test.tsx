@@ -176,36 +176,155 @@ describe("sincronização de sessão entre abas", () => {
     expect(navigation.replace).not.toHaveBeenCalledWith(expect.stringContaining("/login"));
   });
 
-  test("3. evento perdido: o foco revalida, /api/auth/me responde uma identidade diferente e B é carregado", async () => {
+  test("3. evento perdido: o foco revalida mesmo quando A e B compartilham o mesmo nome de workspace, e o cache de A é apagado", async () => {
+    // Fresh evidence after the cross-tab fix: AuthenticatedSession carries no userId/tenantId, so
+    // email + workspace name was the only thing focus reconciliation ever had to compare — and
+    // workspace names are not unique. The same person moved to a different tenant that happens to
+    // share the old tenant's display name must never be mistaken for "nothing changed".
+    const sessionOtherTenantSameWorkspaceName = {
+      user: sessionA.user,
+      activeWorkspace: { ...sessionA.activeWorkspace }, // identical email AND workspace name on purpose
+    };
     const { getClient } = renderTab();
     expect(await screen.findByText("Livro do Autor A")).toBeInTheDocument();
 
-    authApi.fetchSession.mockResolvedValue(sessionB);
-    booksApi.fetchBooks.mockResolvedValue(["Livro do Autor B"]);
+    let resolveFetchSession!: (value: typeof sessionOtherTenantSameWorkspaceName) => void;
+    authApi.fetchSession.mockImplementationOnce(
+      () => new Promise((resolve) => (resolveFetchSession = resolve)),
+    );
+    booksApi.fetchBooks.mockResolvedValueOnce(["Livro do outro tenant"]);
 
     act(() => window.dispatchEvent(new Event("focus")));
 
-    await screen.findByText("Livro do Autor B");
+    // Purged before /api/auth/me even answers — there is no identity comparison left to fool.
+    await screen.findByText("Verificando sessão…");
+    expect(getClient().getQueryData(["books"])).toBeUndefined();
     expect(screen.queryByText("Livro do Autor A")).not.toBeInTheDocument();
-    expect(getClient().getQueryData(["auth", "session"])).toEqual(sessionB);
+
+    resolveFetchSession(sessionOtherTenantSameWorkspaceName);
+
+    await screen.findByText("Livro do outro tenant");
+    expect(screen.queryByText("Livro do Autor A")).not.toBeInTheDocument();
   });
 
-  test("4. sessão não mudou: o foco revalida mas preserva o cache válido", async () => {
+  test("4. sessão e tenant inalterados: o foco ainda purga conservadoramente e recarrega as queries ativas", async () => {
     const { getClient } = renderTab();
     expect(await screen.findByText("Livro do Autor A")).toBeInTheDocument();
 
-    // fetchSession keeps resolving to the same Autor A — only the object identity changes, as a
-    // real re-fetch would.
-    authApi.fetchSession.mockResolvedValue({ ...sessionA });
+    let resolveFetchSession!: (value: typeof sessionA) => void;
+    authApi.fetchSession.mockImplementationOnce(
+      () => new Promise((resolve) => (resolveFetchSession = resolve)),
+    );
+    booksApi.fetchBooks.mockResolvedValueOnce(["Livro do Autor A"]);
 
     act(() => window.dispatchEvent(new Event("focus")));
-    await screen.findByText("Verificando sessão…");
-    await screen.findByText("Livro do Autor A");
 
-    // Not refetched: the cached books entry from before the focus event is still the exact one
-    // present after it, which fetchBooks (called only once) proves.
-    expect(booksApi.fetchBooks).toHaveBeenCalledTimes(1);
-    expect(getClient().getQueryData(["books"])).toEqual(["Livro do Autor A"]);
+    // Blocked while in flight, exactly like any other reconciliation — never a cheaper "nothing
+    // changed" path, since there is nothing safe left to compare that could tell it apart.
+    await screen.findByText("Verificando sessão…");
+    expect(getClient().getQueryData(["books"])).toBeUndefined();
+    expect(screen.queryByText("Livro do Autor A")).not.toBeInTheDocument();
+
+    resolveFetchSession({ ...sessionA });
+
+    await screen.findByText("Livro do Autor A");
+    // Refetched, not merely preserved from before the focus event: fetchBooks ran a second time
+    // even though nothing about the session actually changed.
+    expect(booksApi.fetchBooks).toHaveBeenCalledTimes(2);
+  });
+
+  test("foco: mudança apenas de role no mesmo tenant não preserva o cache antigo", async () => {
+    const sessionACollaborator = {
+      user: sessionA.user,
+      activeWorkspace: { ...sessionA.activeWorkspace, role: "COLLABORATOR" },
+    };
+    renderTab();
+    expect(await screen.findByText("Livro do Autor A")).toBeInTheDocument();
+
+    authApi.fetchSession.mockResolvedValueOnce(sessionACollaborator);
+    booksApi.fetchBooks.mockResolvedValueOnce(["Catálogo reduzido de colaborador"]);
+
+    act(() => window.dispatchEvent(new Event("focus")));
+
+    await screen.findByText("Catálogo reduzido de colaborador");
+    expect(screen.queryByText("Livro do Autor A")).not.toBeInTheDocument();
+  });
+
+  test("foco: query antiga em voo não repopula o cache após a reconciliação", async () => {
+    const { getClient } = renderTab();
+    expect(await screen.findByText("Livro do Autor A")).toBeInTheDocument();
+
+    // A slow-resolving "books" fetch already in flight — e.g. a background refetch someone else
+    // triggered — right as the focus reconciliation itself begins.
+    let resolveStaleBooks!: (value: string[]) => void;
+    booksApi.fetchBooks.mockImplementationOnce(() => new Promise((resolve) => (resolveStaleBooks = resolve)));
+    act(() => {
+      void getClient().refetchQueries({ queryKey: ["books"] });
+    });
+
+    authApi.fetchSession.mockResolvedValueOnce(sessionB);
+    booksApi.fetchBooks.mockResolvedValueOnce(["Livro do Autor B"]);
+    act(() => window.dispatchEvent(new Event("focus")));
+    await screen.findByText("Livro do Autor B");
+
+    // The slow fetch from before the swap finally resolves — too late, and must never land.
+    act(() => resolveStaleBooks(["Livro obsoleto do Autor A"]));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(screen.queryByText("Livro obsoleto do Autor A")).not.toBeInTheDocument();
+    expect(getClient().getQueryData(["books"])).toEqual(["Livro do Autor B"]);
+  });
+
+  test("foco: mutation antiga em voo é identificada como obsoleta pela geração e purgada", async () => {
+    const resolveRef: { current: (() => void) | null } = { current: null };
+    const { getClient } = renderTab(<DelayedMutation resolveRef={resolveRef} />);
+    expect(await screen.findByText("Livro do Autor A")).toBeInTheDocument();
+    await waitFor(() => expect(resolveRef.current).not.toBeNull());
+
+    authApi.fetchSession.mockResolvedValueOnce(sessionB);
+    booksApi.fetchBooks.mockResolvedValueOnce(["Livro do Autor B"]);
+    act(() => window.dispatchEvent(new Event("focus")));
+    await screen.findByText("Livro do Autor B");
+
+    // Only now does A's stale write land — after B's identity has already been accepted.
+    act(() => resolveRef.current!());
+
+    await waitFor(() => expect(getClient().getQueryData(["books"])).toEqual(["Livro do Autor B"]));
+    expect(screen.queryByText("Rascunho não salvo do Autor A")).not.toBeInTheDocument();
+  });
+
+  test("foco: focus e visibilitychange disparados juntos produzem uma única reconciliação efetiva", async () => {
+    renderTab();
+    expect(await screen.findByText("Livro do Autor A")).toBeInTheDocument();
+    const callsBefore = authApi.fetchSession.mock.calls.length;
+
+    authApi.fetchSession.mockResolvedValueOnce({ ...sessionA });
+    booksApi.fetchBooks.mockResolvedValueOnce(["Livro do Autor A"]);
+
+    act(() => {
+      window.dispatchEvent(new Event("focus"));
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+
+    await waitFor(() => expect(authApi.fetchSession.mock.calls.length).toBe(callsBefore + 1));
+    // Gives an accidental second trigger time to have fired (past the dedupe window), then confirms
+    // it never did.
+    await new Promise((resolve) => setTimeout(resolve, 350));
+    expect(authApi.fetchSession.mock.calls.length).toBe(callsBefore + 1);
+  });
+
+  test("foco: 401 durante a reconciliação mantém o cache vazio, redireciona, e não refaz nenhuma query de domínio", async () => {
+    const { getClient } = renderTab();
+    expect(await screen.findByText("Livro do Autor A")).toBeInTheDocument();
+    const booksCallsBefore = booksApi.fetchBooks.mock.calls.length;
+
+    authApi.fetchSession.mockResolvedValueOnce(null);
+    act(() => window.dispatchEvent(new Event("focus")));
+
+    await waitFor(() => expect(navigation.replace).toHaveBeenCalledWith("/login?reason=expired"));
+    expect(getClient().getQueryData(["books"])).toBeUndefined();
+    expect(getClient().getQueryData(["auth", "session"])).toBeNull();
+    // refetchActiveDomainQueries only ever runs for a session worth keeping — none was attempted.
+    expect(booksApi.fetchBooks).toHaveBeenCalledTimes(booksCallsBefore);
   });
 
   test("5. mutation atrasada de A não repopula o cache depois da troca para B", async () => {

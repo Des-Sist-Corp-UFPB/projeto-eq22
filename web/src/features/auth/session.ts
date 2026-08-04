@@ -14,8 +14,9 @@ export function useSession() {
     queryFn: fetchSession,
     // Refetching on an interval would just be a way to log the user out at random. Focus and
     // cross-tab revalidation still happen, deliberately, but through useSessionReconciliation
-    // (session-sync.ts) rather than this query's own options — that path can tell "checked, nothing
-    // changed" from "checked, identity changed" and only the latter touches the rest of the cache.
+    // (session-sync.ts) rather than this query's own options — that path purges the rest of the
+    // cache unconditionally on every check, since this payload carries no stable tenant identity to
+    // compare against (see reconcile() in session-sync.ts for why that comparison isn't safe).
     staleTime: Infinity,
     retry: false,
   });
