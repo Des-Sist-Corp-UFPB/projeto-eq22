@@ -6,7 +6,6 @@ import org.springframework.stereotype.Component;
 
 import java.time.Clock;
 import java.time.Duration;
-import java.util.Comparator;
 import java.util.Locale;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -50,6 +49,13 @@ public class LoginRateLimiter {
     private final Clock clock;
     private final ConcurrentHashMap<String, Window> byOrigin = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, Window> byAccount = new ConcurrentHashMap<>();
+    // One admission lock per dimension, never shared between them: admitting a brand-new key has to
+    // make a single atomic decision ("does this key already exist, and if not, is there room after
+    // reclaiming only expired entries") that a bare ConcurrentHashMap.computeIfAbsent cannot express
+    // on its own — ordinary get/increment/reset on an *existing* key never takes either lock, so a
+    // saturated account dimension cannot stall origin traffic or vice versa.
+    private final Object originAdmissionLock = new Object();
+    private final Object accountAdmissionLock = new Object();
 
     @Autowired
     public LoginRateLimiter(
@@ -89,7 +95,7 @@ public class LoginRateLimiter {
 
     /** Spends one unit of the calling origin's budget for this window, success or failure alike. */
     public void checkOrigin(String origin) {
-        if (!tryIncrement(byOrigin, normalizedOrigin(origin), maxAttemptsPerOrigin)) {
+        if (!tryIncrement(byOrigin, originAdmissionLock, normalizedOrigin(origin), maxAttemptsPerOrigin)) {
             throw new LoginRateLimitExceededException();
         }
     }
@@ -100,7 +106,7 @@ public class LoginRateLimiter {
      */
     public void checkAccountBudget(String email) {
         String account = normalizedAccount(email);
-        if (account != null && !hasRemainingBudget(byAccount, account, maxAttemptsPerAccount)) {
+        if (account != null && !hasRemainingBudget(byAccount, accountAdmissionLock, account, maxAttemptsPerAccount)) {
             throw new LoginRateLimitExceededException();
         }
     }
@@ -109,12 +115,12 @@ public class LoginRateLimiter {
     public void recordFailedAttempt(String email) {
         String account = normalizedAccount(email);
         if (account != null) {
-            increment(byAccount, account);
+            increment(byAccount, accountAdmissionLock, account);
         }
     }
 
-    private boolean tryIncrement(ConcurrentHashMap<String, Window> states, String key, int maxAttempts) {
-        Window state = statesGet(states, key);
+    private boolean tryIncrement(ConcurrentHashMap<String, Window> states, Object admissionLock, String key, int maxAttempts) {
+        Window state = statesGet(states, admissionLock, key);
         synchronized (state) {
             resetIfExpired(state);
             if (state.count >= maxAttempts) {
@@ -125,25 +131,75 @@ public class LoginRateLimiter {
         }
     }
 
-    private boolean hasRemainingBudget(ConcurrentHashMap<String, Window> states, String key, int maxAttempts) {
-        Window state = statesGet(states, key);
+    private boolean hasRemainingBudget(ConcurrentHashMap<String, Window> states, Object admissionLock, String key, int maxAttempts) {
+        Window state = statesGet(states, admissionLock, key);
         synchronized (state) {
             resetIfExpired(state);
             return state.count < maxAttempts;
         }
     }
 
-    private void increment(ConcurrentHashMap<String, Window> states, String key) {
-        Window state = statesGet(states, key);
+    private void increment(ConcurrentHashMap<String, Window> states, Object admissionLock, String key) {
+        Window state;
+        try {
+            state = statesGet(states, admissionLock, key);
+        } catch (LoginRateLimitExceededException e) {
+            // Recording is best-effort bookkeeping after a failed attempt already happened, from a
+            // catch block whose job is to re-throw the real authentication failure — not to gate
+            // anything itself. If the account dimension has no room left to start tracking a brand
+            // new account, silently skipping the record is safer than turning an unrelated 401 into
+            // a 429 here; the caller's own throw carries the actual outcome.
+            return;
+        }
         synchronized (state) {
             resetIfExpired(state);
             state.count++;
         }
     }
 
-    private Window statesGet(ConcurrentHashMap<String, Window> states, String key) {
-        prune(states, clock.millis());
-        return states.computeIfAbsent(key, ignored -> new Window());
+    /**
+     * A key already being tracked is returned as-is, without ever consulting capacity — an existing
+     * window is never a candidate for eviction just because the map happens to be full. Only a key
+     * seen for the first time goes through admission, which is where capacity is enforced.
+     */
+    private Window statesGet(ConcurrentHashMap<String, Window> states, Object admissionLock, String key) {
+        Window existing = states.get(key);
+        if (existing != null) {
+            return existing;
+        }
+        return admitNewKey(states, admissionLock, key);
+    }
+
+    /**
+     * Fail-closed admission for a key not yet tracked. Reclaims only windows that have actually
+     * expired; if the map is still at capacity afterwards, every remaining entry is a live window
+     * that belongs to some other key, and none of them yields — the new key is refused instead
+     * ({@link LoginRateLimitExceededException}, the same refusal an exhausted key itself produces),
+     * so a flood of never-before-seen keys can never evict an active one to make room for itself.
+     *
+     * <p>The existence check, the prune, the capacity check and the insertion are one atomic
+     * decision under {@code admissionLock} — the only lock this class takes that spans more than a
+     * single {@link Window}, and one dimension's admissionLock is never touched by the other's
+     * lookups, increments, or admissions.
+     */
+    private Window admitNewKey(ConcurrentHashMap<String, Window> states, Object admissionLock, String key) {
+        synchronized (admissionLock) {
+            Window existing = states.get(key);
+            if (existing != null) {
+                return existing;
+            }
+            long now = clock.millis();
+            if (states.size() >= maxTrackedKeysPerDimension) {
+                states.entrySet().removeIf(entry -> now - entry.getValue().startMillis >= window.toMillis());
+            }
+            if (states.size() >= maxTrackedKeysPerDimension) {
+                throw new LoginRateLimitExceededException();
+            }
+            Window created = new Window();
+            created.startMillis = now;
+            states.put(key, created);
+            return created;
+        }
     }
 
     private void resetIfExpired(Window state) {
@@ -151,19 +207,6 @@ public class LoginRateLimiter {
         if (now - state.startMillis >= window.toMillis()) {
             state.startMillis = now;
             state.count = 0;
-        }
-    }
-
-    /** Bounds memory: expired windows are dropped first; if still full, the single oldest yields. */
-    private void prune(ConcurrentHashMap<String, Window> states, long now) {
-        if (states.size() < maxTrackedKeysPerDimension) {
-            return;
-        }
-        states.entrySet().removeIf(entry -> now - entry.getValue().startMillis >= window.toMillis());
-        if (states.size() >= maxTrackedKeysPerDimension) {
-            states.entrySet().stream()
-                    .min(Comparator.comparingLong(entry -> entry.getValue().startMillis))
-                    .ifPresent(oldest -> states.remove(oldest.getKey()));
         }
     }
 

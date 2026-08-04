@@ -215,10 +215,15 @@ conta de outra pessoa fechada só enviando o email dela em tentativas com falha 
 janela — parar de tentar já é suficiente para a conta voltar a responder normalmente na janela
 seguinte.
 
-Armazenamento limitado (`iwrite.auth.login-rate-limit.max-tracked-keys`, padrão 10000): cada
-dimensão descarta janelas expiradas e, se ainda estiver no limite, a chave mais antiga, para que o
-mapa em memória não cresça sem limite sob um ataque distribuído por muitas origens ou contas
-inexistentes.
+Armazenamento limitado (`iwrite.auth.login-rate-limit.max-tracked-keys`, padrão 10000): ao admitir
+uma chave nova, cada dimensão descarta só janelas efetivamente expiradas — uma janela ainda ativa
+nunca é removida apenas porque o mapa está cheio, nem para abrir espaço para uma chave nunca vista.
+Se, mesmo após descartar as expiradas, o mapa continuar no limite, a chave nova é recusada
+(fail-closed, o mesmo `429` de uma chave já esgotada) em vez de expulsar alguma janela ativa — assim
+um ataque distribuído com muitos emails ou origens descartáveis não consegue apagar o orçamento
+esgotado da vítima antes do fim da janela dela. Consultar ou incrementar uma chave já existente nunca
+passa por essa decisão; existência, poda e inserção de uma chave nova formam uma única decisão atômica
+por dimensão, sob um lock de admissão próprio de cada mapa (nunca compartilhado entre origem e conta).
 
 Estado em memória por instância. Implantação com múltiplas réplicas precisa de armazenamento
 compartilhado (ex.: Redis) para um limite único combinado; sem isso, cada réplica aplica sua própria
