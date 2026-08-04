@@ -98,6 +98,7 @@ public class BusinessTelemetry {
     public static final String RESULT_NO_CHANGE = "no_change";
     public static final String RESULT_IDEMPOTENT_RETRY = "idempotent_retry";
     public static final String RESULT_VALIDATION_ERROR = "validation_error";
+    public static final String RESULT_NOT_FOUND = "not_found";
     public static final String RESULT_PROVIDER_ERROR = "provider_error";
     public static final String RESULT_INVALID_RESPONSE = "invalid_response";
 
@@ -169,9 +170,11 @@ public class BusinessTelemetry {
 
     private static final Map<String, Set<String>> ALLOWED_RESULTS = Map.of(
             OPERATION_SCENE_CONTENT_SAVE,
-            Set.of(RESULT_SUCCESS, RESULT_CONFLICT, RESULT_NO_CHANGE, RESULT_IDEMPOTENT_RETRY, RESULT_FAILURE),
+            Set.of(RESULT_SUCCESS, RESULT_CONFLICT, RESULT_NO_CHANGE, RESULT_IDEMPOTENT_RETRY,
+                    RESULT_VALIDATION_ERROR, RESULT_NOT_FOUND, RESULT_FAILURE),
             OPERATION_SCENE_ANALYSIS,
-            Set.of(RESULT_SUCCESS, RESULT_VALIDATION_ERROR, RESULT_PROVIDER_ERROR, RESULT_INVALID_RESPONSE, RESULT_FAILURE)
+            Set.of(RESULT_SUCCESS, RESULT_VALIDATION_ERROR, RESULT_NOT_FOUND, RESULT_PROVIDER_ERROR,
+                    RESULT_INVALID_RESPONSE, RESULT_FAILURE)
     );
 
     private static final Set<String> SIZE_BUCKETS =

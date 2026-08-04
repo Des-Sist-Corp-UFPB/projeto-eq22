@@ -85,9 +85,23 @@ public class LlmExecutionGateway {
         UUID traceId = UUID.randomUUID();
         OffsetDateTime startedAt = OffsetDateTime.now(clock);
         long startedNanos = System.nanoTime();
-        UUID auditId = recordStart(spec, traceId, startedAt);
 
         try (MDC.MDCCloseable ignored = MDC.putCloseable(EXECUTION_MDC_KEY, traceId.toString())) {
+            UUID auditId;
+            try {
+                auditId = recordStart(spec, traceId, startedAt);
+            } catch (LlmExecutionException auditStartFailure) {
+                LlmExecutionCompletion completion = LlmExecutionCompletion.failure(
+                        auditStartFailure.getStatus(),
+                        auditStartFailure.getErrorCategory(),
+                        spec.model(),
+                        OffsetDateTime.now(clock),
+                        elapsedMs(startedNanos)
+                );
+                logOutcome(spec, completion);
+                throw auditStartFailure;
+            }
+
             LlmCallResult<T> result;
             try {
                 result = invokeProvider(spec, providerCall, traceId);
@@ -144,6 +158,11 @@ public class LlmExecutionGateway {
         return result;
     }
 
+    /**
+     * Turns a persistence failure into a classified exception; the caller emits
+     * the one structured {@code iwrite.llm.execution} event this failure gets,
+     * so no textual log is written here to avoid two events for one failure.
+     */
     private UUID recordStart(LlmExecutionSpec spec, UUID traceId, OffsetDateTime startedAt) {
         try {
             return auditRecorder.recordStart(new LlmExecutionStart(
@@ -159,13 +178,6 @@ public class LlmExecutionGateway {
                     startedAt
             ));
         } catch (RuntimeException persistenceFailure) {
-            LOGGER.error(
-                    "LLM execution audit start failed feature={} provider={} llmExecutionId={} failureType={}",
-                    spec.feature(),
-                    spec.provider(),
-                    traceId,
-                    persistenceFailure.getClass().getSimpleName()
-            );
             throw new LlmExecutionException(
                     LlmExecutionStatus.FAILED,
                     LlmErrorCategory.AUDIT_PERSISTENCE_FAILURE,

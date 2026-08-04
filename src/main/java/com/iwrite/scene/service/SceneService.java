@@ -215,6 +215,12 @@ public class SceneService {
         } catch (ConflictException conflict) {
             telemetry.failure(BusinessTelemetry.RESULT_CONFLICT, conflict);
             throw conflict;
+        } catch (BadRequestException validationFailure) {
+            telemetry.failure(BusinessTelemetry.RESULT_VALIDATION_ERROR, validationFailure);
+            throw validationFailure;
+        } catch (ResourceNotFoundException notFound) {
+            telemetry.failure(BusinessTelemetry.RESULT_NOT_FOUND, notFound);
+            throw notFound;
         } catch (RuntimeException failure) {
             telemetry.failure(BusinessTelemetry.RESULT_FAILURE, failure);
             throw failure;

@@ -12,6 +12,7 @@ import com.iwrite.llm.audit.LlmExecutionStart;
 import com.iwrite.llm.audit.LlmExecutionStatus;
 import com.iwrite.llm.cost.ConfiguredLlmCostEstimator;
 import com.iwrite.llm.cost.LlmPricingProperties;
+import com.iwrite.observability.BusinessTelemetry;
 import com.iwrite.observability.CapturedLogs;
 import com.iwrite.user.context.CurrentUserProvider;
 import org.junit.jupiter.api.Test;
@@ -271,18 +272,47 @@ class LlmExecutionGatewayTest {
         assertThat(completion.errorCategory()).isEqualTo(LlmErrorCategory.FEATURE_DISABLED);
     }
 
+    /**
+     * A broken audit table must still be observable: before this fix, only a
+     * textual log existed and no {@code iwrite.llm.execution} event was
+     * emitted, so ERROR-based alerting on that event never fired for this
+     * failure. The provider is never invoked (fail-closed) and no audit row
+     * exists to finalize, so {@code auditRecorder.complete} must never be
+     * called either.
+     */
     @Test
-    void startAuditPersistenceFailureAbortsBeforeProviderInvocation() {
-        when(auditRecorder.recordStart(any())).thenThrow(new RuntimeException("database down"));
+    void startAuditPersistenceFailureAbortsBeforeProviderInvocationAndEmitsOneErrorEvent() {
+        when(auditRecorder.recordStart(any())).thenThrow(new RuntimeException("database down " + API_KEY_SAMPLE));
         AtomicBoolean providerInvoked = new AtomicBoolean(false);
 
-        assertThatThrownBy(() -> gateway.execute(spec(), context -> {
-            providerInvoked.set(true);
-            return LlmCallResult.of("analysis");
-        }))
-                .isInstanceOf(LlmExecutionException.class)
-                .satisfies(failure -> assertThat(((LlmExecutionException) failure).getErrorCategory())
-                        .isEqualTo(LlmErrorCategory.AUDIT_PERSISTENCE_FAILURE));
+        try (CapturedLogs logs = new CapturedLogs()) {
+            assertThatThrownBy(() -> gateway.execute(spec(), context -> {
+                providerInvoked.set(true);
+                return LlmCallResult.of("analysis");
+            }))
+                    .isInstanceOf(LlmExecutionException.class)
+                    .hasMessageNotContaining(API_KEY_SAMPLE)
+                    .satisfies(failure -> assertThat(((LlmExecutionException) failure).getErrorCategory())
+                            .isEqualTo(LlmErrorCategory.AUDIT_PERSISTENCE_FAILURE));
+
+            ILoggingEvent event = logs.single("iwrite.llm.execution");
+            assertThat(event.getLevel()).isEqualTo(Level.ERROR);
+            assertThat(event.getThrowableProxy()).isNull();
+            assertThat(CapturedLogs.keyValues(event))
+                    .containsEntry("iwrite.llm.status", "FAILED")
+                    .containsEntry("iwrite.error.category", "AUDIT_PERSISTENCE_FAILURE")
+                    .containsEntry("iwrite.ai.fallback_used", false)
+                    .containsEntry("iwrite.llm.input_tokens", null)
+                    .containsEntry("iwrite.llm.output_tokens", null)
+                    .containsEntry("iwrite.llm.total_tokens", null)
+                    .doesNotContainKey("llmExecutionId");
+            assertThat(CapturedLogs.keyValues(event).get(BusinessTelemetry.DURATION_MS_KEY))
+                    .isInstanceOf(Long.class);
+            assertThat(event.getMDCPropertyMap())
+                    .as("llmExecutionId stays a local MDC entry, never an exported key-value pair")
+                    .containsKey("llmExecutionId");
+            assertThat(CapturedLogs.allSurfaces(event)).doesNotContain(API_KEY_SAMPLE);
+        }
 
         assertThat(providerInvoked).isFalse();
         verify(auditRecorder, never()).complete(any(), any());

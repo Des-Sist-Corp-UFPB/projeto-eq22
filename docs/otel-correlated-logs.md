@@ -117,7 +117,7 @@ Nenhuma `TransactionSynchronization` nova foi criada, e o `Scope` do span de neg
 |---|---|---|
 | `otel.event.name` | string | `iwrite.scene.content.save` |
 | `iwrite.operation` | string | `scene_content_save` |
-| `iwrite.result` | string | `success`, `no_change`, `idempotent_retry`, `conflict`, `failure` |
+| `iwrite.result` | string | `success`, `no_change`, `idempotent_retry`, `conflict`, `validation_error`, `not_found`, `failure` |
 | `iwrite.duration_ms` | long | duração de parede |
 | `iwrite.scene.source` | string | `manual_save`, `autosave`, `restore`, `other` |
 | `iwrite.scene.content_size_bucket` | string | `empty`, `small`, `medium`, `large`, `truncated` |
@@ -128,7 +128,7 @@ Os vocabulários são exatamente os de `BusinessTelemetry` — os mesmos objetos
 
 ### `iwrite.scene.analysis`
 
-Mesmo mecanismo, para `POST /api/scenes/{sceneId}/ai-analysis`. Campos adicionais: `iwrite.ai.focus_present`, `iwrite.ai.input_size_bucket`, `iwrite.ai.fallback_used`, `iwrite.ai.provider`, `iwrite.ai.model_family`. Resultados: `success`, `validation_error`, `provider_error`, `invalid_response`, `failure`.
+Mesmo mecanismo, para `POST /api/scenes/{sceneId}/ai-analysis`. Campos adicionais: `iwrite.ai.focus_present`, `iwrite.ai.input_size_bucket`, `iwrite.ai.fallback_used`, `iwrite.ai.provider`, `iwrite.ai.model_family`. Resultados: `success`, `validation_error`, `not_found`, `provider_error`, `invalid_response`, `failure`.
 
 `FEATURE_DISABLED` entra em `provider_error`, não em `failure` — ver [níveis](#níveis).
 
@@ -153,6 +153,8 @@ Parâmetros, `focus`, respostas, títulos e IDs enviados pelo cliente **nunca** 
 
 O **modelo configurado nunca é exportado bruto**. `LlmExecutionSpec` aceita qualquer identificador curto sem espaço, então uma credencial colocada por engano em `OPENAI_MODEL` passaria na validação; só `BusinessTelemetry.modelFamily(...)` (`gpt-4o`, `gpt-4.1`, `gpt-5`, `other`, `unknown`) chega ao evento. O provider passa por `BusinessTelemetry.providerName(...)`, que colapsa qualquer valor fora de `{openai, disabled}` em `unknown`.
 
+Uma falha ao persistir o **audit-start** também emite este evento — o MDC de execução é instalado antes da tentativa, então o `llmExecutionId` já está presente. O provider nunca é chamado nesse caso (fail-closed); `iwrite.llm.status=FAILED`, `iwrite.error.category=AUDIT_PERSISTENCE_FAILURE`, nível `ERROR`, sem tokens e `fallback_used=false`. Não existe mais um log textual separado para essa falha — o evento estruturado é a única emissão, para não duplicar.
+
 ## Campos proibidos
 
 Em **mensagem, atributos, MDC, argumentos e throwable** — todas as cinco superfícies são inspecionadas pelos testes:
@@ -168,7 +170,7 @@ Nenhum identificador de alta cardinalidade vira label indexado do Loki — ver a
 | Nível | Quando | Exemplos |
 |---|---|---|
 | `INFO` | a operação fez o que foi pedido | `success`, `no_change`, `idempotent_retry` |
-| `WARN` | resultado esperado e tratado | `conflict`, `validation_error`, `provider_error`, `invalid_response`, erro MCP classificado |
+| `WARN` | resultado esperado e tratado | `conflict`, `validation_error`, `not_found`, `provider_error`, `invalid_response`, erro MCP classificado |
 | `ERROR` | falha interna inesperada | `failure` |
 
 Conflito otimista é `WARN` **sem stack trace** — é resultado previsto de escrita concorrente, não defeito.
@@ -177,10 +179,12 @@ O princípio, em todos os quatro eventos, é que o nível vem de **quão esperad
 
 | Evento | `ERROR` | `WARN` |
 |---|---|---|
-| `iwrite.scene.content.save` | `failure` | `conflict` |
-| `iwrite.scene.analysis` | `failure` (só `CONFIGURATION_ERROR`, `AUDIT_PERSISTENCE_FAILURE`, `INTERNAL_EXECUTION_ERROR`) | `validation_error`, `provider_error`, `invalid_response` |
-| `iwrite.llm.execution` | `INTERNAL_EXECUTION_ERROR`, `AUDIT_PERSISTENCE_FAILURE`, `CONFIGURATION_ERROR`, categoria `null` | `PROVIDER_TIMEOUT`, `PROVIDER_UNAVAILABLE`, `PROVIDER_REQUEST_REJECTED`, `INVALID_STRUCTURED_RESPONSE`, `FEATURE_DISABLED` |
+| `iwrite.scene.content.save` | `failure` (defeito interno ou rollback inesperado) | `conflict`, `validation_error`, `not_found` |
+| `iwrite.scene.analysis` | `failure` (só `CONFIGURATION_ERROR`, `AUDIT_PERSISTENCE_FAILURE`, `INTERNAL_EXECUTION_ERROR`) | `validation_error`, `not_found`, `provider_error`, `invalid_response` |
+| `iwrite.llm.execution` | `INTERNAL_EXECUTION_ERROR`, `AUDIT_PERSISTENCE_FAILURE` (inclusive quando o audit-start falha, antes do provider ser chamado), `CONFIGURATION_ERROR`, categoria `null` | `PROVIDER_TIMEOUT`, `PROVIDER_UNAVAILABLE`, `PROVIDER_REQUEST_REJECTED`, `INVALID_STRUCTURED_RESPONSE`, `FEATURE_DISABLED` |
 | `iwrite.mcp.invocation` | `internal` | `not_found`, `invalid_request`, `unavailable`, `rate_limited` |
+
+`ResourceNotFoundException` e `BadRequestException` são erros tratados pelo `GlobalExceptionHandler` (404 e 400, respectivamente) — não representam defeito do servidor, então `SceneService` e `SceneAnalysisService` os classificam como `not_found`/`validation_error` (`WARN`) em vez de deixá-los cair no catch genérico de `RuntimeException`, que produziria `failure`/`ERROR`.
 
 Uma categoria não classificada (`null`) conta como interna: um desfecho que não conseguimos nomear não é, por definição, esperado.
 

@@ -1,6 +1,7 @@
 package com.iwrite.scene.service;
 
 import com.iwrite.common.exception.BadRequestException;
+import com.iwrite.common.exception.ResourceNotFoundException;
 import com.iwrite.export.service.TipTapPlainTextRenderer;
 import com.iwrite.audit.entity.AuditResourceType;
 import com.iwrite.llm.LlmFeature;
@@ -65,6 +66,9 @@ public class SceneAnalysisService {
             } catch (BadRequestException validationError) {
                 telemetry.failure(BusinessTelemetry.RESULT_VALIDATION_ERROR, validationError);
                 throw validationError;
+            } catch (ResourceNotFoundException notFound) {
+                telemetry.failure(BusinessTelemetry.RESULT_NOT_FOUND, notFound);
+                throw notFound;
             } catch (LlmExecutionException executionFailure) {
                 telemetry.failure(telemetryResult(executionFailure), executionFailure);
                 throw executionFailure;
