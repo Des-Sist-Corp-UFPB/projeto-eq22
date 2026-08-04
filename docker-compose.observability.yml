@@ -27,6 +27,15 @@ services:
       OTEL_TRACES_EXPORTER: otlp
       OTEL_METRICS_EXPORTER: otlp
       OTEL_LOGS_EXPORTER: otlp
+      # Exporta os key-value pairs do SLF4J 2 como atributos do log record, que
+      # é o que torna os eventos de negócio pesquisáveis no Loki por campo em
+      # vez de por texto da mensagem. Equivale à propriedade
+      # otel.instrumentation.logback-appender.experimental.capture-key-value-pair-attributes=true
+      #
+      # Deliberadamente NÃO habilitamos capture-mdc-attributes=* nem
+      # capture-arguments=true: ambos exportam texto livre não revisado.
+      # Ver docs/otel-correlated-logs.md.
+      OTEL_INSTRUMENTATION_LOGBACK_APPENDER_EXPERIMENTAL_CAPTURE_KEY_VALUE_PAIR_ATTRIBUTES: "true"
       # Explicita a sanitização de db.statement (já é o default do agente);
       # ver docs/opentelemetry.md#seguranca.
       OTEL_INSTRUMENTATION_COMMON_DB_STATEMENT_SANITIZER_ENABLED: "true"

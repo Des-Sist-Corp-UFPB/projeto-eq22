@@ -69,6 +69,14 @@ logging:
   level:
     org.springframework.ai.converter.BeanOutputConverter: OFF
     org.springframework.ai.retry.autoconfigure.SpringAiRetryAutoConfiguration: OFF
+  pattern:
+    # Renderiza o llmExecutionId (UUID da linha de auditoria da execução LLM)
+    # apenas na linha do console: o Java Agent exporta a mensagem formatada, não
+    # o padrão do appender, então isto não vaza para o OTLP — e a captura de MDC
+    # do agente continua desabilitada de propósito. O %replace remove os
+    # colchetes vazios nas linhas que não têm o MDC.
+    # Ver docs/otel-correlated-logs.md.
+    level: "%5p %replace([%X{llmExecutionId:-}]){'\\[\\]',''}"
 
 iwrite:
   mcp:

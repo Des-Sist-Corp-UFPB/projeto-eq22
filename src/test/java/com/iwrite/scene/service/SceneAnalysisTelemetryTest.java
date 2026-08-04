@@ -1,6 +1,9 @@
 package com.iwrite.scene.service;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.spi.ILoggingEvent;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.iwrite.common.exception.ResourceNotFoundException;
 import com.iwrite.export.service.TipTapPlainTextRenderer;
 import com.iwrite.llm.gateway.LlmCallContext;
 import com.iwrite.llm.gateway.LlmCallResult;
@@ -9,6 +12,7 @@ import com.iwrite.llm.gateway.LlmExecutionException;
 import com.iwrite.llm.gateway.LlmExecutionGateway;
 import com.iwrite.llm.gateway.LlmProviderCall;
 import com.iwrite.observability.BusinessTelemetry;
+import com.iwrite.observability.CapturedLogs;
 import com.iwrite.observability.RecordingTelemetry;
 import com.iwrite.scene.ai.WritingAssistant;
 import com.iwrite.scene.dto.SceneAnalysisRequest;
@@ -204,19 +208,78 @@ class SceneAnalysisTelemetryTest {
     }
 
     @Test
-    void classifiesMissingSceneTextAsValidationError() {
+    void classifiesMissingSceneTextAsValidationErrorAtWarn() {
         UUID sceneId = UUID.randomUUID();
         when(sceneService.getScene(sceneId)).thenReturn(scene("   "));
 
-        assertThatThrownBy(() -> service.analyze(sceneId, null)).hasMessageContaining("textual content");
+        try (CapturedLogs logs = new CapturedLogs()) {
+            assertThatThrownBy(() -> service.analyze(sceneId, null)).hasMessageContaining("textual content");
 
-        SpanData span = recording.span(BusinessTelemetry.SPAN_SCENE_ANALYSIS);
-        assertThat(span.getAttributes().get(BusinessTelemetry.RESULT))
-                .isEqualTo(BusinessTelemetry.RESULT_VALIDATION_ERROR);
-        assertThat(span.getAttributes().get(BusinessTelemetry.ERROR_TYPE)).isEqualTo("BadRequestException");
-        assertThat(recording.counterValue(
-                BusinessTelemetry.OPERATION_SCENE_ANALYSIS,
-                BusinessTelemetry.RESULT_VALIDATION_ERROR)).isEqualTo(1);
+            SpanData span = recording.span(BusinessTelemetry.SPAN_SCENE_ANALYSIS);
+            assertThat(span.getAttributes().get(BusinessTelemetry.RESULT))
+                    .isEqualTo(BusinessTelemetry.RESULT_VALIDATION_ERROR);
+            assertThat(span.getAttributes().get(BusinessTelemetry.ERROR_TYPE)).isEqualTo("BadRequestException");
+            assertThat(recording.counterValue(
+                    BusinessTelemetry.OPERATION_SCENE_ANALYSIS,
+                    BusinessTelemetry.RESULT_VALIDATION_ERROR)).isEqualTo(1);
+
+            ILoggingEvent event = logs.single(BusinessTelemetry.SPAN_SCENE_ANALYSIS);
+            assertThat(event.getLevel()).isEqualTo(Level.WARN);
+            assertThat(event.getThrowableProxy()).isNull();
+        }
+    }
+
+    /**
+     * {@code ResourceNotFoundException} is handled by {@code GlobalExceptionHandler}
+     * as a 404, not a server defect, so it must not share {@code failure}/{@code ERROR}
+     * with a genuine internal error — otherwise ERROR-based alerting would fire
+     * on every request for a scene the caller simply doesn't have access to.
+     */
+    @Test
+    void classifiesMissingSceneAsNotFoundAtWarnWithoutLeakingTheId() {
+        UUID sceneId = UUID.randomUUID();
+        when(sceneService.getScene(sceneId)).thenThrow(new ResourceNotFoundException("Scene not found: " + sceneId));
+
+        try (CapturedLogs logs = new CapturedLogs()) {
+            assertThatThrownBy(() -> service.analyze(sceneId, null)).isInstanceOf(ResourceNotFoundException.class);
+
+            SpanData span = recording.span(BusinessTelemetry.SPAN_SCENE_ANALYSIS);
+            assertThat(span.getAttributes().get(BusinessTelemetry.RESULT))
+                    .isEqualTo(BusinessTelemetry.RESULT_NOT_FOUND);
+            assertThat(span.getAttributes().get(BusinessTelemetry.ERROR_TYPE)).isEqualTo("ResourceNotFoundException");
+            assertThat(recording.counterValue(
+                    BusinessTelemetry.OPERATION_SCENE_ANALYSIS,
+                    BusinessTelemetry.RESULT_NOT_FOUND)).isEqualTo(1);
+
+            ILoggingEvent event = logs.single(BusinessTelemetry.SPAN_SCENE_ANALYSIS);
+            assertThat(event.getLevel()).isEqualTo(Level.WARN);
+            assertThat(event.getThrowableProxy()).isNull();
+            assertThat(CapturedLogs.allSurfaces(event)).doesNotContain(sceneId.toString());
+        }
+    }
+
+    /**
+     * An exception the code has no name for stays {@code failure}/{@code ERROR}:
+     * an outcome we can't classify is, by definition, not an expected one.
+     */
+    @Test
+    void classifiesUnrecognizedExceptionAsFailureAtError() {
+        UUID sceneId = UUID.randomUUID();
+        String canary = "sk-test-canary";
+        when(sceneService.getScene(sceneId)).thenThrow(new IllegalStateException("unexpected " + canary));
+
+        try (CapturedLogs logs = new CapturedLogs()) {
+            assertThatThrownBy(() -> service.analyze(sceneId, null)).isInstanceOf(IllegalStateException.class);
+
+            SpanData span = recording.span(BusinessTelemetry.SPAN_SCENE_ANALYSIS);
+            assertThat(span.getAttributes().get(BusinessTelemetry.RESULT)).isEqualTo(BusinessTelemetry.RESULT_FAILURE);
+            assertThat(span.getAttributes().get(BusinessTelemetry.ERROR_TYPE)).isEqualTo("IllegalStateException");
+
+            ILoggingEvent event = logs.single(BusinessTelemetry.SPAN_SCENE_ANALYSIS);
+            assertThat(event.getLevel()).isEqualTo(Level.ERROR);
+            assertThat(event.getThrowableProxy()).isNull();
+            assertThat(CapturedLogs.allSurfaces(event)).doesNotContain(canary);
+        }
     }
 
     @Test
