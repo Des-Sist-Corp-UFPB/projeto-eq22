@@ -4,6 +4,7 @@ import com.iwrite.audit.entity.AuditAction;
 import com.iwrite.audit.entity.AuditResourceType;
 import com.iwrite.audit.entity.AuditResult;
 import com.iwrite.audit.service.AuditLogService;
+import com.iwrite.llm.gateway.LlmExecutionException;
 import com.iwrite.observability.BusinessTelemetry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -72,7 +73,7 @@ public class McpInvocationSupport {
              * not_found/invalid_request/unavailable, que são desfechos
              * esperados. Sem isso um alerta por ERROR nunca veria um defeito.
              */
-            levelFor(sanitized.category())
+            levelFor(exception, sanitized.category())
                     .addKeyValue(BusinessTelemetry.EVENT_NAME_KEY, EVENT_NAME)
                     .addKeyValue("iwrite.mcp.tool", tool)
                     .addKeyValue("iwrite.mcp.resource_type", resourceType.name())
@@ -84,9 +85,24 @@ public class McpInvocationSupport {
         }
     }
 
-    /** Só a categoria interna — exceção não reconhecida — chega a ERROR. */
-    private LoggingEventBuilder levelFor(String category) {
-        return McpToolException.CATEGORY_INTERNAL.equals(category) ? log.atError() : log.atWarn();
+    /**
+     * Severidade vem da falha real; a categoria <em>exportada</em> continua
+     * sendo a sanitizada, voltada ao cliente.
+     *
+     * <p>`McpToolException.from` colapsa toda `LlmExecutionException` em
+     * `unavailable`, o que é correto para o cliente MCP mas apagaria a
+     * diferença entre um provider fora do ar e um deployment quebrado. Por isso
+     * a exceção original é consultada antes da sanitização: um
+     * `INTERNAL_EXECUTION_ERROR`, `AUDIT_PERSISTENCE_FAILURE` ou
+     * `CONFIGURATION_ERROR` vindo da camada de LLM chega a ERROR mesmo que o
+     * cliente veja apenas `unavailable`.
+     */
+    private LoggingEventBuilder levelFor(RuntimeException original, String category) {
+        boolean internal = McpToolException.CATEGORY_INTERNAL.equals(category)
+                || (original instanceof LlmExecutionException llmFailure
+                    && llmFailure.getErrorCategory() != null
+                    && llmFailure.getErrorCategory().isInternalFailure());
+        return internal ? log.atError() : log.atWarn();
     }
 
     private long elapsedMillis(long startNanos) {

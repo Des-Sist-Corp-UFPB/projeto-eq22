@@ -19,7 +19,6 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 
 import java.time.Clock;
 import java.time.OffsetDateTime;
-import java.util.Set;
 import java.util.UUID;
 import java.util.function.Function;
 
@@ -59,17 +58,6 @@ public class LlmExecutionGateway {
 
     private static final String EVENT_NAME = "iwrite.llm.execution";
     private static final String EVENT_MESSAGE = "LLM execution completed";
-
-    /**
-     * Categories that mean the deployment or this service is broken, as opposed
-     * to an expected runtime condition (provider timeout, disabled feature,
-     * malformed model output). Only these reach ERROR.
-     */
-    private static final Set<LlmErrorCategory> INTERNAL_FAILURE_CATEGORIES = Set.of(
-            LlmErrorCategory.INTERNAL_EXECUTION_ERROR,
-            LlmErrorCategory.AUDIT_PERSISTENCE_FAILURE,
-            LlmErrorCategory.CONFIGURATION_ERROR
-    );
 
     private final LlmExecutionAuditRecorder auditRecorder;
     private final LlmErrorClassifier errorClassifier;
@@ -300,9 +288,7 @@ public class LlmExecutionGateway {
             return LOGGER.atInfo();
         }
         LlmErrorCategory category = completion.errorCategory();
-        return category == null || INTERNAL_FAILURE_CATEGORIES.contains(category)
-                ? LOGGER.atError()
-                : LOGGER.atWarn();
+        return category == null || category.isInternalFailure() ? LOGGER.atError() : LOGGER.atWarn();
     }
 
     private static Integer tokens(LlmExecutionCompletion completion, Function<LlmTokenUsage, Integer> field) {

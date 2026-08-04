@@ -9,11 +9,17 @@ import com.iwrite.audit.entity.AuditAction;
 import com.iwrite.audit.entity.AuditResourceType;
 import com.iwrite.audit.service.AuditLogService;
 import com.iwrite.common.exception.ResourceNotFoundException;
+import com.iwrite.llm.audit.LlmErrorCategory;
+import com.iwrite.llm.audit.LlmExecutionStatus;
+import com.iwrite.llm.gateway.LlmExecutionException;
 import com.iwrite.mcp.McpInvocationSupport;
 import com.iwrite.mcp.McpToolException;
 import io.opentelemetry.api.OpenTelemetry;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.slf4j.LoggerFactory;
 import org.slf4j.Marker;
 import org.springframework.transaction.support.TransactionSynchronization;
@@ -22,6 +28,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
@@ -368,6 +375,51 @@ class StructuredLogEventsTest {
         assertThat(CapturedLogs.keyValues(events.get(1)))
                 .containsEntry("iwrite.error.category", McpToolException.CATEGORY_NOT_FOUND);
         events.forEach(StructuredLogEventsTest::assertNoCanaries);
+    }
+
+    /**
+     * {@code McpToolException.from} collapses every {@code LlmExecutionException}
+     * into the client-facing {@code unavailable}, which is right for the client
+     * but would hide a broken deployment behind the same severity as a provider
+     * outage. Severity must come from the original category; the exported
+     * category stays sanitized for every one of {@link LlmErrorCategory}'s
+     * values, not just the two most obvious ones.
+     */
+    @ParameterizedTest
+    @MethodSource("llmCategoriesAndExpectedLevel")
+    void mcpDerivesSeverityFromTheOriginalLlmCategoryNotTheSanitizedOne(
+            LlmExecutionStatus status, LlmErrorCategory category, Level expectedLevel) {
+        McpInvocationSupport mcp = new McpInvocationSupport(mock(AuditLogService.class));
+        UUID resourceId = UUID.fromString("00000000-0000-0000-0000-000000000123");
+
+        assertThatThrownBy(() -> mcp.invoke("iwrite_analyze_scene", AuditAction.SCENE_UPDATED,
+                AuditResourceType.SCENE, resourceId, () -> {
+                    throw new LlmExecutionException(status, category, UUID.randomUUID(),
+                            new IllegalStateException("provider exception with secret sk-test-canary"));
+                })).isInstanceOf(McpToolException.class)
+                .hasMessageContaining(McpToolException.CATEGORY_UNAVAILABLE)
+                .satisfies(exception -> assertThat(((McpToolException) exception).category())
+                        .as("client never sees the internal LLM category")
+                        .isEqualTo(McpToolException.CATEGORY_UNAVAILABLE));
+
+        ILoggingEvent event = logs.single("iwrite.mcp.invocation");
+        assertThat(event.getLevel()).as("category %s", category).isEqualTo(expectedLevel);
+        assertThat(event.getThrowableProxy()).isNull();
+        assertThat(CapturedLogs.keyValues(event)).containsEntry("iwrite.error.category", McpToolException.CATEGORY_UNAVAILABLE);
+        assertNoCanaries(event);
+    }
+
+    private static Stream<Arguments> llmCategoriesAndExpectedLevel() {
+        return Stream.of(
+                Arguments.of(LlmExecutionStatus.TIMED_OUT, LlmErrorCategory.PROVIDER_TIMEOUT, Level.WARN),
+                Arguments.of(LlmExecutionStatus.UNAVAILABLE, LlmErrorCategory.PROVIDER_UNAVAILABLE, Level.WARN),
+                Arguments.of(LlmExecutionStatus.FAILED, LlmErrorCategory.PROVIDER_REQUEST_REJECTED, Level.WARN),
+                Arguments.of(LlmExecutionStatus.INVALID_RESPONSE, LlmErrorCategory.INVALID_STRUCTURED_RESPONSE, Level.WARN),
+                Arguments.of(LlmExecutionStatus.DISABLED, LlmErrorCategory.FEATURE_DISABLED, Level.WARN),
+                Arguments.of(LlmExecutionStatus.FAILED, LlmErrorCategory.CONFIGURATION_ERROR, Level.ERROR),
+                Arguments.of(LlmExecutionStatus.FAILED, LlmErrorCategory.AUDIT_PERSISTENCE_FAILURE, Level.ERROR),
+                Arguments.of(LlmExecutionStatus.FAILED, LlmErrorCategory.INTERNAL_EXECUTION_ERROR, Level.ERROR)
+        );
     }
 
     /**
