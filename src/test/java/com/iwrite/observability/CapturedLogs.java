@@ -70,8 +70,8 @@ public final class CapturedLogs implements AutoCloseable {
     /**
      * Every string an exporter could carry for this event: message pattern,
      * formatted message, logger name, key-value keys and values, MDC entries,
-     * argument array and the whole throwable chain. Canary assertions run over
-     * this, never over the formatted message alone.
+     * markers, argument array and the whole throwable chain. Canary assertions
+     * run over this, never over the formatted message alone.
      */
     public static String allSurfaces(ILoggingEvent event) {
         StringBuilder text = new StringBuilder()
@@ -83,6 +83,8 @@ public final class CapturedLogs implements AutoCloseable {
                         .collect(Collectors.joining("\n")))
                 .append('\n')
                 .append(event.getMDCPropertyMap())
+                .append('\n')
+                .append(event.getMarkerList())
                 .append('\n');
         Object[] arguments = event.getArgumentArray();
         if (arguments != null) {
