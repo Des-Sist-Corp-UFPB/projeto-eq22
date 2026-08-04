@@ -11,10 +11,14 @@ import io.opentelemetry.api.trace.Span;
 import io.opentelemetry.api.trace.StatusCode;
 import io.opentelemetry.api.trace.Tracer;
 import io.opentelemetry.context.Scope;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.slf4j.spi.LoggingEventBuilder;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
+import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
@@ -49,11 +53,34 @@ import java.util.regex.Pattern;
  * a credential-prefix rejection as an extra layer.
  *
  * <p>Duration unit: milliseconds, recorded from {@link System#nanoTime()}.
+ *
+ * <p>Structured logs: {@link Operation#finish()} also emits exactly one SLF4J 2
+ * event carrying the same controlled attributes as key-value pairs, so the
+ * operation is searchable in Loki. The event is emitted where the result and the
+ * metrics are decided — after commit/rollback is known — and never re-enters the
+ * business span's {@link Scope}, so it is correlated through the enclosing HTTP
+ * span's {@code trace_id}. Export is the Java Agent's Logback instrumentation;
+ * no second appender is registered here. See docs/otel-correlated-logs.md.
  */
 @Component
 public class BusinessTelemetry {
 
     public static final String INSTRUMENTATION_SCOPE = "com.iwrite.observability";
+
+    /**
+     * Business events go to their own logger so a deployment can silence or
+     * raise them without touching application logging.
+     */
+    public static final String EVENT_LOGGER = "com.iwrite.business.events";
+
+    /** Recognized by the agent's Logback instrumentation as the log record's event name. */
+    public static final String EVENT_NAME_KEY = "otel.event.name";
+    public static final String DURATION_MS_KEY = "iwrite.duration_ms";
+
+    /** Short and stable on purpose: everything searchable lives in the key-value pairs. */
+    public static final String EVENT_MESSAGE = "Business operation completed";
+
+    private static final Logger EVENT_LOG = LoggerFactory.getLogger(EVENT_LOGGER);
 
     public static final String SPAN_SCENE_CONTENT_SAVE = "iwrite.scene.content.save";
     public static final String SPAN_SCENE_ANALYSIS = "iwrite.scene.analysis";
@@ -87,6 +114,8 @@ public class BusinessTelemetry {
 
     public static final String PROVIDER_OPENAI = "openai";
     public static final String PROVIDER_DISABLED = "disabled";
+    /** Log-only stand-in for a provider outside the closed vocabulary; never a span value. */
+    public static final String PROVIDER_UNKNOWN = "unknown";
 
     /**
      * Small, explicit set of model families. {@link #modelFamily(String)} is
@@ -147,6 +176,15 @@ public class BusinessTelemetry {
 
     private static final Set<String> SIZE_BUCKETS =
             Set.of(BUCKET_EMPTY, BUCKET_SMALL, BUCKET_MEDIUM, BUCKET_LARGE, BUCKET_TRUNCATED);
+
+    /**
+     * Results that mean "the flow did what it was asked to". Everything else
+     * is either an expected, handled outcome (WARN) or {@link #RESULT_FAILURE},
+     * which is the only result that reaches ERROR. An optimistic-lock conflict
+     * is a WARN, never a stack trace.
+     */
+    private static final Set<String> INFO_RESULTS =
+            Set.of(RESULT_SUCCESS, RESULT_NO_CHANGE, RESULT_IDEMPOTENT_RETRY);
 
     /**
      * Primary barrier for every string attribute with a fixed set of
@@ -272,6 +310,18 @@ public class BusinessTelemetry {
         return MODEL_FAMILY_OTHER;
     }
 
+    /**
+     * Same closed vocabulary the {@link #AI_PROVIDER} span attribute uses, for
+     * callers that log a provider instead of attaching it to a span: anything
+     * outside it collapses to {@link #PROVIDER_UNKNOWN} rather than travelling
+     * as-is.
+     */
+    public static String providerName(String rawProvider) {
+        return rawProvider != null && CLOSED_VOCABULARIES.get(AI_PROVIDER).contains(rawProvider)
+                ? rawProvider
+                : PROVIDER_UNKNOWN;
+    }
+
     private static boolean isAllowedValue(AttributeKey<String> key, String value) {
         if (value == null || !ATTRIBUTE_KEYS.contains(key)) {
             return false;
@@ -286,16 +336,25 @@ public class BusinessTelemetry {
      */
     public final class Operation implements AutoCloseable {
 
+        private final String eventName;
         private final String operation;
         private final long startedNanos;
         private final Span span;
         private final Scope scope;
+        /**
+         * Mirror of the attributes accepted onto the span, so the closing log
+         * event can carry the same values. Written only by {@link #setSafely},
+         * which is only reachable through the validated attribute API, so this
+         * map can never hold a key or value the span would have rejected.
+         */
+        private final Map<String, Object> logFields = new LinkedHashMap<>();
         private String result;
         private boolean scopeDetached;
         private boolean ended;
         private boolean failed;
 
         private Operation(String spanName, String operation) {
+            this.eventName = spanName;
             this.operation = operation;
             this.startedNanos = System.nanoTime();
             Span startedSpan;
@@ -425,7 +484,12 @@ public class BusinessTelemetry {
             closeSafely(scope);
         }
 
-        /** Ends the span and records both metrics. Idempotent; never touches the {@link Scope}. */
+        /**
+         * Ends the span, records both metrics and emits the single structured
+         * log event for this operation. Idempotent — the {@code ended} guard is
+         * what keeps a deferred completion followed by a defensive
+         * {@link #close()} from logging twice. Never touches the {@link Scope}.
+         */
         private void finish() {
             if (ended) {
                 return;
@@ -441,7 +505,36 @@ public class BusinessTelemetry {
             } catch (RuntimeException telemetryFailure) {
                 // exporting telemetry must never fail the business operation
             }
+            logEvent(finalResult, elapsedMs);
             endSafely(span);
+        }
+
+        /**
+         * One SLF4J 2 event per operation, built from key-value pairs only: the
+         * message is a fixed string, so nothing searchable depends on parsing it
+         * and nothing variable can leak through it. No {@link Throwable} is
+         * passed — a handled failure is described by {@link #ERROR_TYPE}, which
+         * only ever holds an exception's simple class name.
+         */
+        private void logEvent(String finalResult, double elapsedMs) {
+            try {
+                LoggingEventBuilder event = levelFor(finalResult)
+                        .addKeyValue(EVENT_NAME_KEY, eventName)
+                        .addKeyValue(OPERATION.getKey(), operation)
+                        .addKeyValue(RESULT.getKey(), finalResult)
+                        .addKeyValue(DURATION_MS_KEY, Math.round(elapsedMs));
+                logFields.forEach(event::addKeyValue);
+                event.log(EVENT_MESSAGE);
+            } catch (RuntimeException loggingFailure) {
+                // a broken logging pipeline must never fail the business operation
+            }
+        }
+
+        private LoggingEventBuilder levelFor(String finalResult) {
+            if (RESULT_FAILURE.equals(finalResult)) {
+                return EVENT_LOG.atError();
+            }
+            return INFO_RESULTS.contains(finalResult) ? EVENT_LOG.atInfo() : EVENT_LOG.atWarn();
         }
 
         /** Full, non-transactional completion: detaches the scope and ends the span. Safe to call twice. */
@@ -452,6 +545,7 @@ public class BusinessTelemetry {
         }
 
         private <T> void setSafely(AttributeKey<T> key, T value) {
+            logFields.put(key.getKey(), value);
             try {
                 span.setAttribute(key, value);
             } catch (RuntimeException telemetryFailure) {
