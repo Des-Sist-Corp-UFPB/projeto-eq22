@@ -174,6 +174,12 @@ Todos os comandos acima usam placeholders (`<TRACE_ID>`) — nenhum token, conte
 
 Os spans e métricas **manuais** dos fluxos críticos (salvamento de conteúdo de cena e análise assistida) estão documentados em [`otel-business-signals.md`](otel-business-signals.md): nomes, atributos permitidos, dados proibidos, buckets, consultas do Tempo/Prometheus, passos de reprodução e diagnóstico do gargalo.
 
+## Logs estruturados
+
+Os **eventos de log** correlacionados com traces estão em [`otel-correlated-logs.md`](otel-correlated-logs.md): key-value pairs do SLF4J 2, a configuração `capture-key-value-pair-attributes`, campos permitidos e proibidos, níveis por ambiente, consultas LogQL verificadas contra o LGTM real, correlação log → Tempo, e por que nenhum segundo `OpenTelemetryAppender` foi adicionado (o Java Agent já instala o dele).
+
+Duas ressalvas que afetam quem for escrever consultas: só `service_name` é label indexado — os atributos do log record chegam como structured metadata, com pontos convertidos em underscores (`iwrite.result` → `iwrite_result`) — e `otel.event.name` é consumido pelo agente como `EventName` do log record, não ficando consultável neste pipeline.
+
 ## Limitações conhecidas
 
 - O download do agente no build vem do GitHub Releases; o SHA-256 fixo garante reprodutibilidade do conteúdo, não a disponibilidade da rede.
