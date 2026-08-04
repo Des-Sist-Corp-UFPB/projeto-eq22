@@ -382,6 +382,41 @@ class LlmExecutionGatewayTest {
         }
     }
 
+    /**
+     * A provider timeout and a broken deployment must not share a severity, or
+     * ERROR-based alerting would never fire for the second one.
+     */
+    @Test
+    void unexpectedInternalFailureIsErrorWhileExpectedProviderFailureStaysWarn() {
+        UUID auditId = stubStartedAudit();
+        when(auditRecorder.complete(eq(auditId), any())).thenReturn(true);
+
+        try (CapturedLogs logs = new CapturedLogs()) {
+            assertThatThrownBy(() -> gateway.execute(spec(), context -> {
+                throw new IllegalStateException("unrecognized " + API_KEY_SAMPLE);
+            })).isInstanceOf(LlmExecutionException.class);
+
+            ILoggingEvent internal = logs.single("iwrite.llm.execution");
+            assertThat(internal.getLevel()).isEqualTo(Level.ERROR);
+            assertThat(CapturedLogs.keyValues(internal))
+                    .containsEntry("iwrite.error.category", "INTERNAL_EXECUTION_ERROR");
+            assertThat(CapturedLogs.allSurfaces(internal)).doesNotContain(API_KEY_SAMPLE);
+        }
+
+        UUID retryAuditId = stubStartedAudit();
+        when(auditRecorder.complete(eq(retryAuditId), any())).thenReturn(true);
+        try (CapturedLogs logs = new CapturedLogs()) {
+            assertThatThrownBy(() -> gateway.execute(spec(), context -> {
+                throw new TransientAiException("HTTP 503");
+            })).isInstanceOf(LlmExecutionException.class);
+
+            ILoggingEvent expected = logs.single("iwrite.llm.execution");
+            assertThat(expected.getLevel()).isEqualTo(Level.WARN);
+            assertThat(CapturedLogs.keyValues(expected))
+                    .containsEntry("iwrite.error.category", "PROVIDER_UNAVAILABLE");
+        }
+    }
+
     @Test
     void failedOutcomeEventIsWarnAndCarriesNoProviderMessage() {
         UUID auditId = stubStartedAudit();

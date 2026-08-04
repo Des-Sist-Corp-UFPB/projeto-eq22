@@ -19,6 +19,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 
 import java.time.Clock;
 import java.time.OffsetDateTime;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.Function;
 
@@ -58,6 +59,17 @@ public class LlmExecutionGateway {
 
     private static final String EVENT_NAME = "iwrite.llm.execution";
     private static final String EVENT_MESSAGE = "LLM execution completed";
+
+    /**
+     * Categories that mean the deployment or this service is broken, as opposed
+     * to an expected runtime condition (provider timeout, disabled feature,
+     * malformed model output). Only these reach ERROR.
+     */
+    private static final Set<LlmErrorCategory> INTERNAL_FAILURE_CATEGORIES = Set.of(
+            LlmErrorCategory.INTERNAL_EXECUTION_ERROR,
+            LlmErrorCategory.AUDIT_PERSISTENCE_FAILURE,
+            LlmErrorCategory.CONFIGURATION_ERROR
+    );
 
     private final LlmExecutionAuditRecorder auditRecorder;
     private final LlmErrorClassifier errorClassifier;
@@ -257,8 +269,7 @@ public class LlmExecutionGateway {
      * correlation comes from the agent's {@code trace_id}/{@code span_id}.
      */
     private void logOutcome(LlmExecutionSpec spec, LlmExecutionCompletion completion) {
-        boolean succeeded = completion.status() == LlmExecutionStatus.SUCCEEDED;
-        LoggingEventBuilder event = succeeded ? LOGGER.atInfo() : LOGGER.atWarn();
+        LoggingEventBuilder event = levelFor(completion);
         event.addKeyValue(BusinessTelemetry.EVENT_NAME_KEY, EVENT_NAME)
                 .addKeyValue("iwrite.llm.feature", spec.feature().name())
                 .addKeyValue("iwrite.ai.provider", BusinessTelemetry.providerName(spec.provider()))
@@ -273,6 +284,25 @@ public class LlmExecutionGateway {
                 .addKeyValue("iwrite.llm.total_tokens", tokens(completion, LlmTokenUsage::totalTokens))
                 .addKeyValue("iwrite.ai.fallback_used", completion.fallbackUsed())
                 .log(EVENT_MESSAGE);
+    }
+
+    /**
+     * Same level policy as the business events: INFO for success, WARN for an
+     * expected and classified outcome, ERROR only for an unexpected internal
+     * failure. A provider timeout and a broken deployment must not share a
+     * severity, or ERROR-based alerts would never fire for the second.
+     *
+     * <p>An unclassified non-success is treated as internal: an outcome we
+     * could not name is by definition not an expected one.
+     */
+    private static LoggingEventBuilder levelFor(LlmExecutionCompletion completion) {
+        if (completion.status() == LlmExecutionStatus.SUCCEEDED) {
+            return LOGGER.atInfo();
+        }
+        LlmErrorCategory category = completion.errorCategory();
+        return category == null || INTERNAL_FAILURE_CATEGORIES.contains(category)
+                ? LOGGER.atError()
+                : LOGGER.atWarn();
     }
 
     private static Integer tokens(LlmExecutionCompletion completion, Function<LlmTokenUsage, Integer> field) {

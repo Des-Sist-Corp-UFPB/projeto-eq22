@@ -161,6 +161,8 @@ Nenhum identificador de alta cardinalidade vira label indexado do Loki — ver a
 
 Conflito otimista é `WARN` **sem stack trace** — é resultado previsto de escrita concorrente, não defeito.
 
+No evento `iwrite.llm.execution` a mesma política se aplica por **categoria de erro**, não por sucesso/insucesso: `INTERNAL_EXECUTION_ERROR`, `AUDIT_PERSISTENCE_FAILURE` e `CONFIGURATION_ERROR` significam serviço ou deployment quebrado e vão para `ERROR`; timeout de provider, provider indisponível, feature desabilitada e resposta malformada são condições de runtime esperadas e ficam em `WARN`. Uma categoria não classificada (`null`) é tratada como interna — um desfecho que não conseguimos nomear não é, por definição, esperado. Sem essa separação um alerta baseado em `ERROR` nunca dispararia para um deployment quebrado, porque um timeout de provider ocuparia a mesma severidade.
+
 Por ambiente, sem aumentar ruído em produção:
 
 ```properties
