@@ -68,6 +68,12 @@ try {
 } catch (ConflictException conflict) {
     telemetry.failure(BusinessTelemetry.RESULT_CONFLICT, conflict);
     throw conflict;
+} catch (BadRequestException validationFailure) {
+    telemetry.failure(BusinessTelemetry.RESULT_VALIDATION_ERROR, validationFailure);
+    throw validationFailure;
+} catch (ResourceNotFoundException notFound) {
+    telemetry.failure(BusinessTelemetry.RESULT_NOT_FOUND, notFound);
+    throw notFound;
 } catch (RuntimeException failure) {
     telemetry.failure(BusinessTelemetry.RESULT_FAILURE, failure);
     throw failure;
@@ -90,7 +96,7 @@ No callback:
 | `afterCompletion(status)` | Efeito no resultado já registrado |
 |---|---|
 | `STATUS_COMMITTED` | Mantém o resultado como estava (inclui `success`, `no_change`, `idempotent_retry`, `conflict`) |
-| `STATUS_ROLLED_BACK` ou `STATUS_UNKNOWN` | Um resultado já classificado por `failure(...)` (ex.: `conflict`) é preservado; qualquer outro — inclusive `success`, `no_change` e `idempotent_retry` — é rebaixado para `failure`. O span sempre recebe `StatusCode.ERROR`. Nenhuma mensagem ou tipo de exceção é inventado: o callback não tem acesso seguro à causa. |
+| `STATUS_ROLLED_BACK` ou `STATUS_UNKNOWN` | Um resultado já classificado por `failure(...)` (ex.: `conflict`, `validation_error`, `not_found`) é preservado; qualquer outro — inclusive `success`, `no_change` e `idempotent_retry` — é rebaixado para `failure`. O span sempre recebe `StatusCode.ERROR`. Nenhuma mensagem ou tipo de exceção é inventado: o callback não tem acesso seguro à causa. |
 
 Falha ao registrar a sincronização (infraestrutura de telemetria) nunca propaga: `deferEndToTransaction()` engole `RuntimeException` e devolve `false`; o `finally` do chamador ainda destaca o `Scope` e fecha a `Operation` imediatamente, então nada vaza.
 
@@ -128,7 +134,7 @@ Só estas chaves podem ser escritas; qualquer outra é descartada.
 | Atributo | Valores |
 |---|---|
 | `iwrite.operation` | `scene_content_save` |
-| `iwrite.result` | `success`, `conflict`, `no_change`, `idempotent_retry`, `failure` |
+| `iwrite.result` | `success`, `conflict`, `no_change`, `idempotent_retry`, `validation_error`, `not_found`, `failure` |
 | `iwrite.scene.source` | `manual_save`, `autosave`, `restore`, `other` |
 | `iwrite.scene.content_size_bucket` | `empty`, `small`, `medium`, `large`, `truncated` |
 | `iwrite.scene.content_changed` | booleano |
@@ -141,7 +147,7 @@ Só estas chaves podem ser escritas; qualquer outra é descartada.
 | Atributo | Valores |
 |---|---|
 | `iwrite.operation` | `scene_analysis` |
-| `iwrite.result` | `success`, `validation_error`, `provider_error`, `invalid_response`, `failure` |
+| `iwrite.result` | `success`, `validation_error`, `not_found`, `provider_error`, `invalid_response`, `failure` |
 | `iwrite.ai.focus_present` | booleano |
 | `iwrite.ai.input_size_bucket` | `small`, `medium`, `large`, `truncated` |
 | `iwrite.ai.fallback_used` | booleano |
@@ -170,12 +176,15 @@ O tamanho exato nunca é registrado.
 | salvamento | `idempotent_retry` | `operationId` já reservado com o mesmo fingerprint |
 | salvamento | `no_change` | conteúdo idêntico ao persistido |
 | salvamento | `conflict` | `ConflictException` (revisão obsoleta) ou `WordCountEventConflictException` |
+| salvamento | `validation_error` | `BadRequestException` (ex.: `operationId` ausente) |
+| salvamento | `not_found` | `ResourceNotFoundException` (cena inexistente ou de outro tenant) |
 | salvamento | `failure` | qualquer outra `RuntimeException` |
 | salvamento | `success` | nenhum dos anteriores |
 | análise | `validation_error` | `BadRequestException` (ex.: cena sem texto) |
+| análise | `not_found` | `ResourceNotFoundException` (cena inexistente ou de outro tenant) |
 | análise | `invalid_response` | categoria `INVALID_STRUCTURED_RESPONSE` do gateway |
-| análise | `provider_error` | categorias `PROVIDER_TIMEOUT`, `PROVIDER_UNAVAILABLE`, `PROVIDER_REQUEST_REJECTED` |
-| análise | `failure` | `CONFIGURATION_ERROR`, `FEATURE_DISABLED`, `AUDIT_PERSISTENCE_FAILURE`, `INTERNAL_EXECUTION_ERROR` ou exceção não classificada |
+| análise | `provider_error` | categorias `PROVIDER_TIMEOUT`, `PROVIDER_UNAVAILABLE`, `PROVIDER_REQUEST_REJECTED` e `FEATURE_DISABLED` |
+| análise | `failure` | `CONFIGURATION_ERROR`, `AUDIT_PERSISTENCE_FAILURE`, `INTERNAL_EXECUTION_ERROR` ou exceção não classificada |
 
 A classificação vem da **categoria estável** do `LlmExecutionGateway`, nunca da mensagem da exceção.
 
@@ -206,8 +215,8 @@ Toda escrita de span/métrica está em `try/catch` que engole `RuntimeException`
 | Arquivo | Cobre |
 |---|---|
 | `BusinessTelemetryTest` | span + counter + histograma, aninhamento sob pai, sucesso ≠ falha, só nome de classe da exceção, descarte de valor/chave inválidos, normalização de resultado, labels limitadas, buckets, no-op sem SDK, `close()` idempotente, ciclo de vida `deferEndToTransaction()` (span aberto até a conclusão, commit vira sucesso, rollback rebaixa sucesso/`no_change`/`idempotent_retry` para falha, `conflict` já classificado sobrevive ao rollback, `STATUS_UNKNOWN` nunca vira sucesso, ausência de transação não vaza span/`Scope`, falha ao registrar a sincronização não quebra o negócio nem vaza o `Scope`), `detachScope()` restaura o contexto sem terminar o span e é idempotente antes e depois de `close()`, dois salvamentos adiados sob o mesmo span pai nunca ficam aninhados um no outro e a ordem dos callbacks de `afterCompletion` não corrompe `Span.current()`, falha ao fechar o `Scope` (agente mal comportado) nunca quebra o negócio e o span ainda termina exatamente uma vez, `modelFamily(...)` normaliza para o vocabulário fechado, vocabulário fechado aceita todo valor válido e rejeita todo canário de credencial em qualquer atributo exportado |
-| `SceneAnalysisTelemetryTest` | serviço real com SDK em memória: sucesso, aninhamento, fallback só booleano, `validation_error`, `provider_error` sem vazar mensagem, `invalid_response`, bucket `truncated`, ausência de conteúdo/título/focus/resposta/UUID, `iwrite.ai.model_family` para modelo reconhecido/desconhecido/ausente/em formato de credencial |
-| `SceneContentSaveTelemetryIntegrationTest` | fluxo real contra PostgreSQL: `success`, `autosave` vs `manual_save`, `no_change`, `idempotent_retry`, `conflict`, aninhamento sob span HTTP, rollback de uma transação externa **depois** de `updateContent` já ter retornado com sucesso rebaixa o span para `failure`; com uma transação externa (`TransactionTemplate`) e um span HTTP pai correntes: `Span.current()` volta a ser o span pai assim que `updateContent` retorna e o span de salvamento ainda não está exportado/encerrado; um span não relacionado criado depois é filho do span pai, nunca do salvamento; e dois salvamentos sequenciais na mesma transação externa compartilham o mesmo pai, nunca ficam aninhados um no outro, permanecem abertos até a conclusão e então fecham exatamente uma vez cada |
+| `SceneAnalysisTelemetryTest` | serviço real com SDK em memória: sucesso, aninhamento, fallback só booleano, `validation_error` (`WARN`, evento Logback real), `not_found` para cena inexistente (`WARN`, sem vazar o UUID em nenhuma superfície do evento), `provider_error` sem vazar mensagem, `invalid_response`, exceção não reconhecida continua `failure`/`ERROR` sem vazar canário, bucket `truncated`, ausência de conteúdo/título/focus/resposta/UUID, `iwrite.ai.model_family` para modelo reconhecido/desconhecido/ausente/em formato de credencial |
+| `SceneContentSaveTelemetryIntegrationTest` | fluxo real contra PostgreSQL: `success`, `autosave` vs `manual_save`, `no_change`, `idempotent_retry`, `conflict` (`WARN`, evento Logback real), `validation_error` para `operationId` ausente (`WARN`, sem vazar a mensagem da exceção), `not_found` para cena inexistente (`WARN`, sem vazar o UUID), aninhamento sob span HTTP, rollback de uma transação externa **depois** de `updateContent` já ter retornado com sucesso rebaixa o span para `failure` e o evento Logback para `ERROR`; com uma transação externa (`TransactionTemplate`) e um span HTTP pai correntes: `Span.current()` volta a ser o span pai assim que `updateContent` retorna e o span de salvamento ainda não está exportado/encerrado; um span não relacionado criado depois é filho do span pai, nunca do salvamento; e dois salvamentos sequenciais na mesma transação externa compartilham o mesmo pai, nunca ficam aninhados um no outro, permanecem abertos até a conclusão e então fecham exatamente uma vez cada |
 
 Os testes usam exporters em memória e verificam os spans e métricas **efetivamente produzidos** — nenhum deles procura strings no código-fonte.
 
@@ -257,7 +266,7 @@ curl -s -X POST localhost:8085/api/scenes/$SCENE/ai-analysis -H 'Content-Type: a
   -d '{"focus":"ritmo"}'
 ```
 
-Com o stub no ar: `iwrite.result=success`, `iwrite.ai.provider=openai`, `iwrite.ai.fallback_used=false`, `iwrite.ai.focus_present=true`. Sem o stub: `iwrite.result=failure` com `iwrite.ai.provider=disabled`. Com uma cena sem texto: `iwrite.result=validation_error`.
+Com o stub no ar: `iwrite.result=success`, `iwrite.ai.provider=openai`, `iwrite.ai.fallback_used=false`, `iwrite.ai.focus_present=true`. Sem o stub: `iwrite.result=provider_error` com `iwrite.ai.provider=disabled`. Com uma cena sem texto: `iwrite.result=validation_error`.
 
 ## Consultas de investigação
 

@@ -42,10 +42,17 @@ exception text.
 
 The gateway never receives prompt or response content; the calling feature owns
 both and hands the gateway only the typed result plus provider metadata. Logs
-emitted by the gateway contain the same bounded metadata as the table plus the
-trace ID (`llmTraceId` in the MDC), and never content. Tenant ID and user ID are
-the only personal references stored; they are required for tenant isolation and
-future data-subject requests.
+emitted by the gateway contain bounded metadata and never content.
+
+The audit UUID travels in the MDC as `llmExecutionId`. It identifies a row in
+this table and is **not** the OpenTelemetry distributed `trace_id`, which the
+Java Agent injects independently; see
+[`otel-correlated-logs.md`](otel-correlated-logs.md). The structured outcome
+event exported to Loki carries only the model *family*, never the configured
+model string, and never the audit UUID.
+
+Tenant ID and user ID are the only personal references stored; they are
+required for tenant isolation and future data-subject requests.
 
 ## Status and error model
 

@@ -1,7 +1,12 @@
 package com.iwrite.scene.service;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import com.iwrite.common.exception.BadRequestException;
 import com.iwrite.common.exception.ConflictException;
+import com.iwrite.common.exception.ResourceNotFoundException;
 import com.iwrite.observability.BusinessTelemetry;
+import com.iwrite.observability.CapturedLogs;
 import com.iwrite.observability.RecordingTelemetry;
 import com.iwrite.scene.dto.SceneContentRequest;
 import com.iwrite.scene.dto.SceneResponse;
@@ -174,6 +179,67 @@ class SceneContentSaveTelemetryIntegrationTest extends PostgresIntegrationTest {
                 BusinessTelemetry.RESULT_IDEMPOTENT_RETRY)).isPositive();
     }
 
+    /**
+     * {@code BadRequestException} is handled by {@code GlobalExceptionHandler}
+     * as a 400, not a server defect, so it must not share {@code failure}/
+     * {@code ERROR} with a genuine internal error.
+     */
+    @Test
+    void missingOperationIdIsReportedAsValidationErrorAtWarnWithoutLeakingDetails() {
+        StoryWorld world = createStoryWorld("telemetry save validation error");
+
+        try (CapturedLogs logs = new CapturedLogs()) {
+            assertThatThrownBy(() -> sceneService.updateContent(
+                    world.scene().id(),
+                    new SceneContentRequest("{}", PRIVATE_TEXT, SceneVersionSource.MANUAL_SAVE,
+                            world.scene().contentRevision(), null)
+            )).isInstanceOf(BadRequestException.class);
+
+            SpanData span = recording.span(BusinessTelemetry.SPAN_SCENE_CONTENT_SAVE);
+            assertThat(span.getAttributes().get(BusinessTelemetry.RESULT))
+                    .isEqualTo(BusinessTelemetry.RESULT_VALIDATION_ERROR);
+            assertThat(span.getAttributes().get(BusinessTelemetry.ERROR_TYPE)).isEqualTo("BadRequestException");
+            assertThat(recording.counterValue(
+                    BusinessTelemetry.OPERATION_SCENE_CONTENT_SAVE,
+                    BusinessTelemetry.RESULT_VALIDATION_ERROR)).isPositive();
+
+            ILoggingEvent event = logs.single(BusinessTelemetry.SPAN_SCENE_CONTENT_SAVE);
+            assertThat(event.getLevel()).isEqualTo(Level.WARN);
+            assertThat(event.getThrowableProxy()).isNull();
+            assertThat(CapturedLogs.allSurfaces(event)).doesNotContain("operationId is required");
+        }
+    }
+
+    /**
+     * {@code ResourceNotFoundException} is handled as a 404, not a server
+     * defect — a scene the caller doesn't have access to (wrong tenant or
+     * simply missing) must not raise the same alert as a broken deployment.
+     */
+    @Test
+    void nonExistentSceneIsReportedAsNotFoundAtWarnWithoutLeakingTheId() {
+        UUID missingSceneId = UUID.randomUUID();
+
+        try (CapturedLogs logs = new CapturedLogs()) {
+            assertThatThrownBy(() -> sceneService.updateContent(
+                    missingSceneId,
+                    new SceneContentRequest("{}", PRIVATE_TEXT, SceneVersionSource.MANUAL_SAVE, 0L, UUID.randomUUID())
+            )).isInstanceOf(ResourceNotFoundException.class);
+
+            SpanData span = recording.span(BusinessTelemetry.SPAN_SCENE_CONTENT_SAVE);
+            assertThat(span.getAttributes().get(BusinessTelemetry.RESULT))
+                    .isEqualTo(BusinessTelemetry.RESULT_NOT_FOUND);
+            assertThat(span.getAttributes().get(BusinessTelemetry.ERROR_TYPE)).isEqualTo("ResourceNotFoundException");
+            assertThat(recording.counterValue(
+                    BusinessTelemetry.OPERATION_SCENE_CONTENT_SAVE,
+                    BusinessTelemetry.RESULT_NOT_FOUND)).isPositive();
+
+            ILoggingEvent event = logs.single(BusinessTelemetry.SPAN_SCENE_CONTENT_SAVE);
+            assertThat(event.getLevel()).isEqualTo(Level.WARN);
+            assertThat(event.getThrowableProxy()).isNull();
+            assertThat(CapturedLogs.allSurfaces(event)).doesNotContain(missingSceneId.toString());
+        }
+    }
+
     @Test
     void staleRevisionIsReportedAsConflictWithoutTheRevisionNumbers() {
         StoryWorld world = createStoryWorld("telemetry save conflict");
@@ -184,22 +250,30 @@ class SceneContentSaveTelemetryIntegrationTest extends PostgresIntegrationTest {
         );
         recording.reset();
 
-        assertThatThrownBy(() -> sceneService.updateContent(
-                world.scene().id(),
-                new SceneContentRequest("{}", "second", SceneVersionSource.MANUAL_SAVE,
-                        world.scene().contentRevision(), UUID.randomUUID())
-        )).isInstanceOf(ConflictException.class);
+        try (CapturedLogs logs = new CapturedLogs()) {
+            assertThatThrownBy(() -> sceneService.updateContent(
+                    world.scene().id(),
+                    new SceneContentRequest("{}", "second", SceneVersionSource.MANUAL_SAVE,
+                            world.scene().contentRevision(), UUID.randomUUID())
+            )).isInstanceOf(ConflictException.class);
 
-        SpanData span = recording.span(BusinessTelemetry.SPAN_SCENE_CONTENT_SAVE);
-        assertThat(span.getAttributes().get(BusinessTelemetry.RESULT)).isEqualTo(BusinessTelemetry.RESULT_CONFLICT);
-        assertThat(span.getAttributes().get(BusinessTelemetry.ERROR_TYPE)).isEqualTo("ConflictException");
-        assertThat(span.getEvents()).isEmpty();
-        assertThat(attributeValues(span))
-                .noneMatch(value -> value.contains("Reload the scene"))
-                .noneMatch(value -> value.contains("second"));
-        assertThat(recording.counterValue(
-                BusinessTelemetry.OPERATION_SCENE_CONTENT_SAVE,
-                BusinessTelemetry.RESULT_CONFLICT)).isPositive();
+            SpanData span = recording.span(BusinessTelemetry.SPAN_SCENE_CONTENT_SAVE);
+            assertThat(span.getAttributes().get(BusinessTelemetry.RESULT)).isEqualTo(BusinessTelemetry.RESULT_CONFLICT);
+            assertThat(span.getAttributes().get(BusinessTelemetry.ERROR_TYPE)).isEqualTo("ConflictException");
+            assertThat(span.getEvents()).isEmpty();
+            assertThat(attributeValues(span))
+                    .noneMatch(value -> value.contains("Reload the scene"))
+                    .noneMatch(value -> value.contains("second"));
+            assertThat(recording.counterValue(
+                    BusinessTelemetry.OPERATION_SCENE_CONTENT_SAVE,
+                    BusinessTelemetry.RESULT_CONFLICT)).isPositive();
+
+            ILoggingEvent event = logs.single(BusinessTelemetry.SPAN_SCENE_CONTENT_SAVE);
+            assertThat(event.getLevel())
+                    .as("conflict is an expected outcome of concurrent writes, not a defect")
+                    .isEqualTo(Level.WARN);
+            assertThat(event.getThrowableProxy()).isNull();
+        }
     }
 
     @Test
@@ -214,18 +288,25 @@ class SceneContentSaveTelemetryIntegrationTest extends PostgresIntegrationTest {
          * updateContent's own body, forcing the surrounding transaction to
          * roll back the content it already saved.
          */
-        assertThatThrownBy(() -> outerTransaction.execute(status -> {
-            sceneService.updateContent(
-                    world.scene().id(),
-                    new SceneContentRequest("{}", "saved then rolled back", SceneVersionSource.MANUAL_SAVE,
-                            world.scene().contentRevision(), UUID.randomUUID())
-            );
-            throw new IllegalStateException("simulated failure after the transactional method already returned");
-        })).isInstanceOf(IllegalStateException.class);
+        try (CapturedLogs logs = new CapturedLogs()) {
+            assertThatThrownBy(() -> outerTransaction.execute(status -> {
+                sceneService.updateContent(
+                        world.scene().id(),
+                        new SceneContentRequest("{}", "saved then rolled back", SceneVersionSource.MANUAL_SAVE,
+                                world.scene().contentRevision(), UUID.randomUUID())
+                );
+                throw new IllegalStateException("simulated failure after the transactional method already returned");
+            })).isInstanceOf(IllegalStateException.class);
 
-        SpanData span = recording.span(BusinessTelemetry.SPAN_SCENE_CONTENT_SAVE);
-        assertThat(span.getAttributes().get(BusinessTelemetry.RESULT)).isEqualTo(BusinessTelemetry.RESULT_FAILURE);
-        assertThat(span.getStatus().getStatusCode()).isEqualTo(StatusCode.ERROR);
+            SpanData span = recording.span(BusinessTelemetry.SPAN_SCENE_CONTENT_SAVE);
+            assertThat(span.getAttributes().get(BusinessTelemetry.RESULT)).isEqualTo(BusinessTelemetry.RESULT_FAILURE);
+            assertThat(span.getStatus().getStatusCode()).isEqualTo(StatusCode.ERROR);
+
+            ILoggingEvent event = logs.single(BusinessTelemetry.SPAN_SCENE_CONTENT_SAVE);
+            assertThat(event.getLevel())
+                    .as("a rollback that only surfaces after the method returned is an unexpected internal failure")
+                    .isEqualTo(Level.ERROR);
+        }
     }
 
     @Test
