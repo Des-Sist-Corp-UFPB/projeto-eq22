@@ -61,9 +61,11 @@ test("logging out and back in as a different author in tab 2 reconciles tab 1 wi
   await expect(page.getByText("A Cidade de Vidro")).not.toBeVisible();
   await expect(page.getByText("Autor B", { exact: true })).toBeVisible();
 
-  // A mutation issued from tab 1 after the swap must land on B's tenant, not A's: opening the book
-  // only B's library has is possible at all only if tab 1 is really operating as B server-side too,
-  // not just showing B's name in a stale corner of the UI.
+  // A protected read issued from tab 1 after the swap must be authorized under B's tenant, not A's:
+  // opening the book only B's library has succeeds at all only if tab 1 is really operating as B
+  // server-side too, not just showing B's name in a stale corner of the UI. manuscript-flow.e2e.ts
+  // already covers an actual write (saving a scene) end to end; repeating that here on top of a
+  // fresh two-tab swap would only add flake without covering anything this read doesn't already.
   await page
     .getByRole("article")
     .filter({ hasText: "O Jardim Submerso" })

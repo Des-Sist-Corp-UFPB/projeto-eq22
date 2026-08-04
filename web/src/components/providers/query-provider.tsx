@@ -2,7 +2,7 @@
 
 import { MutationCache, QueryCache, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useState } from "react";
-import { isStaleMutation, purgeAuthenticatedCaches } from "@/features/auth/session-cache";
+import { isStaleMutation, purgeAuthenticatedCaches, stampMutationGeneration } from "@/features/auth/session-cache";
 import { SESSION_QUERY_KEY } from "@/features/auth/session-query-key";
 import { ApiError } from "@/lib/api/client";
 
@@ -30,14 +30,21 @@ export function QueryProvider({ children }: { children: React.ReactNode }) {
       queryCache: new QueryCache({ onError }),
       mutationCache: new MutationCache({
         onError,
+        // Stamps the reconciliation generation (session-cache.ts) current at the moment this
+        // mutation started, before its mutationFn runs — the only point at which "which identity did
+        // this mutation start under" can still be answered.
+        onMutate: (_variables, mutation) => {
+          const client = created.client;
+          if (client) stampMutationGeneration(client, mutation);
+        },
         // A cross-tab or focus reconciliation (session-sync.ts) can land while this exact mutation
         // was already in flight under the identity that reconciliation just discarded. Its own
         // onSuccess already ran and may have written stale data by the time this fires — this purges
         // it right back out. Ordinary mutations are never affected: isStaleMutation is false unless a
-        // reconciliation cutoff was actually recorded after this mutation started.
+        // reconciliation actually happened after this mutation started.
         onSettled: (_data, _error, _variables, _context, mutation) => {
           const client = created.client;
-          if (client && isStaleMutation(client, mutation.state.submittedAt)) {
+          if (client && isStaleMutation(client, mutation)) {
             purgeAuthenticatedCaches(client);
           }
         },

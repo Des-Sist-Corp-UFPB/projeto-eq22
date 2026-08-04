@@ -4,8 +4,21 @@ import { useEffect } from "react";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { QueryProvider } from "@/components/providers/query-provider";
 import { SessionGuard } from "@/features/auth/components/session-guard";
+import { announceSessionChanged } from "@/features/auth/session-sync";
 
 const SYNC_KEY = "iwrite-session-sync";
+
+/** What a real other tab's storage-fallback announcement looks like on the wire: `<its
+ *  TAB_ID>:<nonce>`. `tabId` stands in for a foreign tab's id — this test process never has two of
+ *  those for real, so the emitter identity is just a fixed label distinct from anything this tab's
+ *  own announceSessionChanged() could produce. */
+function dispatchForeignStorageAnnouncement(tabId: string, nonce: string) {
+  const value = `${tabId}:${nonce}`;
+  act(() => {
+    window.localStorage.setItem(SYNC_KEY, value);
+    window.dispatchEvent(new StorageEvent("storage", { key: SYNC_KEY, newValue: value }));
+  });
+}
 
 /**
  * Stands in for a genuinely separate tab's announceSessionChanged(): same channel/storage key, but
@@ -238,18 +251,91 @@ describe("sincronização de sessão entre abas", () => {
 
     authApi.fetchSession.mockResolvedValue(null);
 
-    act(() => {
-      // What a real other tab's announceSessionChanged() fallback does: write a new value under the
-      // shared key. `storage` events never fire in the writing document, so this is dispatched by
-      // hand to stand in for the event this tab would receive from a genuinely separate one - with a
-      // foreign token, proving the listener does not merely react to any storage write.
-      window.localStorage.setItem("iwrite-session-sync", "other-tab-id");
-      window.dispatchEvent(
-        new StorageEvent("storage", { key: "iwrite-session-sync", newValue: "other-tab-id" }),
-      );
-    });
+    // `storage` events never fire in the writing document, so this is dispatched by hand to stand in
+    // for the event this tab would receive from a genuinely separate one — with a foreign token,
+    // proving the listener does not merely react to any storage write.
+    dispatchForeignStorageAnnouncement("outra-aba", "nonce-1");
 
     await waitFor(() => expect(navigation.replace).toHaveBeenCalledWith("/login?reason=expired"));
     expect(screen.queryByText("Livro do Autor A")).not.toBeInTheDocument();
+  });
+
+  test("8a. announceSessionChanged() sem BroadcastChannel grava um valor diferente a cada chamada", () => {
+    vi.stubGlobal("BroadcastChannel", undefined);
+    const setItemSpy = vi.spyOn(Storage.prototype, "setItem");
+
+    announceSessionChanged();
+    announceSessionChanged();
+    announceSessionChanged();
+
+    const written = setItemSpy.mock.calls
+      .filter(([key]) => key === SYNC_KEY)
+      .map(([, value]) => value as string);
+
+    // Writing the same tab's own constant TAB_ID on every call (the original bug) means only the
+    // first write ever differs from what's already stored — a browser skips the `storage` event
+    // entirely when a write doesn't change the value, so a second and third announcement from the
+    // same tab would otherwise go completely unnoticed by every other tab.
+    expect(written).toHaveLength(3);
+    expect(new Set(written).size).toBe(3);
+    // Still the same emitting tab throughout: the identifying prefix never changes, only the nonce.
+    const emitterIds = written.map((value) => value.split(":")[0]);
+    expect(new Set(emitterIds).size).toBe(1);
+  });
+
+  test("8b. três anúncios sucessivos de outra aba (login remoto, logout remoto, login remoto de novo) geram três reconciliações", async () => {
+    vi.stubGlobal("BroadcastChannel", undefined);
+    renderTab();
+    expect(await screen.findByText("Livro do Autor A")).toBeInTheDocument();
+    expect(authApi.fetchSession).toHaveBeenCalledTimes(1);
+
+    // 1) another tab logs in as B.
+    authApi.fetchSession.mockResolvedValueOnce(sessionB);
+    booksApi.fetchBooks.mockResolvedValueOnce(["Livro do Autor B"]);
+    dispatchForeignStorageAnnouncement("outra-aba", "nonce-1");
+    await screen.findByText("Livro do Autor B");
+    expect(authApi.fetchSession).toHaveBeenCalledTimes(2);
+
+    // 2) that tab logs out.
+    authApi.fetchSession.mockResolvedValueOnce(null);
+    dispatchForeignStorageAnnouncement("outra-aba", "nonce-2");
+    await waitFor(() => expect(navigation.replace).toHaveBeenCalledWith("/login?reason=expired"));
+    expect(authApi.fetchSession).toHaveBeenCalledTimes(3);
+    navigation.pathname = "/login";
+
+    // 3) that tab logs in again. Three distinct storage values, three distinct reconciliations — none
+    // of the later two were silently swallowed because an earlier write "already happened".
+    authApi.fetchSession.mockResolvedValueOnce(sessionA);
+    dispatchForeignStorageAnnouncement("outra-aba", "nonce-3");
+    await waitFor(() => expect(authApi.fetchSession).toHaveBeenCalledTimes(4));
+  });
+
+  test("9. eventos com o próprio TAB_ID continuam ignorados mesmo com nonces diferentes", async () => {
+    vi.stubGlobal("BroadcastChannel", undefined);
+    renderTab();
+    expect(await screen.findByText("Livro do Autor A")).toBeInTheDocument();
+    const callsBeforeSelfEvents = authApi.fetchSession.mock.calls.length;
+
+    // Discovers this tab's own TAB_ID the same way any other tab would produce it — by calling the
+    // real announceSessionChanged() and reading back what it actually wrote — rather than hardcoding
+    // an assumed value that could drift from the real implementation.
+    act(() => announceSessionChanged());
+    const ownWrite = window.localStorage.getItem(SYNC_KEY);
+    expect(ownWrite).toBeTruthy();
+    const ownTabId = ownWrite!.split(":")[0];
+
+    // Three more "announcements" carrying this same tab's id but a fresh nonce each time — exactly
+    // what this tab's own future logins/logouts would produce. A nonce that changes on every write
+    // must not be mistaken for a different, genuinely external, tab.
+    dispatchForeignStorageAnnouncement(ownTabId, "self-nonce-1");
+    dispatchForeignStorageAnnouncement(ownTabId, "self-nonce-2");
+    dispatchForeignStorageAnnouncement(ownTabId, "self-nonce-3");
+
+    // Nothing reacted: no extra /api/auth/me call beyond the one announceSessionChanged() itself may
+    // have triggered indirectly, no reconciliation screen, Autor A's data untouched.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(authApi.fetchSession.mock.calls.length).toBe(callsBeforeSelfEvents);
+    expect(screen.queryByText("Verificando sessão…")).not.toBeInTheDocument();
+    expect(screen.getByText("Livro do Autor A")).toBeInTheDocument();
   });
 });

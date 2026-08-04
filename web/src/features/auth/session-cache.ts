@@ -1,4 +1,4 @@
-import { hashKey, type QueryClient } from "@tanstack/react-query";
+import { hashKey, type Mutation, type QueryClient } from "@tanstack/react-query";
 import { SESSION_QUERY_KEY } from "@/features/auth/session-query-key";
 
 function isDomainQuery(queryKey: readonly unknown[]) {
@@ -33,18 +33,43 @@ export async function refetchActiveDomainQueries(client: QueryClient): Promise<v
   await client.refetchQueries({ type: "active", predicate: (query) => isDomainQuery(query.queryKey) });
 }
 
-/** The instant a reconciliation actually discarded the cache, keyed per QueryClient so tests that
- *  create several clients never share state. A mutation already in flight at that point belongs to
- *  the identity being discarded, however long it takes to settle. */
-const reconciliationCutoffs = new WeakMap<QueryClient, number>();
+/**
+ * A generation counter per QueryClient, bumped every time a reconciliation actually discards the
+ * cache. Deliberately not a timestamp comparison: `Date.now()` is millisecond-resolution, so a
+ * mutation's `submittedAt` and a reconciliation's cutoff can land on the exact same millisecond, and
+ * a mutation started at the same instant reconciliation began must never be treated as belonging to
+ * the identity reconciliation is switching *to* — an inequality like `submittedAt < cutoff` gets that
+ * wrong on a tie. An integer generation sidesteps the question entirely: a mutation is stamped with
+ * whatever generation was current at the moment it started (mutationCache's global `onMutate`, in
+ * query-provider.tsx, calls stampMutationGeneration for exactly that), and it is stale if that stamp
+ * is behind the client's generation *now* — no clock, no tie to break.
+ */
+const reconciliationGenerations = new WeakMap<QueryClient, number>();
+const mutationGenerations = new WeakMap<Mutation<unknown, unknown, unknown, unknown>, number>();
 
-export function markReconciliationStart(client: QueryClient): void {
-  reconciliationCutoffs.set(client, Date.now());
+function currentGeneration(client: QueryClient): number {
+  return reconciliationGenerations.get(client) ?? 0;
 }
 
-/** A mutation started before the last reconciliation cutoff can only be a straggler from the
- *  identity that reconciliation just discarded, no matter what it wrote on its own way out. */
-export function isStaleMutation(client: QueryClient, submittedAt: number): boolean {
-  const cutoff = reconciliationCutoffs.get(client);
-  return cutoff !== undefined && submittedAt < cutoff;
+export function markReconciliationStart(client: QueryClient): void {
+  reconciliationGenerations.set(client, currentGeneration(client) + 1);
+}
+
+/** Called from mutationCache's global `onMutate`, before the mutation's own mutationFn runs. */
+export function stampMutationGeneration(
+  client: QueryClient,
+  mutation: Mutation<unknown, unknown, unknown, unknown>,
+): void {
+  mutationGenerations.set(mutation, currentGeneration(client));
+}
+
+/** A mutation stamped with a generation older than the client's current one started before or during
+ *  the reconciliation that produced that current generation — it can only be a straggler from the
+ *  identity being discarded, no matter what it wrote on its own way out or exactly when it settles. */
+export function isStaleMutation(
+  client: QueryClient,
+  mutation: Mutation<unknown, unknown, unknown, unknown>,
+): boolean {
+  const stamped = mutationGenerations.get(mutation) ?? 0;
+  return stamped < currentGeneration(client);
 }
