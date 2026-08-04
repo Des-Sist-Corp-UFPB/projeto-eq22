@@ -8,6 +8,7 @@ import ch.qos.logback.core.spi.FilterReply;
 import com.iwrite.audit.entity.AuditAction;
 import com.iwrite.audit.entity.AuditResourceType;
 import com.iwrite.audit.service.AuditLogService;
+import com.iwrite.common.exception.ResourceNotFoundException;
 import com.iwrite.mcp.McpInvocationSupport;
 import com.iwrite.mcp.McpToolException;
 import io.opentelemetry.api.OpenTelemetry;
@@ -329,13 +330,63 @@ class StructuredLogEventsTest {
                 .containsEntry("iwrite.mcp.tool", "iwrite_get_scene")
                 .containsEntry("iwrite.result", BusinessTelemetry.RESULT_SUCCESS);
 
-        assertThat(events.get(1).getLevel()).isEqualTo(Level.WARN);
+        // IllegalStateException não é reconhecida -> categoria interna -> ERROR.
+        assertThat(events.get(1).getLevel()).isEqualTo(Level.ERROR);
         assertThat(events.get(1).getThrowableProxy()).isNull();
         assertThat(CapturedLogs.keyValues(events.get(1)))
                 .containsOnlyKeys(BusinessTelemetry.EVENT_NAME_KEY, "iwrite.mcp.tool", "iwrite.mcp.resource_type",
                         "iwrite.result", "iwrite.error.category", BusinessTelemetry.DURATION_MS_KEY)
                 .containsEntry("iwrite.result", BusinessTelemetry.RESULT_FAILURE);
         events.forEach(StructuredLogEventsTest::assertNoCanaries);
+    }
+
+    /**
+     * A tool that is merely missing a resource and a tool that hit a server
+     * defect must not share a severity, or ERROR-based alerting would never
+     * observe an internal MCP failure.
+     */
+    @Test
+    void mcpInternalFailureIsErrorWhileExpectedCategoriesStayWarn() {
+        McpInvocationSupport mcp = new McpInvocationSupport(mock(AuditLogService.class));
+        UUID resourceId = UUID.fromString("00000000-0000-0000-0000-000000000123");
+
+        assertThatThrownBy(() -> mcp.invoke("iwrite_get_scene", AuditAction.SCENE_UPDATED,
+                AuditResourceType.SCENE, resourceId, () -> {
+                    throw new IllegalStateException("unrecognized sk-test-canary");
+                })).isInstanceOf(McpToolException.class);
+        assertThatThrownBy(() -> mcp.invoke("iwrite_get_scene", AuditAction.SCENE_UPDATED,
+                AuditResourceType.SCENE, resourceId, () -> {
+                    throw new ResourceNotFoundException("Scene not found");
+                })).isInstanceOf(McpToolException.class);
+
+        List<ILoggingEvent> events = logs.all("iwrite.mcp.invocation");
+        assertThat(events).hasSize(2);
+        assertThat(events.get(0).getLevel()).isEqualTo(Level.ERROR);
+        assertThat(CapturedLogs.keyValues(events.get(0)))
+                .containsEntry("iwrite.error.category", McpToolException.CATEGORY_INTERNAL);
+        assertThat(events.get(1).getLevel()).isEqualTo(Level.WARN);
+        assertThat(CapturedLogs.keyValues(events.get(1)))
+                .containsEntry("iwrite.error.category", McpToolException.CATEGORY_NOT_FOUND);
+        events.forEach(StructuredLogEventsTest::assertNoCanaries);
+    }
+
+    /**
+     * The disabled assistant is the default deployment, so an ordinary 503 must
+     * not raise an internal-failure event.
+     */
+    @Test
+    void disabledAiFeatureIsWarnNotError() {
+        try (BusinessTelemetry.Operation operation = telemetry.sceneAnalysis()) {
+            operation.attribute(BusinessTelemetry.AI_PROVIDER, BusinessTelemetry.PROVIDER_DISABLED)
+                    .failure(BusinessTelemetry.RESULT_PROVIDER_ERROR,
+                            new IllegalStateException("This AI feature is disabled."));
+        }
+
+        ILoggingEvent event = logs.single(BusinessTelemetry.SPAN_SCENE_ANALYSIS);
+        assertThat(event.getLevel()).isEqualTo(Level.WARN);
+        assertThat(CapturedLogs.keyValues(event))
+                .containsEntry("iwrite.result", BusinessTelemetry.RESULT_PROVIDER_ERROR)
+                .containsEntry("iwrite.ai.provider", BusinessTelemetry.PROVIDER_DISABLED);
     }
 
     @Test

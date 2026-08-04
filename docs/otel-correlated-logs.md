@@ -81,9 +81,19 @@ Dois identificadores diferentes circulam pelos logs. Confundi-los levaria a proc
 | Quem gera | OpenTelemetry Java Agent | `LlmExecutionGateway` (`UUID.randomUUID()`) |
 | O que identifica | a requisição distribuída inteira | uma linha da tabela de auditoria de execução LLM |
 | Formato | 32 / 16 dígitos hex | UUID |
-| Onde aparece | injetado pelo agente no log record | MDC local (console) |
+| Onde aparece | injetado pelo agente no log record | MDC, renderizado só na linha do console |
 | Serve para | pular do log para o trace no Tempo | cruzar log com o registro de auditoria no banco |
 | Exportado como atributo OTLP? | sim, pelo agente | **não** |
+
+Como o UUID fica fora dos atributos exportados, a linha do console é a **única** superfície onde ele ainda pode ser lido — então a correlação "log → linha de auditoria" depende de renderizá-lo lá. Isso é feito em `application.yml`:
+
+```yaml
+logging:
+  pattern:
+    level: "%5p %replace([%X{llmExecutionId:-}]){'\\[\\]',''}"
+```
+
+O agente exporta a **mensagem formatada**, não o padrão do appender, então isso não vaza para o OTLP; e o `%replace` evita colchetes vazios nas linhas que não têm o MDC. `ExecutionIdLogPatternTest` lê o padrão do próprio `application.yml` e falha se ele for removido ou quebrado.
 
 Antes desta mudança a chave de MDC se chamava `llmTraceId` e as mensagens do gateway escreviam `traceId=<uuid>`, sugerindo equivalência com o `trace_id` distribuído. Ambos foram renomeados para `llmExecutionId`. O UUID **não** entra nos key-value pairs: é de alta cardinalidade, não é correlação distribuída, e o MDC não é capturado pelo agente — ele permanece onde sempre foi útil, no log local.
 
@@ -119,6 +129,8 @@ Os vocabulários são exatamente os de `BusinessTelemetry` — os mesmos objetos
 ### `iwrite.scene.analysis`
 
 Mesmo mecanismo, para `POST /api/scenes/{sceneId}/ai-analysis`. Campos adicionais: `iwrite.ai.focus_present`, `iwrite.ai.input_size_bucket`, `iwrite.ai.fallback_used`, `iwrite.ai.provider`, `iwrite.ai.model_family`. Resultados: `success`, `validation_error`, `provider_error`, `invalid_response`, `failure`.
+
+`FEATURE_DISABLED` entra em `provider_error`, não em `failure` — ver [níveis](#níveis).
 
 ### `iwrite.mcp.invocation`
 
@@ -161,7 +173,18 @@ Nenhum identificador de alta cardinalidade vira label indexado do Loki — ver a
 
 Conflito otimista é `WARN` **sem stack trace** — é resultado previsto de escrita concorrente, não defeito.
 
-No evento `iwrite.llm.execution` a mesma política se aplica por **categoria de erro**, não por sucesso/insucesso: `INTERNAL_EXECUTION_ERROR`, `AUDIT_PERSISTENCE_FAILURE` e `CONFIGURATION_ERROR` significam serviço ou deployment quebrado e vão para `ERROR`; timeout de provider, provider indisponível, feature desabilitada e resposta malformada são condições de runtime esperadas e ficam em `WARN`. Uma categoria não classificada (`null`) é tratada como interna — um desfecho que não conseguimos nomear não é, por definição, esperado. Sem essa separação um alerta baseado em `ERROR` nunca dispararia para um deployment quebrado, porque um timeout de provider ocuparia a mesma severidade.
+O princípio, em todos os quatro eventos, é que o nível vem de **quão esperado é o desfecho**, nunca de sucesso/insucesso. Sem isso um alerta baseado em `ERROR` nunca dispararia para um deployment quebrado, porque um timeout de provider ocuparia a mesma severidade.
+
+| Evento | `ERROR` | `WARN` |
+|---|---|---|
+| `iwrite.scene.content.save` | `failure` | `conflict` |
+| `iwrite.scene.analysis` | `failure` (só `CONFIGURATION_ERROR`, `AUDIT_PERSISTENCE_FAILURE`, `INTERNAL_EXECUTION_ERROR`) | `validation_error`, `provider_error`, `invalid_response` |
+| `iwrite.llm.execution` | `INTERNAL_EXECUTION_ERROR`, `AUDIT_PERSISTENCE_FAILURE`, `CONFIGURATION_ERROR`, categoria `null` | `PROVIDER_TIMEOUT`, `PROVIDER_UNAVAILABLE`, `PROVIDER_REQUEST_REJECTED`, `INVALID_STRUCTURED_RESPONSE`, `FEATURE_DISABLED` |
+| `iwrite.mcp.invocation` | `internal` | `not_found`, `invalid_request`, `unavailable`, `rate_limited` |
+
+Uma categoria não classificada (`null`) conta como interna: um desfecho que não conseguimos nomear não é, por definição, esperado.
+
+**`FEATURE_DISABLED` é o caso que mais importa acertar.** O assistente desligado é o deployment padrão, então toda requisição de análise devolve 503. Ele é classificado como `provider_error` (não `failure`), senão uma instalação perfeitamente saudável produziria um evento `ERROR` por requisição.
 
 Por ambiente, sem aumentar ruído em produção:
 

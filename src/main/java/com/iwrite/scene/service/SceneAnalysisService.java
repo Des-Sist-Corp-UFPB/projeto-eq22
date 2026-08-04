@@ -106,13 +106,22 @@ public class SceneAnalysisService {
         });
     }
 
-    /* Stable error category -> controlled result token; the message never travels. */
+    /*
+     * Stable error category -> controlled result token; the message never travels.
+     *
+     * FEATURE_DISABLED is a provider-side outcome, not an internal failure: the
+     * assistant being switched off is the default deployment, so every ordinary
+     * 503 would otherwise be classified as `failure` and — since the result now
+     * also drives log severity — raise an ERROR event on a perfectly healthy
+     * install. Only categories that mean this service or its configuration is
+     * broken stay in `failure`.
+     */
     private static String telemetryResult(LlmExecutionException failure) {
         return switch (failure.getErrorCategory()) {
             case INVALID_STRUCTURED_RESPONSE -> BusinessTelemetry.RESULT_INVALID_RESPONSE;
-            case PROVIDER_TIMEOUT, PROVIDER_UNAVAILABLE, PROVIDER_REQUEST_REJECTED ->
+            case PROVIDER_TIMEOUT, PROVIDER_UNAVAILABLE, PROVIDER_REQUEST_REJECTED, FEATURE_DISABLED ->
                     BusinessTelemetry.RESULT_PROVIDER_ERROR;
-            case CONFIGURATION_ERROR, FEATURE_DISABLED, AUDIT_PERSISTENCE_FAILURE, INTERNAL_EXECUTION_ERROR ->
+            case CONFIGURATION_ERROR, AUDIT_PERSISTENCE_FAILURE, INTERNAL_EXECUTION_ERROR ->
                     BusinessTelemetry.RESULT_FAILURE;
         };
     }

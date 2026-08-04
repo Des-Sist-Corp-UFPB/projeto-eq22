@@ -7,6 +7,7 @@ import com.iwrite.audit.service.AuditLogService;
 import com.iwrite.observability.BusinessTelemetry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.spi.LoggingEventBuilder;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 
@@ -64,8 +65,14 @@ public class McpInvocationSupport {
             } catch (RuntimeException auditFailure) {
                 sanitized.addSuppressed(auditFailure);
             }
-            // Erro tratado e já classificado: WARN sem throwable e sem mensagem.
-            log.atWarn()
+            /*
+             * Erro tratado e já classificado, sem throwable e sem mensagem. O
+             * nível vem da categoria: "internal" é uma exceção não reconhecida,
+             * ou seja, defeito do servidor, e precisa se distinguir de
+             * not_found/invalid_request/unavailable, que são desfechos
+             * esperados. Sem isso um alerta por ERROR nunca veria um defeito.
+             */
+            levelFor(sanitized.category())
                     .addKeyValue(BusinessTelemetry.EVENT_NAME_KEY, EVENT_NAME)
                     .addKeyValue("iwrite.mcp.tool", tool)
                     .addKeyValue("iwrite.mcp.resource_type", resourceType.name())
@@ -75,6 +82,11 @@ public class McpInvocationSupport {
                     .log(EVENT_MESSAGE);
             throw sanitized;
         }
+    }
+
+    /** Só a categoria interna — exceção não reconhecida — chega a ERROR. */
+    private LoggingEventBuilder levelFor(String category) {
+        return McpToolException.CATEGORY_INTERNAL.equals(category) ? log.atError() : log.atWarn();
     }
 
     private long elapsedMillis(long startNanos) {
