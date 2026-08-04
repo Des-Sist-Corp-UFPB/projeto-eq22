@@ -147,7 +147,13 @@ Mesmo mecanismo, para `POST /api/scenes/{sceneId}/ai-analysis`. Campos adicionai
 
 Parâmetros, `focus`, respostas, títulos e IDs enviados pelo cliente **nunca** aparecem — inclusive o `resourceId`, que vem do cliente e é de alta cardinalidade.
 
-A severidade do evento MCP considera tanto o resultado original quanto a persistência da auditoria. Uma categoria pública esperada pode aparecer em um evento `ERROR` quando a infraestrutura de auditoria falha; a categoria pública permanece sanitizada e nenhuma informação da falha secundária é exportada. Por exemplo, um `ResourceNotFoundException` (`not_found`) que normalmente ficaria em `WARN` sobe para `ERROR` se `AuditLogService.record(..., FAILED)` também lançar — sem isso um defeito real na infraestrutura de auditoria nunca dispararia um alerta baseado em `ERROR`.
+A severidade do evento MCP não vem só da categoria pública exportada. Três fontes independentes decidem o nível — ver a tabela em [Severidade específica do MCP](#severidade-específica-do-mcp):
+
+1. categoria pública `internal` — exceção não reconhecida, sempre `ERROR`;
+2. categoria **original** do `LlmExecutionGateway` — `McpToolException.from` colapsa toda `LlmExecutionException` em `unavailable` para o cliente, mas se a causa real for `CONFIGURATION_ERROR`, `AUDIT_PERSISTENCE_FAILURE` ou `INTERNAL_EXECUTION_ERROR` (falha interna, não o provider fora do ar), o nível sobe para `ERROR` mesmo com a categoria exportada permanecendo `unavailable`;
+3. falha ao gravar a própria auditoria MCP — se `AuditLogService.record(..., FAILED)` também lançar, uma categoria pública que normalmente ficaria em `WARN` (`not_found`, `invalid_request`, `unavailable`, `rate_limited`) sobe para `ERROR`, sem isso um defeito real na infraestrutura de auditoria nunca dispararia um alerta baseado em `ERROR`.
+
+Em todos os casos, a categoria pública exportada permanece sanitizada e nenhuma informação da falha secundária ou da categoria original é exportada.
 
 ### `iwrite.llm.execution`
 
@@ -184,11 +190,24 @@ O princípio, em todos os quatro eventos, é que o nível vem de **quão esperad
 | `iwrite.scene.content.save` | `failure` (defeito interno ou rollback inesperado) | `conflict`, `validation_error`, `not_found` |
 | `iwrite.scene.analysis` | `failure` (só `CONFIGURATION_ERROR`, `AUDIT_PERSISTENCE_FAILURE`, `INTERNAL_EXECUTION_ERROR`) | `validation_error`, `not_found`, `provider_error`, `invalid_response` |
 | `iwrite.llm.execution` | `INTERNAL_EXECUTION_ERROR`, `AUDIT_PERSISTENCE_FAILURE` (inclusive quando o audit-start falha, antes do provider ser chamado), `CONFIGURATION_ERROR`, categoria `null` | `PROVIDER_TIMEOUT`, `PROVIDER_UNAVAILABLE`, `PROVIDER_REQUEST_REJECTED`, `INVALID_STRUCTURED_RESPONSE`, `FEATURE_DISABLED` |
-| `iwrite.mcp.invocation` | `internal` | `not_found`, `invalid_request`, `unavailable`, `rate_limited` |
+| `iwrite.mcp.invocation` | `internal`; `unavailable` quando a categoria LLM original é `CONFIGURATION_ERROR`, `AUDIT_PERSISTENCE_FAILURE` ou `INTERNAL_EXECUTION_ERROR`; qualquer categoria quando a gravação de `AuditResult.FAILED` também falha | `not_found`, `invalid_request`, `unavailable`, `rate_limited` quando não há falha da auditoria e a causa original é um desfecho esperado |
 
 `ResourceNotFoundException` e `BadRequestException` são erros tratados pelo `GlobalExceptionHandler` (404 e 400, respectivamente) — não representam defeito do servidor, então `SceneService` e `SceneAnalysisService` os classificam como `not_found`/`validation_error` (`WARN`) em vez de deixá-los cair no catch genérico de `RuntimeException`, que produziria `failure`/`ERROR`.
 
 Uma categoria não classificada (`null`) conta como interna: um desfecho que não conseguimos nomear não é, por definição, esperado.
+
+### Severidade específica do MCP
+
+No MCP, `iwrite.error.category` é uma categoria pública sanitizada e não determina sozinha a severidade. Um evento pode ter `iwrite.error.category=unavailable` e nível `ERROR` quando a categoria LLM original representa falha interna ou de configuração. Da mesma forma, `not_found`, `invalid_request` ou `unavailable` sobem para `ERROR` quando a persistência da auditoria MCP falha. Em ambos os casos, a categoria pública permanece inalterada e nenhum detalhe interno é exportado.
+
+| Categoria exportada | Causa real | Auditoria MCP | Nível |
+|---|---|---|---|
+| `not_found` | `ResourceNotFoundException` | sucesso | `WARN` |
+| `invalid_request` | `BadRequestException` | sucesso | `WARN` |
+| `unavailable` | provider indisponível, timeout, rejeição, resposta inválida ou feature desabilitada | sucesso | `WARN` |
+| `unavailable` | `CONFIGURATION_ERROR`, `AUDIT_PERSISTENCE_FAILURE` ou `INTERNAL_EXECUTION_ERROR` | sucesso | `ERROR` |
+| `internal` | exceção não reconhecida | qualquer resultado | `ERROR` |
+| qualquer categoria | qualquer causa | gravação de `AuditResult.FAILED` falhou | `ERROR` |
 
 **`FEATURE_DISABLED` é o caso que mais importa acertar.** O assistente desligado é o deployment padrão, então toda requisição de análise devolve 503. Ele é classificado como `provider_error` (não `failure`), senão uma instalação perfeitamente saudável produziria um evento `ERROR` por requisição.
 

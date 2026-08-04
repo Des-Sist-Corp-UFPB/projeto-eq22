@@ -183,8 +183,8 @@ O tamanho exato nunca é registrado.
 | análise | `validation_error` | `BadRequestException` (ex.: cena sem texto) |
 | análise | `not_found` | `ResourceNotFoundException` (cena inexistente ou de outro tenant) |
 | análise | `invalid_response` | categoria `INVALID_STRUCTURED_RESPONSE` do gateway |
-| análise | `provider_error` | categorias `PROVIDER_TIMEOUT`, `PROVIDER_UNAVAILABLE`, `PROVIDER_REQUEST_REJECTED` |
-| análise | `failure` | `CONFIGURATION_ERROR`, `FEATURE_DISABLED`, `AUDIT_PERSISTENCE_FAILURE`, `INTERNAL_EXECUTION_ERROR` ou exceção não classificada |
+| análise | `provider_error` | categorias `PROVIDER_TIMEOUT`, `PROVIDER_UNAVAILABLE`, `PROVIDER_REQUEST_REJECTED` e `FEATURE_DISABLED` |
+| análise | `failure` | `CONFIGURATION_ERROR`, `AUDIT_PERSISTENCE_FAILURE`, `INTERNAL_EXECUTION_ERROR` ou exceção não classificada |
 
 A classificação vem da **categoria estável** do `LlmExecutionGateway`, nunca da mensagem da exceção.
 
@@ -266,7 +266,7 @@ curl -s -X POST localhost:8085/api/scenes/$SCENE/ai-analysis -H 'Content-Type: a
   -d '{"focus":"ritmo"}'
 ```
 
-Com o stub no ar: `iwrite.result=success`, `iwrite.ai.provider=openai`, `iwrite.ai.fallback_used=false`, `iwrite.ai.focus_present=true`. Sem o stub: `iwrite.result=failure` com `iwrite.ai.provider=disabled`. Com uma cena sem texto: `iwrite.result=validation_error`.
+Com o stub no ar: `iwrite.result=success`, `iwrite.ai.provider=openai`, `iwrite.ai.fallback_used=false`, `iwrite.ai.focus_present=true`. Sem o stub: `iwrite.result=provider_error` com `iwrite.ai.provider=disabled`. Com uma cena sem texto: `iwrite.result=validation_error`.
 
 ## Consultas de investigação
 
