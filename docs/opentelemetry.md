@@ -170,6 +170,10 @@ Sintaxe validada contra o LGTM real: com um canário local (`echo 'Authorization
 
 Todos os comandos acima usam placeholders (`<TRACE_ID>`) — nenhum token, conteúdo privado ou ID pessoal real.
 
+## Sinais de negócio
+
+Os spans e métricas **manuais** dos fluxos críticos (salvamento de conteúdo de cena e análise assistida) estão documentados em [`otel-business-signals.md`](otel-business-signals.md): nomes, atributos permitidos, dados proibidos, buckets, consultas do Tempo/Prometheus, passos de reprodução e diagnóstico do gargalo.
+
 ## Limitações conhecidas
 
 - O download do agente no build vem do GitHub Releases; o SHA-256 fixo garante reprodutibilidade do conteúdo, não a disponibilidade da rede.

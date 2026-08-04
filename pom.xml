@@ -21,6 +21,13 @@
         <java.version>21</java.version>
         <jacoco.version>0.8.12</jacoco.version>
         <spring-ai.version>1.0.9</spring-ai.version>
+        <!--
+          Fixada em 1.64.0 porque é a versão do opentelemetry-java importada pelo
+          opentelemetry-instrumentation-bom 2.30.0, que é a release do Java Agent
+          embarcado no Dockerfile. Sobrepõe o 1.43.0 gerenciado pelo Spring Boot
+          3.4.1. Ver docs/otel-business-signals.md#dependencias.
+        -->
+        <opentelemetry.version>1.64.0</opentelemetry.version>
     </properties>
 
     <dependencies>
@@ -58,9 +65,25 @@
             <artifactId>poi-ooxml</artifactId>
             <version>5.5.1</version>
         </dependency>
+        <!--
+          Somente a API. O SDK de produção vem do Java Agent (Dockerfile); sem
+          agente, GlobalOpenTelemetry.get() devolve a implementação no-op e a
+          instrumentação manual não faz nada. Versão gerenciada pela propriedade
+          opentelemetry.version acima.
+        -->
+        <dependency>
+            <groupId>io.opentelemetry</groupId>
+            <artifactId>opentelemetry-api</artifactId>
+        </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- SDK + exporters em memória apenas para validar spans e métricas nos testes. -->
+        <dependency>
+            <groupId>io.opentelemetry</groupId>
+            <artifactId>opentelemetry-sdk-testing</artifactId>
             <scope>test</scope>
         </dependency>
         <dependency>
