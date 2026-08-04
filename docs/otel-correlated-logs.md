@@ -147,6 +147,8 @@ Mesmo mecanismo, para `POST /api/scenes/{sceneId}/ai-analysis`. Campos adicionai
 
 Parâmetros, `focus`, respostas, títulos e IDs enviados pelo cliente **nunca** aparecem — inclusive o `resourceId`, que vem do cliente e é de alta cardinalidade.
 
+A severidade do evento MCP considera tanto o resultado original quanto a persistência da auditoria. Uma categoria pública esperada pode aparecer em um evento `ERROR` quando a infraestrutura de auditoria falha; a categoria pública permanece sanitizada e nenhuma informação da falha secundária é exportada. Por exemplo, um `ResourceNotFoundException` (`not_found`) que normalmente ficaria em `WARN` sobe para `ERROR` se `AuditLogService.record(..., FAILED)` também lançar — sem isso um defeito real na infraestrutura de auditoria nunca dispararia um alerta baseado em `ERROR`.
+
 ### `iwrite.llm.execution`
 
 `LlmExecutionGateway`. Campos: `iwrite.llm.feature`, `iwrite.ai.provider`, `iwrite.ai.model_family`, `iwrite.llm.prompt_version`, `iwrite.llm.status`, `iwrite.error.category`, `iwrite.duration_ms`, `iwrite.llm.input_tokens`, `iwrite.llm.output_tokens`, `iwrite.llm.total_tokens`, `iwrite.ai.fallback_used`.

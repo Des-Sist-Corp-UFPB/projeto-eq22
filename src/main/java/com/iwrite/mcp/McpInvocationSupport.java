@@ -61,9 +61,11 @@ public class McpInvocationSupport {
             return result;
         } catch (RuntimeException exception) {
             McpToolException sanitized = McpToolException.from(exception);
+            boolean auditWriteFailed = false;
             try {
                 auditLogService.record(action, resourceType, resourceId, AuditResult.FAILED);
             } catch (RuntimeException auditFailure) {
+                auditWriteFailed = true;
                 sanitized.addSuppressed(auditFailure);
             }
             /*
@@ -72,8 +74,10 @@ public class McpInvocationSupport {
              * ou seja, defeito do servidor, e precisa se distinguir de
              * not_found/invalid_request/unavailable, que são desfechos
              * esperados. Sem isso um alerta por ERROR nunca veria um defeito.
+             * Uma falha ao gravar a auditoria também força ERROR, mesmo com a
+             * operação original classificada como esperada — ver levelFor.
              */
-            levelFor(exception, sanitized.category())
+            levelFor(exception, sanitized.category(), auditWriteFailed)
                     .addKeyValue(BusinessTelemetry.EVENT_NAME_KEY, EVENT_NAME)
                     .addKeyValue("iwrite.mcp.tool", tool)
                     .addKeyValue("iwrite.mcp.resource_type", resourceType.name())
@@ -87,18 +91,27 @@ public class McpInvocationSupport {
 
     /**
      * Severidade vem da falha real; a categoria <em>exportada</em> continua
-     * sendo a sanitizada, voltada ao cliente.
+     * sendo a sanitizada, voltada ao cliente. Três fontes independentes podem
+     * forçar ERROR:
      *
-     * <p>`McpToolException.from` colapsa toda `LlmExecutionException` em
-     * `unavailable`, o que é correto para o cliente MCP mas apagaria a
-     * diferença entre um provider fora do ar e um deployment quebrado. Por isso
-     * a exceção original é consultada antes da sanitização: um
-     * `INTERNAL_EXECUTION_ERROR`, `AUDIT_PERSISTENCE_FAILURE` ou
-     * `CONFIGURATION_ERROR` vindo da camada de LLM chega a ERROR mesmo que o
-     * cliente veja apenas `unavailable`.
+     * <ol>
+     *   <li>categoria pública {@code internal} — exceção não reconhecida;</li>
+     *   <li>categoria LLM interna/configuração/auditoria — {@code
+     *       McpToolException.from} colapsa toda {@code LlmExecutionException}
+     *       em {@code unavailable}, o que é correto para o cliente MCP mas
+     *       apagaria a diferença entre um provider fora do ar e um deployment
+     *       quebrado, então a exceção original é consultada antes da
+     *       sanitização;</li>
+     *   <li>falha ao gravar a própria auditoria MCP — se {@code
+     *       AuditResult.FAILED} não pôde ser persistido, uma falha de
+     *       infraestrutura real ficaria escondida atrás da severidade do
+     *       resultado original (ex.: {@code not_found} → {@code WARN}), e um
+     *       alerta por ERROR nunca a veria.</li>
+     * </ol>
      */
-    private LoggingEventBuilder levelFor(RuntimeException original, String category) {
-        boolean internal = McpToolException.CATEGORY_INTERNAL.equals(category)
+    private LoggingEventBuilder levelFor(RuntimeException original, String category, boolean auditWriteFailed) {
+        boolean internal = auditWriteFailed
+                || McpToolException.CATEGORY_INTERNAL.equals(category)
                 || (original instanceof LlmExecutionException llmFailure
                     && llmFailure.getErrorCategory() != null
                     && llmFailure.getErrorCategory().isInternalFailure());

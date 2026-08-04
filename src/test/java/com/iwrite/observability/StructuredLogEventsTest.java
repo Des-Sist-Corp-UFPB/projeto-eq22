@@ -7,7 +7,9 @@ import ch.qos.logback.classic.turbo.TurboFilter;
 import ch.qos.logback.core.spi.FilterReply;
 import com.iwrite.audit.entity.AuditAction;
 import com.iwrite.audit.entity.AuditResourceType;
+import com.iwrite.audit.entity.AuditResult;
 import com.iwrite.audit.service.AuditLogService;
+import com.iwrite.common.exception.BadRequestException;
 import com.iwrite.common.exception.ResourceNotFoundException;
 import com.iwrite.llm.audit.LlmErrorCategory;
 import com.iwrite.llm.audit.LlmExecutionStatus;
@@ -28,12 +30,16 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.function.Supplier;
 import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 /**
  * Contract for the structured log events exported to Loki through the
@@ -420,6 +426,123 @@ class StructuredLogEventsTest {
                 Arguments.of(LlmExecutionStatus.FAILED, LlmErrorCategory.AUDIT_PERSISTENCE_FAILURE, Level.ERROR),
                 Arguments.of(LlmExecutionStatus.FAILED, LlmErrorCategory.INTERNAL_EXECUTION_ERROR, Level.ERROR)
         );
+    }
+
+    /**
+     * A failure to persist the MCP audit trail is itself an infrastructure
+     * defect. Hiding it behind the severity of an otherwise expected outcome
+     * (e.g. {@code not_found} staying WARN) would mean ERROR-based alerting
+     * never observes a broken audit pipeline. The category exported to the
+     * client and to Loki must stay exactly what the original failure already
+     * sanitizes to — only the severity escalates, never to {@code internal}.
+     */
+    @ParameterizedTest
+    @MethodSource("mcpFailuresAndExpectedCategory")
+    void mcpAuditWriteFailureForcesErrorWhileCategoryStaysSanitized(
+            Supplier<RuntimeException> operationFailure, String expectedCategory, Level baselineLevel) {
+        UUID resourceId = UUID.fromString("00000000-0000-0000-0000-000000000123");
+        String auditFailureMessage = "jdbc:postgresql://secret-host password=test-canary "
+                + "audit database unavailable sk-test-canary 00000000-0000-0000-0000-000000000123";
+
+        AuditLogService workingAudit = mock(AuditLogService.class);
+        McpInvocationSupport mcpWithWorkingAudit = new McpInvocationSupport(workingAudit);
+        assertThatThrownBy(() -> mcpWithWorkingAudit.invoke("iwrite_get_scene", AuditAction.SCENE_UPDATED,
+                AuditResourceType.SCENE, resourceId, () -> {
+                    throw operationFailure.get();
+                })).isInstanceOf(McpToolException.class);
+
+        AuditLogService failingAudit = mock(AuditLogService.class);
+        when(failingAudit.record(any(), any(), any(), eq(AuditResult.FAILED)))
+                .thenThrow(new RuntimeException(auditFailureMessage));
+        McpInvocationSupport mcpWithFailingAudit = new McpInvocationSupport(failingAudit);
+        assertThatThrownBy(() -> mcpWithFailingAudit.invoke("iwrite_get_scene", AuditAction.SCENE_UPDATED,
+                AuditResourceType.SCENE, resourceId, () -> {
+                    throw operationFailure.get();
+                })).isInstanceOf(McpToolException.class)
+                .satisfies(exception -> assertThat(((McpToolException) exception).category())
+                        .as("client still sees the original sanitized category")
+                        .isEqualTo(expectedCategory));
+
+        List<ILoggingEvent> events = logs.all("iwrite.mcp.invocation");
+        assertThat(events).hasSize(2);
+
+        ILoggingEvent workingAuditEvent = events.get(0);
+        assertThat(workingAuditEvent.getLevel())
+                .as("baseline for %s with a working audit write", expectedCategory)
+                .isEqualTo(baselineLevel);
+        assertThat(CapturedLogs.keyValues(workingAuditEvent)).containsEntry("iwrite.error.category", expectedCategory);
+
+        ILoggingEvent failingAuditEvent = events.get(1);
+        assertThat(failingAuditEvent.getLevel())
+                .as("a failed audit write must escalate to ERROR regardless of the original category")
+                .isEqualTo(Level.ERROR);
+        assertThat(CapturedLogs.keyValues(failingAuditEvent))
+                .as("the exported category stays the original sanitized one, never internal")
+                .containsEntry("iwrite.error.category", expectedCategory);
+        assertThat(failingAuditEvent.getThrowableProxy()).isNull();
+
+        events.forEach(StructuredLogEventsTest::assertNoCanaries);
+        events.forEach(event -> assertThat(CapturedLogs.allSurfaces(event)).doesNotContain(auditFailureMessage));
+    }
+
+    private static Stream<Arguments> mcpFailuresAndExpectedCategory() {
+        return Stream.of(
+                Arguments.of(
+                        (Supplier<RuntimeException>) () -> new ResourceNotFoundException("Scene not found"),
+                        McpToolException.CATEGORY_NOT_FOUND, Level.WARN),
+                Arguments.of(
+                        (Supplier<RuntimeException>) () -> new BadRequestException("bad field"),
+                        McpToolException.CATEGORY_INVALID_REQUEST, Level.WARN),
+                Arguments.of(
+                        (Supplier<RuntimeException>) () -> new LlmExecutionException(LlmExecutionStatus.UNAVAILABLE,
+                                LlmErrorCategory.PROVIDER_UNAVAILABLE, UUID.randomUUID(), null),
+                        McpToolException.CATEGORY_UNAVAILABLE, Level.WARN),
+                Arguments.of(
+                        (Supplier<RuntimeException>) () -> new LlmExecutionException(LlmExecutionStatus.DISABLED,
+                                LlmErrorCategory.FEATURE_DISABLED, UUID.randomUUID(), null),
+                        McpToolException.CATEGORY_UNAVAILABLE, Level.WARN),
+                Arguments.of(
+                        (Supplier<RuntimeException>) () -> new LlmExecutionException(LlmExecutionStatus.FAILED,
+                                LlmErrorCategory.INTERNAL_EXECUTION_ERROR, UUID.randomUUID(), null),
+                        McpToolException.CATEGORY_UNAVAILABLE, Level.ERROR),
+                Arguments.of(
+                        (Supplier<RuntimeException>) () -> new IllegalStateException("unrecognized"),
+                        McpToolException.CATEGORY_INTERNAL, Level.ERROR)
+        );
+    }
+
+    /**
+     * If the operation itself succeeds but persisting {@code AuditResult.SUCCEEDED}
+     * fails, that failure is caught by the same handler as any other exception
+     * and classified as an unrecognized/internal error — the already-computed
+     * successful result is discarded, never returned as if the audit trail had
+     * been written.
+     */
+    @Test
+    void mcpSucceedsButAuditWriteOfSucceededFailsIsReportedAsInternalErrorNotSilentSuccess() {
+        AuditLogService audit = mock(AuditLogService.class);
+        String auditFailureMessage = "jdbc:postgresql://secret-host password=test-canary "
+                + "audit database unavailable sk-test-canary";
+        when(audit.record(any(), any(), any(), eq(AuditResult.SUCCEEDED)))
+                .thenThrow(new RuntimeException(auditFailureMessage));
+        McpInvocationSupport mcp = new McpInvocationSupport(audit);
+        UUID resourceId = UUID.fromString("00000000-0000-0000-0000-000000000123");
+
+        assertThatThrownBy(() -> mcp.invoke("iwrite_get_scene", AuditAction.SCENE_UPDATED,
+                AuditResourceType.SCENE, resourceId, () -> "conteudo privado do manuscrito"))
+                .as("the operation's own result must not be returned when its audit trail was never written")
+                .isInstanceOf(McpToolException.class)
+                .satisfies(exception -> assertThat(((McpToolException) exception).category())
+                        .isEqualTo(McpToolException.CATEGORY_INTERNAL));
+
+        ILoggingEvent event = logs.single("iwrite.mcp.invocation");
+        assertThat(event.getLevel()).isEqualTo(Level.ERROR);
+        assertThat(CapturedLogs.keyValues(event))
+                .containsEntry("iwrite.result", BusinessTelemetry.RESULT_FAILURE)
+                .containsEntry("iwrite.error.category", McpToolException.CATEGORY_INTERNAL);
+        assertThat(event.getThrowableProxy()).isNull();
+        assertNoCanaries(event);
+        assertThat(CapturedLogs.allSurfaces(event)).doesNotContain(auditFailureMessage);
     }
 
     /**
