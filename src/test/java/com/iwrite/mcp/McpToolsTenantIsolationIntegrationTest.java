@@ -25,6 +25,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.Primary;
 import org.springframework.test.context.TestPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 import java.time.ZoneId;
 import java.util.List;
@@ -35,9 +36,21 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.catchThrowableOfType;
 
+/**
+ * Exercises the MCP tools directly as Java calls ({@link IwriteMcpTools}, the resource template
+ * bean) rather than through the HTTP/SSE transport, so it needs the MCP beans to exist but never
+ * goes near the surface {@link McpLoopbackGuard} protects. It also needs to switch identity between
+ * tenants mid-test, which a real {@link com.iwrite.user.context.DevelopmentCurrentUserProvider} —
+ * the only provider the guard accepts — cannot do. The guard is mocked out for exactly that reason:
+ * this suite's tenant-isolation coverage is orthogonal to the guard's own, which lives in
+ * {@code McpLoopbackGuardTest}.
+ */
 @Import(McpToolsTenantIsolationIntegrationTest.CurrentUserTestConfiguration.class)
 @TestPropertySource(properties = "spring.ai.mcp.server.enabled=true")
 class McpToolsTenantIsolationIntegrationTest extends PostgresIntegrationTest {
+
+    @MockitoBean
+    private McpLoopbackGuard mcpLoopbackGuard;
 
     @Autowired
     private IwriteMcpTools mcpTools;

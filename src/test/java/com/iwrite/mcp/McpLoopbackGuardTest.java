@@ -11,9 +11,10 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Enquanto não há autenticação real, o MCP com identidade fixa de
- * desenvolvimento só pode subir limitado a loopback. Configuração insegura
- * (endereço ausente ou não loopback) recusa a inicialização do contexto.
+ * O transporte MCP não tem autenticação própria, então a única configuração suportada é a
+ * identidade fixa de desenvolvimento limitada a loopback. Qualquer desvio disso — identidade
+ * autenticada em vez da de desenvolvimento, ou identidade de desenvolvimento sem loopback — recusa
+ * a inicialização do contexto antes que o servidor anuncie um transporte inutilizável.
  */
 class McpLoopbackGuardTest {
 
@@ -73,10 +74,36 @@ class McpLoopbackGuardTest {
     }
 
     @Test
-    void identidadeNaoFixaNaoExigeLoopback() {
+    void recusaStartupComIdentidadeAutenticadaEmVezDaDeDesenvolvimento() {
+        // Sem isto, o servidor subiria descobrível mas toda tool/resource falharia: nenhuma
+        // requisição MCP popula um IWriteUserDetails real para AuthenticatedCurrentUserProvider.
         runner.withBean(CurrentUserProvider.class, NonDevelopmentProvider::new)
                 .withPropertyValues("spring.ai.mcp.server.enabled=true")
-                .run(context -> assertThat(context).hasNotFailed());
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(context.getStartupFailure())
+                            .rootCause()
+                            .isInstanceOf(IllegalStateException.class)
+                            .hasMessageContaining("identidade fixa de desenvolvimento");
+                });
+    }
+
+    @Test
+    void recusaStartupComIdentidadeAutenticadaMesmoEmEnderecoDeLoopback() {
+        // O loopback sozinho não basta: sem a identidade fixa de desenvolvimento não há quem
+        // autentique as invocações, então o guard recusa antes de sequer avaliar o endereço.
+        runner.withBean(CurrentUserProvider.class, NonDevelopmentProvider::new)
+                .withPropertyValues("spring.ai.mcp.server.enabled=true", "server.address=127.0.0.1")
+                .run(context -> assertThat(context).hasFailed());
+    }
+
+    @Test
+    void mcpDesabilitadoComIdentidadeAutenticadaSobeNormalmente() {
+        runner.withBean(CurrentUserProvider.class, NonDevelopmentProvider::new)
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context).doesNotHaveBean(McpLoopbackGuard.class);
+                });
     }
 
     @Test

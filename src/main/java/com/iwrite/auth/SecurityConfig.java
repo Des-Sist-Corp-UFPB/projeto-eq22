@@ -49,6 +49,10 @@ public class SecurityConfig {
                     csrf.csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
                             .csrfTokenRequestHandler(csrfTokenRequestHandler);
                     if (mcpServerEnabled) {
+                        // No MCP client performs the double-submit handshake, so CSRF can only ever be
+                        // ignored here, never satisfied. Safe only because these two paths are the same
+                        // ones McpLoopbackGuard has already gated on loopback + the development
+                        // identity below — never widened to any other path, never on by default.
                         csrf.ignoringRequestMatchers(MCP_TRANSPORT_PATHS);
                     }
                 })

@@ -23,7 +23,6 @@ public class DevelopmentCurrentUserConfiguration {
             DevelopmentCurrentUserProperties properties,
             IanaZoneIdValidator validator
     ) {
-        // TODO Replace this fallback with an authenticated provider when authentication is introduced.
         return new DevelopmentCurrentUserProvider(
                 properties.getUserId(),
                 properties.getTenantId(),
