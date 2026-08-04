@@ -2,6 +2,7 @@
 
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, type ReactNode } from "react";
+import { Button } from "@/components/ui/button";
 import { FeedbackMessage } from "@/components/ui/feedback-message";
 import { SessionBar } from "@/features/auth/components/session-bar";
 import { BACKEND_UNAVAILABLE_MESSAGE } from "@/features/auth/components/login-form";
@@ -18,7 +19,7 @@ const LIBRARY_ROUTE = "/library";
 export function SessionGuard({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
-  const { data: session, isPending, isError } = useSession();
+  const { data: session, isPending, isError, isFetching, errorUpdateCount, refetch } = useSession();
   const isLoginRoute = pathname === LOGIN_ROUTE;
   const hadSession = useRef(false);
 
@@ -48,8 +49,28 @@ export function SessionGuard({ children }: { children: ReactNode }) {
     return <>{children}</>;
   }
 
-  if (isError) {
-    return <GuardStatus variant="error">{BACKEND_UNAVAILABLE_MESSAGE}</GuardStatus>;
+  // A network blip or a 5xx leaves this query in a terminal error state: it never retries on its
+  // own and never refetches on focus (both deliberate, so nobody is logged out at random), and this
+  // guard stays mounted across navigation — so without an explicit way to ask again, a reader whose
+  // backend came back sees the outage screen until they reload by hand. One button, one request per
+  // press, no automatic loop. React Query clears the error and reports `pending` again while a
+  // query with no data refetches, so `isError` alone would replace this screen — button included —
+  // with a spinner the moment the retry starts.
+  const isRetryingAfterFailure = isPending && isFetching && errorUpdateCount > 0;
+
+  if (isError || isRetryingAfterFailure) {
+    return (
+      <GuardStatus
+        variant="error"
+        action={
+          <Button type="button" variant="secondary" disabled={isFetching} onClick={() => refetch()}>
+            {isFetching ? "Tentando…" : "Tentar novamente"}
+          </Button>
+        }
+      >
+        {BACKEND_UNAVAILABLE_MESSAGE}
+      </GuardStatus>
+    );
   }
 
   if (isPending || !session) {
@@ -64,10 +85,22 @@ export function SessionGuard({ children }: { children: ReactNode }) {
   );
 }
 
-function GuardStatus({ variant, children }: { variant: "info" | "error"; children: ReactNode }) {
+/** `action` sits outside the announced message so the alert reads as the status, not as a control. */
+function GuardStatus({
+  variant,
+  action,
+  children,
+}: {
+  variant: "info" | "error";
+  action?: ReactNode;
+  children: ReactNode;
+}) {
   return (
     <main className="grid min-h-screen place-items-center bg-[#f7f7f2] px-5">
-      <FeedbackMessage variant={variant}>{children}</FeedbackMessage>
+      <div className="grid justify-items-center gap-3">
+        <FeedbackMessage variant={variant}>{children}</FeedbackMessage>
+        {action}
+      </div>
     </main>
   );
 }

@@ -158,6 +158,121 @@ describe("SessionGuard", () => {
     expect(navigation.replace).not.toHaveBeenCalled();
   });
 
+  describe("recuperação de uma falha transitória", () => {
+    const retryButton = () => screen.getByRole("button", { name: "Tentar novamente" });
+
+    test("um 503 na primeira chamada é recuperado pelo retry manual", async () => {
+      authApi.fetchSession
+        .mockRejectedValueOnce(new ApiError("Serviço indisponível", 503))
+        .mockResolvedValueOnce(session);
+
+      renderWithClient(
+        <SessionGuard>
+          <p>Conteúdo protegido</p>
+        </SessionGuard>,
+      );
+
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        "Não conseguimos acessar o IWrite agora. Tente novamente em instantes.",
+      );
+
+      fireEvent.click(retryButton());
+
+      // Backend de volta: a sessão é restaurada sem nenhum reload manual.
+      expect(await screen.findByText("Conteúdo protegido")).toBeInTheDocument();
+      expect(screen.getByText("Autor A")).toBeInTheDocument();
+      expect(navigation.replace).not.toHaveBeenCalled();
+    });
+
+    test("uma falha de rede na primeira chamada também é recuperada pelo retry manual", async () => {
+      authApi.fetchSession
+        .mockRejectedValueOnce(new TypeError("Failed to fetch"))
+        .mockResolvedValueOnce(session);
+
+      renderWithClient(
+        <SessionGuard>
+          <p>Conteúdo protegido</p>
+        </SessionGuard>,
+      );
+      await screen.findByRole("alert");
+
+      fireEvent.click(retryButton());
+
+      expect(await screen.findByText("Conteúdo protegido")).toBeInTheDocument();
+    });
+
+    test("retry que responde 401 leva ao login em vez de insistir", async () => {
+      // fetchSession resolve 401 como ausência de sessão, e é assim que o retry a enxerga.
+      authApi.fetchSession.mockRejectedValueOnce(new ApiError("Serviço indisponível", 503)).mockResolvedValueOnce(null);
+
+      renderWithClient(
+        <SessionGuard>
+          <p>Conteúdo protegido</p>
+        </SessionGuard>,
+      );
+      await screen.findByRole("alert");
+
+      fireEvent.click(retryButton());
+
+      await waitFor(() => expect(navigation.replace).toHaveBeenCalledWith("/login"));
+      expect(screen.queryByText("Conteúdo protegido")).not.toBeInTheDocument();
+    });
+
+    test("cliques repetidos durante a nova tentativa não disparam requisições duplicadas", async () => {
+      let resolveRetry: (value: typeof session) => void = () => {};
+      authApi.fetchSession
+        .mockRejectedValueOnce(new ApiError("Serviço indisponível", 503))
+        .mockImplementationOnce(() => new Promise((resolve) => (resolveRetry = resolve)));
+
+      renderWithClient(
+        <SessionGuard>
+          <p>Conteúdo protegido</p>
+        </SessionGuard>,
+      );
+      await screen.findByRole("alert");
+
+      fireEvent.click(retryButton());
+
+      // Enquanto a tentativa está no ar o botão fica desabilitado e anuncia o carregamento.
+      const retrying = await screen.findByRole("button", { name: "Tentando…" });
+      expect(retrying).toBeDisabled();
+
+      fireEvent.click(retrying);
+      fireEvent.click(retrying);
+      expect(authApi.fetchSession).toHaveBeenCalledTimes(2); // a inicial e uma única nova tentativa
+
+      resolveRetry(session);
+      expect(await screen.findByText("Conteúdo protegido")).toBeInTheDocument();
+      expect(authApi.fetchSession).toHaveBeenCalledTimes(2);
+    });
+
+    test("mensagem e botão são acessíveis por leitor de tela e por teclado", async () => {
+      authApi.fetchSession.mockRejectedValue(new ApiError("Serviço indisponível", 503));
+
+      renderWithClient(
+        <SessionGuard>
+          <p>Conteúdo protegido</p>
+        </SessionGuard>,
+      );
+
+      // role="alert": anunciado sozinho, sem depender de o leitor estar sobre o elemento.
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        "Não conseguimos acessar o IWrite agora. Tente novamente em instantes.",
+      );
+
+      // <button> nativo: entra na ordem de tabulação e é acionado por Enter/Espaço, que o jsdom
+      // entrega como o mesmo evento de clique verificado aqui.
+      const button = retryButton();
+      expect(button.tagName).toBe("BUTTON");
+      expect(button).toBeEnabled();
+      button.focus();
+      expect(button).toHaveFocus();
+
+      fireEvent.click(button);
+      await waitFor(() => expect(authApi.fetchSession).toHaveBeenCalledTimes(2));
+    });
+  });
+
   test("logout encerra a sessão, limpa o cache e volta ao login", async () => {
     authApi.fetchSession.mockResolvedValue(session);
 
