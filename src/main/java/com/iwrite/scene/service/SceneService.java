@@ -16,6 +16,7 @@ import com.iwrite.item.entity.Item;
 import com.iwrite.item.service.ItemService;
 import com.iwrite.location.entity.Location;
 import com.iwrite.location.service.LocationService;
+import com.iwrite.observability.BusinessTelemetry;
 import com.iwrite.scene.dto.SceneContentRequest;
 import com.iwrite.scene.dto.ScenePlanningRequest;
 import com.iwrite.scene.dto.SceneRequest;
@@ -65,6 +66,7 @@ public class SceneService {
     private final BookWordCountEventRepository wordCountEventRepository;
     private final BookAccessService bookAccessService;
     private final CurrentUserProvider currentUserProvider;
+    private final BusinessTelemetry businessTelemetry;
 
     public SceneService(
             SceneRepository sceneRepository,
@@ -79,7 +81,8 @@ public class SceneService {
             WordCountEventService wordCountEventService,
             BookWordCountEventRepository wordCountEventRepository,
             BookAccessService bookAccessService,
-            CurrentUserProvider currentUserProvider
+            CurrentUserProvider currentUserProvider,
+            BusinessTelemetry businessTelemetry
     ) {
         this.sceneRepository = sceneRepository;
         this.chapterService = chapterService;
@@ -94,6 +97,7 @@ public class SceneService {
         this.wordCountEventRepository = wordCountEventRepository;
         this.bookAccessService = bookAccessService;
         this.currentUserProvider = currentUserProvider;
+        this.businessTelemetry = businessTelemetry;
     }
 
     @Transactional(readOnly = true)
@@ -188,12 +192,54 @@ public class SceneService {
         return SceneResponse.fromEntity(scene);
     }
 
+    /*
+     * Telemetry wrapper only: the business body below is unchanged, and the
+     * span is a child of whatever HTTP trace is active. See
+     * docs/otel-business-signals.md.
+     *
+     * The span ends on transaction completion, not on method return: this
+     * method runs inside the @Transactional proxy's transaction, so ending
+     * it here would report success before flush/commit has actually
+     * happened. The Scope, however, is always detached here in the
+     * finally block, whether or not the span itself ends now: a Scope only
+     * makes sense for the lexical duration of this method, and leaving it
+     * current until commit would make unrelated later work a child of this
+     * span.
+     */
     @Transactional
     public SceneResponse updateContent(UUID sceneId, SceneContentRequest request) {
+        BusinessTelemetry.Operation telemetry = businessTelemetry.sceneContentSave();
+        boolean endsWithTransaction = telemetry.deferEndToTransaction();
+        try {
+            return updateContent(sceneId, request, telemetry);
+        } catch (ConflictException conflict) {
+            telemetry.failure(BusinessTelemetry.RESULT_CONFLICT, conflict);
+            throw conflict;
+        } catch (RuntimeException failure) {
+            telemetry.failure(BusinessTelemetry.RESULT_FAILURE, failure);
+            throw failure;
+        } finally {
+            telemetry.detachScope();
+            if (!endsWithTransaction) {
+                telemetry.close();
+            }
+        }
+    }
+
+    private SceneResponse updateContent(
+            UUID sceneId,
+            SceneContentRequest request,
+            BusinessTelemetry.Operation telemetry
+    ) {
         Scene scene = getSceneForUpdate(sceneId);
         rejectMissingOperationId(request.operationId());
         Book lockedBook = bookAccessService.requireBookEditAccessForUpdate(scene.getBook().getId());
         SceneVersionSource source = contentSource(request.source());
+        telemetry.attribute(BusinessTelemetry.SCENE_SOURCE, telemetrySource(source));
+        telemetry.attribute(
+                BusinessTelemetry.SCENE_CONTENT_SIZE_BUCKET,
+                BusinessTelemetry.contentSizeBucket(request.contentText())
+        );
         String requestFingerprint = WordCountRequestFingerprint.contentSave(
                 currentUserProvider.userId(),
                 lockedBook.getId(),
@@ -205,10 +251,14 @@ public class SceneService {
         );
         SceneResponse idempotentRetryResponse = idempotentRetryResponse(scene, request.operationId(), requestFingerprint);
         if (idempotentRetryResponse != null) {
+            telemetry.result(BusinessTelemetry.RESULT_IDEMPOTENT_RETRY)
+                    .attribute(BusinessTelemetry.SCENE_CONTENT_CHANGED, false);
             return idempotentRetryResponse;
         }
         rejectStaleContentRevision(scene, request.expectedContentRevision());
         if (sameContent(scene, request.contentJson(), request.contentText())) {
+            telemetry.result(BusinessTelemetry.RESULT_NO_CHANGE)
+                    .attribute(BusinessTelemetry.SCENE_CONTENT_CHANGED, false);
             long revision = scene.getContentRevision();
             recordFreshEvent(lockedBook, new WordCountEventCommand(
                     lockedBook.getId(),
@@ -228,6 +278,7 @@ public class SceneService {
             return SceneResponse.fromEntity(scene);
         }
 
+        telemetry.attribute(BusinessTelemetry.SCENE_CONTENT_CHANGED, true);
         UUID bookId = lockedBook.getId();
         int totalBefore = Math.toIntExact(sceneRepository.sumWordCountByBookId(bookId));
         int oldWordCount = wordCount(scene);
@@ -515,6 +566,16 @@ public class SceneService {
             throw new BadRequestException("source must be AUTO_SAVE or MANUAL_SAVE");
         }
         return source;
+    }
+
+    /* Enum name -> controlled telemetry token, so a new enum constant cannot leak. */
+    private static String telemetrySource(SceneVersionSource source) {
+        return switch (source) {
+            case MANUAL_SAVE -> BusinessTelemetry.SOURCE_MANUAL_SAVE;
+            case AUTO_SAVE -> BusinessTelemetry.SOURCE_AUTOSAVE;
+            case RESTORE_SAFETY -> BusinessTelemetry.SOURCE_RESTORE;
+            case DELETE_SAFETY -> BusinessTelemetry.SOURCE_OTHER;
+        };
     }
 
     private boolean sameContent(Scene scene, String contentJson, String contentText) {
