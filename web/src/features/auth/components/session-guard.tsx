@@ -7,6 +7,7 @@ import { FeedbackMessage } from "@/components/ui/feedback-message";
 import { SessionBar } from "@/features/auth/components/session-bar";
 import { BACKEND_UNAVAILABLE_MESSAGE } from "@/features/auth/components/login-form";
 import { useSession } from "@/features/auth/session";
+import { useSessionReconciliation } from "@/features/auth/session-sync";
 
 const LOGIN_ROUTE = "/login";
 const LIBRARY_ROUTE = "/library";
@@ -20,6 +21,9 @@ export function SessionGuard({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const { data: session, isPending, isError, isFetching, errorUpdateCount, refetch } = useSession();
+  // Mounted unconditionally (not just on protected routes) so a login in another tab is still
+  // picked up while this tab happens to be sitting on /login.
+  const isReconciling = useSessionReconciliation();
   const isLoginRoute = pathname === LOGIN_ROUTE;
   const hadSession = useRef(false);
 
@@ -47,6 +51,13 @@ export function SessionGuard({ children }: { children: ReactNode }) {
   // and gating it on a resolved session would leave a logged-out reader looking at a spinner.
   if (isLoginRoute) {
     return <>{children}</>;
+  }
+
+  // Another tab's login/logout, or this tab regaining focus, means the cookie underneath this app
+  // may no longer name the identity the cache was built for. Nothing protected renders — not even
+  // stale data already in the cache — until /api/auth/me has answered again.
+  if (isReconciling) {
+    return <GuardStatus variant="info">Verificando sessão…</GuardStatus>;
   }
 
   // A network blip or a 5xx leaves this query in a terminal error state: it never retries on its

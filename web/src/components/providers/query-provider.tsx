@@ -1,8 +1,9 @@
 "use client";
 
-import { hashKey, MutationCache, QueryCache, QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { MutationCache, QueryCache, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useState } from "react";
-import { SESSION_QUERY_KEY } from "@/features/auth/session";
+import { isStaleMutation, purgeAuthenticatedCaches } from "@/features/auth/session-cache";
+import { SESSION_QUERY_KEY } from "@/features/auth/session-query-key";
 import { ApiError } from "@/lib/api/client";
 
 export function QueryProvider({ children }: { children: React.ReactNode }) {
@@ -13,25 +14,34 @@ export function QueryProvider({ children }: { children: React.ReactNode }) {
 
     // A session can expire or be revoked while the app is open. Whichever request notices it first,
     // the answer is the same: the session is gone, and every cache entry fetched under it is the
-    // previous tenant's data. Dropping everything except the session key itself (never enumerated
-    // by name, so no domain query can be missed) and overwriting that one key with null — rather
-    // than removing it — lets the route guard redirect on this same render pass instead of first
-    // refetching /api/auth/me and racing a second 401.
+    // previous tenant's data. purgeAuthenticatedCaches leaves the session key itself alone —
+    // overwriting it with null here, rather than removing it, lets the route guard redirect on this
+    // same render pass instead of first refetching /api/auth/me and racing a second 401.
     const onError = (error: unknown) => {
       if (error instanceof ApiError && error.status === 401) {
         const client = created.client;
         if (!client) return;
-        client.removeQueries({
-          predicate: (query) => hashKey(query.queryKey) !== hashKey(SESSION_QUERY_KEY),
-        });
-        client.getMutationCache().clear();
+        purgeAuthenticatedCaches(client);
         client.setQueryData(SESSION_QUERY_KEY, null);
       }
     };
 
     const client = new QueryClient({
       queryCache: new QueryCache({ onError }),
-      mutationCache: new MutationCache({ onError }),
+      mutationCache: new MutationCache({
+        onError,
+        // A cross-tab or focus reconciliation (session-sync.ts) can land while this exact mutation
+        // was already in flight under the identity that reconciliation just discarded. Its own
+        // onSuccess already ran and may have written stale data by the time this fires — this purges
+        // it right back out. Ordinary mutations are never affected: isStaleMutation is false unless a
+        // reconciliation cutoff was actually recorded after this mutation started.
+        onSettled: (_data, _error, _variables, _context, mutation) => {
+          const client = created.client;
+          if (client && isStaleMutation(client, mutation.state.submittedAt)) {
+            purgeAuthenticatedCaches(client);
+          }
+        },
+      }),
       defaultOptions: {
         queries: {
           staleTime: 10_000,

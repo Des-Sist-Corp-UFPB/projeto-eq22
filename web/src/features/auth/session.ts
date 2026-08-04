@@ -3,16 +3,19 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { fetchSession, login, logout } from "@/features/auth/api/auth-api";
+import { announceSessionChanged } from "@/features/auth/session-sync";
+import { SESSION_QUERY_KEY } from "@/features/auth/session-query-key";
 
-/** One cache entry for the whole app, so /api/auth/me is requested once however many components ask. */
-export const SESSION_QUERY_KEY = ["auth", "session"] as const;
+export { SESSION_QUERY_KEY };
 
 export function useSession() {
   return useQuery({
     queryKey: SESSION_QUERY_KEY,
     queryFn: fetchSession,
-    // The session only changes through login and logout, both of which write this entry directly.
-    // Refetching on an interval or on focus would just be a way to log the user out at random.
+    // Refetching on an interval would just be a way to log the user out at random. Focus and
+    // cross-tab revalidation still happen, deliberately, but through useSessionReconciliation
+    // (session-sync.ts) rather than this query's own options — that path can tell "checked, nothing
+    // changed" from "checked, identity changed" and only the latter touches the rest of the cache.
     staleTime: Infinity,
     retry: false,
   });
@@ -26,6 +29,7 @@ export function useLogin() {
     mutationFn: ({ email, password }: { email: string; password: string }) => login(email, password),
     onSuccess: (session) => {
       queryClient.setQueryData(SESSION_QUERY_KEY, session);
+      announceSessionChanged();
       router.replace("/library");
     },
   });
@@ -41,6 +45,7 @@ export function useLogout() {
       // Everything cached was fetched as this user in this tenant. Dropping the whole cache is the
       // only version of "clear authenticated data" that cannot miss a key.
       queryClient.clear();
+      announceSessionChanged();
       router.replace("/login");
     },
   });
