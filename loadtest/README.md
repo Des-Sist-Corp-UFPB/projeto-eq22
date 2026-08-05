@@ -28,7 +28,15 @@ Fluxo por VU, uma vez por iteração:
    `SceneEditor` real faz ao abrir uma cena — `getScene(sceneId)` em
    `web/src/features/scenes/api/scenes-api.ts`)
 4. `PATCH /api/scenes/{sceneId}/content` — tag `operation=save_scene`
-5. think time curto (0.3–1s, configurável)
+5. **Só se o passo 4 retornou 200:** `GET /api/books/{bookId}/outline` de
+   novo — tag `operation=refresh_outline_after_save` (separada de
+   `load_outline`, nunca agregada nela). Espelha o `BookWorkspace` real: ele
+   mantém a query do outline ativa e `contentMutation.mutateAsync()` chama
+   `queryClient.invalidateQueries({ queryKey: queryKeys.outline(bookId) })`
+   assim que o save é confirmado, o que refaz este `GET`. Como o frontend só
+   invalida nesse caso, o script também só refaz a chamada quando o `PATCH`
+   teve sucesso.
+6. think time curto (0.3–1s, configurável)
 
 Sem chamadas de IA. Cada VU escreve **somente no próprio livro/cena**, nunca
 um recurso compartilhado com outra VU — evita contenção artificial no lock
@@ -131,17 +139,31 @@ antes de todas as VUs terminarem de autenticar — ver [§1](#1-o-que-o-teste-fa
 O orçamento padrão do overlay é **1000** tentativas/janela (conta e origem),
 suficiente para `VUS` até `998` (regra: `IWRITE_LOADTEST_LOGIN_RATE_LIMIT >=
 VUS + 2` — 1 login de `setup()` + `VUS` logins das VUs + 1 de `teardown()`).
-Para uma execução com `VUS` maior que isso, sobrescreva antes de subir a
-stack:
+
+Para uma execução com `VUS` acima de `998`, sobrescreva com um valor que
+respeite a regra `>= VUS + 2` **antes** de subir a stack — e passe o mesmo
+`VUS` para o `k6 run` em [§6](#6-executando), senão os dois números divergem:
 
 ```bash
-# bash
-export IWRITE_LOADTEST_LOGIN_RATE_LIMIT=1000
+# bash — exemplo com VUS=1500
+VUS=1500
+export IWRITE_LOADTEST_LOGIN_RATE_LIMIT=$((VUS + 2))
 ```
 
 ```powershell
-# PowerShell
-$env:IWRITE_LOADTEST_LOGIN_RATE_LIMIT = "1000"
+# PowerShell — exemplo com VUS=1500
+$loadTestVus = 1500
+$env:IWRITE_LOADTEST_LOGIN_RATE_LIMIT = ($loadTestVus + 2).ToString()
+```
+
+Depois, ao rodar o k6 ([§6](#6-executando)), passe o mesmo valor:
+
+```bash
+k6 run -e VUS="$VUS" ...
+```
+
+```powershell
+k6 run -e "VUS=$loadTestVus" ...
 ```
 
 Tenha o k6 disponível (`k6.io/docs` para instalação, ou use a imagem
@@ -175,6 +197,14 @@ faz o próprio handshake, no seu próprio cookie jar isolado do k6:
    header manual — o k6 já o reenvia sozinho a partir do jar passado.
    `setup()` nunca devolve o jar, o cookie ou o token a ninguém — só
    `[{ bookId, sceneId }, ...]` (ver [§5](#5-dados-sintéticos-e-limpeza)).
+
+**Nenhuma falha de login de VU é tolerada.** Cada autenticação bem/mal
+sucedida incrementa a métrica `vu_auth_success` (`k6/metrics.Rate`), com
+threshold `rate==1` sem tolerância ([§7](#7-thresholds)) — uma única falha
+reprova o `k6 run` inteiro ao final, mesmo que a mesma VU consiga se
+autenticar numa iteração posterior (o k6 tenta de novo a cada iteração
+enquanto a VU não estiver autenticada, para não perder toda a carga por uma
+falha transitória, mas isso nunca esconde a falha do resultado).
 
 **Credenciais vêm só de variável de ambiente, nunca de arquivo versionado:**
 
@@ -300,11 +330,13 @@ Variáveis de carga (todas opcionais, com padrão realista):
 | `RAMPDOWN_DURATION` | desaquecimento | `30s` |
 | `THINK_TIME_MIN_S` / `THINK_TIME_MAX_S` | think time por iteração | `0.3` / `1` |
 | `RESULT_PATH` | caminho do resumo JSON já sanitizado (opcional) | nenhum — só imprime no terminal |
-| `SETUP_TIMEOUT` | timeout de `setup()` (formato de duração do k6, ex. `10m`, `90s`) — sobe com `VUS` porque `setup()` cria um livro completo por VU em série | `10m` |
+| `SETUP_TIMEOUT` | timeout de `setup()` (formato de duração do k6, ex. `10m`, `90s`, `0.5m`) — sobe com `VUS` porque `setup()` cria um livro completo por VU em série | `10m` |
 | `TEARDOWN_TIMEOUT` | timeout de `teardown()`, mesmo formato | `10m` |
 
 `SETUP_TIMEOUT`/`TEARDOWN_TIMEOUT` são validados antes de rodar (regex de
-duração do k6: unidades `ms`/`s`/`m`/`h` encadeadas) — um valor malformado
+duração do k6: unidades `ms`/`s`/`m`/`h` encadeadas, cada uma com parte
+fracionária opcional — `10m`, `90s`, `1h30m`, `0.5m`, `1.5s` são todos
+aceitos; `10x`, `1..5s`, `abc` continuam rejeitados) — um valor malformado
 falha imediatamente com uma mensagem clara, em vez de o k6 rejeitar
 silenciosamente as `options` ou cair no timeout padrão de 60s.
 
@@ -410,8 +442,9 @@ ação. Os JSONs brutos por execução ficam em `loadtest/resultados/`.
 ```text
 http_req_failed          < 1%
 checks                   > 99%
+vu_auth_success          == 100%   (zero tolerância — ver §3)
 http_req_duration p(95)  < 500ms   (global)
-http_req_duration p(95)  < 500ms   (por operação principal: list_books, load_outline, load_scene, save_scene)
+http_req_duration p(95)  < 500ms   (por operação principal: list_books, load_outline, load_scene, save_scene, refresh_outline_after_save)
 http_req_duration p(95)  < 2000ms  (auth/setup/teardown — fora do loop medido)
 http_req_duration p(95)  < 8000ms  (auth_login — bcrypt + cold start da JVM, ver §9)
 ```
@@ -422,6 +455,9 @@ para que o k6 reporte as métricas dessas tags separadas das operações
 principais no summary (ele só cria uma série por tag quando há threshold
 associado), não como um orçamento de performance rígido — são operações que
 rodam 1x ou `VUS` vezes por execução, nunca sob a carga em regime.
+`vu_auth_success` é a única exceção: `rate==1` sem tolerância, porque uma
+única falha de login de VU nunca pode "passar" reduzindo a carga
+silenciosamente — ver [§3](#3-autenticação).
 
 ---
 
@@ -440,13 +476,15 @@ rodam 1x ou `VUS` vezes por execução, nunca sob a carga em regime.
   graças a essas tags e a `summaryTrendStats` configurado no script.
 - **`http_req_duration` (sem tag) e `http_reqs.rate`** — agregam **todas** as
   requisições da execução: smoke, auth, setup do livro/seção/capítulo/cenas,
-  as 4 operações principais **e** o teardown. Não representam a latência do
+  as 5 operações principais **e** o teardown. Não representam a latência do
   loop principal sozinho — para isso, leia as séries individuais de
-  `list_books`/`load_outline`/`load_scene`/`save_scene`. `resultado.json`
-  mantém essa distinção explícita (`execucao_completa` vs.
+  `list_books`/`load_outline`/`load_scene`/`save_scene`/`refresh_outline_after_save`.
+  `resultado.json` mantém essa distinção explícita (`execucao_completa` vs.
   `operacoes_principais` vs. `auth_setup_teardown`).
-- **`checks`** — as 4 asserções de status das operações principais
-  (`list_books`, `load_outline`, `load_scene`, `save_scene`).
+- **`checks`** — as 5 asserções de status das operações principais
+  (`list_books`, `load_outline`, `load_scene`, `save_scene`,
+  `refresh_outline_after_save` — só roda, e só é checada, quando `save_scene`
+  teve sucesso).
 - Para investigar a operação mais lenta (`save_scene`, ver §9), use a
   observabilidade já existente do projeto (OTel + Loki/Tempo/Grafana via
   `docker-compose.observability.yml`) e procure os eventos de negócio
@@ -628,8 +666,18 @@ de referência estável.
       versionado): `VUS` `bookId`s distintos criados em `setup()`, cada VU
       lendo/escrevendo exclusivamente o seu (`data[__VU - 1]`), sem
       colisão/reuso de `bookId` entre VUs
-- [x] `SETUP_TIMEOUT`/`TEARDOWN_TIMEOUT` validados: valor malformado (ex.
-      `10x`) rejeitado antes de rodar, com mensagem clara; valores válidos
-      (`10m`, `90s`) aceitos e refletidos em `k6 inspect`
+- [x] `SETUP_TIMEOUT`/`TEARDOWN_TIMEOUT` validados: valores malformados
+      (`10x`, `1..5s`, `abc`) rejeitados antes de rodar, com mensagem clara;
+      valores válidos, incluindo fracionários (`10m`, `90s`, `0.5m`, `1.5s`)
+      aceitos e refletidos em `k6 inspect`
+- [x] `vu_auth_success` (threshold `rate==1`) confirmado: execução normal
+      reprova o `k6 run` diante de qualquer falha de login de VU, mesmo
+      quando a mesma VU se autentica com sucesso numa iteração seguinte
+      (testado com fault injection no backend, revertido antes da medição
+      real); em execução saudável, cada VU registra exatamente uma
+      autenticação bem-sucedida
+- [x] `refresh_outline_after_save` confirmado só disparando após
+      `save_scene status 200` — zero requisições dessa operação quando o
+      `PATCH` falha (fault injection)
 - [x] Resultados gerados com working tree limpo, exatamente no commit
       registrado como `measured_code_commit` em `resultado.json`

@@ -1,11 +1,20 @@
 import http from 'k6/http';
 import { check, sleep } from 'k6';
+import { Rate } from 'k6/metrics';
+
+// Nenhuma falha de autenticação de VU é tolerada: rate==1 reprova o run
+// inteiro mesmo que uma VU se autentique com sucesso numa iteração
+// posterior (ver ensureVuAuthenticated()) — o teste não pode "passar"
+// silenciosamente operando com menos sessões que o VUS pretendido.
+const vuAuthSuccess = new Rate('vu_auth_success');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Teste de carga realista — k6 (issue #129)
 //
 // Cenário: GET /api/books → GET /api/books/{bookId}/outline →
-// GET /api/scenes/{sceneId} → PATCH /api/scenes/{sceneId}/content, autenticado
+// GET /api/scenes/{sceneId} → PATCH /api/scenes/{sceneId}/content → (se o
+// PATCH deu certo) GET /api/books/{bookId}/outline de novo, espelhando o
+// invalidateQueries que o frontend real dispara após salvar — autenticado
 // com sessão real (cookie JSESSIONID + CSRF de duplo envio), contra o SEU
 // AMBIENTE LOCAL. Cada VU representa uma sessão independente do mesmo autor
 // editando o SEU PRÓPRIO livro (1 livro/seção/capítulo/cena por VU, criados
@@ -114,8 +123,8 @@ const THINK_TIME_MAX_S = Number(__ENV.THINK_TIME_MAX_S || 1);
  * forma clara, não virar silenciosamente o timeout padrão de 60s do k6.
  */
 function validateK6Duration(raw, name) {
-  if (!/^([0-9]+(ms|s|m|h))+$/.test(raw)) {
-    throw new Error(`${name} inválido: "${raw}". Use um formato de duração do k6 (ex.: "10m", "90s", "1h30m").`);
+  if (!/^([0-9]+(?:\.[0-9]+)?(?:ms|s|m|h))+$/.test(raw)) {
+    throw new Error(`${name} inválido: "${raw}". Use um formato de duração do k6, unidades ms/s/m/h encadeadas, com parte fracionária opcional (ex.: "10m", "90s", "1h30m", "0.5m", "1.5s").`);
   }
   return raw;
 }
@@ -151,11 +160,19 @@ export const options = {
     http_req_failed: ['rate<0.01'],
     checks: ['rate>0.99'],
     http_req_duration: ['p(95)<500'],
+    // Sem tolerância: uma única falha de autenticação de VU reprova o run
+    // inteiro, mesmo que a mesma VU se autentique com sucesso numa iteração
+    // posterior — o teste não pode passar operando com menos sessões que o
+    // VUS pretendido (ver ensureVuAuthenticated()).
+    vu_auth_success: ['rate==1'],
     // Operações principais do cenário medido, sob carga (loop de VUs):
     'http_req_duration{operation:list_books}': ['p(95)<500'],
     'http_req_duration{operation:load_outline}': ['p(95)<500'],
     'http_req_duration{operation:load_scene}': ['p(95)<500'],
     'http_req_duration{operation:save_scene}': ['p(95)<500'],
+    // Refetch do outline que o frontend real dispara (invalidateQueries) após
+    // um save_scene bem-sucedido — ver ensureVuAuthenticated()/default().
+    'http_req_duration{operation:refresh_outline_after_save}': ['p(95)<500'],
     // Autenticação/setup/teardown: fora do loop medido (rodam 1x, ou VUS
     // vezes já que cada VU também autentica sozinho e setup() cria um livro
     // por VU), orçamento mais folgado só para pegar uma chamada realmente
@@ -273,9 +290,14 @@ let vuAuthenticated = false;
  * Cada VU passa a ter sua própria sessão de servidor real, refletindo VUS
  * sessões independentes do mesmo autor editando livros distintos, em vez de
  * uma única sessão de setup() repassada manualmente via headers para todas.
- * Falha ao autenticar não derruba a execução inteira: só a iteração atual
- * desta VU é perdida (e a próxima iteração tenta autenticar de novo, já que
- * `vuAuthenticated` continua `false`).
+ * Falha ao autenticar não aborta o processo do k6 imediatamente: só a
+ * iteração atual desta VU é perdida (a próxima iteração tenta autenticar de
+ * novo, já que `vuAuthenticated` continua `false`), mas a métrica
+ * `vu_auth_success` registra `false` nesse instante — e como o threshold
+ * é `rate==1` sem tolerância, o run inteiro é reprovado ao final mesmo que
+ * essa mesma VU consiga autenticar numa iteração posterior. Não existe
+ * "reduzir a carga silenciosamente": qualquer falha de login vira falha do
+ * `k6 run`.
  */
 function ensureVuAuthenticated() {
   if (vuAuthenticated) {
@@ -285,10 +307,12 @@ function ensureVuAuthenticated() {
     vuJar = http.cookieJar();
     login(vuJar);
     vuAuthenticated = true;
+    vuAuthSuccess.add(true);
     return vuJar;
   } catch (err) {
     console.error(`VU ${__VU}: falha ao autenticar: ${err.message}`);
     vuJar = null;
+    vuAuthSuccess.add(false);
     return null;
   }
 }
@@ -497,7 +521,22 @@ export default function (data) {
     }),
     { jar, headers: jsonHeaders(jar), tags: { operation: 'save_scene', name: 'PATCH /api/scenes/{sceneId}/content' } }
   );
-  check(saveRes, { 'save_scene status 200': (r) => r.status === 200 });
+  const saveSucceeded = check(saveRes, { 'save_scene status 200': (r) => r.status === 200 });
+
+  // Espelha o frontend real: BookWorkspace mantém a query do outline ativa e
+  // contentMutation.mutateAsync() dispara queryClient.invalidateQueries no
+  // sucesso do save, o que refaz este GET (ver web/src/features/scenes).
+  // Só roda depois de um save bem-sucedido — o frontend também só invalida
+  // o outline nesse caso — e fica numa tag própria (não agregada em
+  // load_outline) para mostrar separadamente o custo desse refetch.
+  if (saveSucceeded) {
+    const refreshRes = http.get(`${BASE}/api/books/${bookId}/outline`, {
+      jar,
+      headers: jsonHeaders(jar),
+      tags: { operation: 'refresh_outline_after_save', name: 'GET /api/books/{bookId}/outline' },
+    });
+    check(refreshRes, { 'refresh_outline_after_save status 200': (r) => r.status === 200 });
+  }
 
   sleep(thinkTime());
 }
@@ -576,7 +615,7 @@ function renderShortSummary(data) {
   if (m.http_reqs) {
     lines.push(`http_reqs: ${m.http_reqs.values.count} (${m.http_reqs.values.rate.toFixed(2)}/s)`);
   }
-  ['list_books', 'load_outline', 'load_scene', 'save_scene'].forEach((op) => {
+  ['list_books', 'load_outline', 'load_scene', 'save_scene', 'refresh_outline_after_save'].forEach((op) => {
     const trend = m[`http_req_duration{operation:${op}}`];
     if (trend) {
       lines.push(`${op} p95: ${trend.values['p(95)'].toFixed(1)}ms`);
