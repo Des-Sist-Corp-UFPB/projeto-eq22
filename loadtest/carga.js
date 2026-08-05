@@ -7,7 +7,10 @@ import { check, sleep } from 'k6';
 // Cenário: GET /api/books → GET /api/books/{bookId}/outline →
 // GET /api/scenes/{sceneId} → PATCH /api/scenes/{sceneId}/content, autenticado
 // com sessão real (cookie JSESSIONID + CSRF de duplo envio), contra o SEU
-// AMBIENTE LOCAL.
+// AMBIENTE LOCAL. Cada VU representa uma sessão independente do mesmo autor
+// editando o SEU PRÓPRIO livro (1 livro/seção/capítulo/cena por VU, criados
+// em setup()) — sem contenção artificial no lock pessimista de linha de um
+// único livro compartilhado.
 //
 // IMPORTANTE: NUNCA aponte para Render, produção ou o servidor acadêmico
 // compartilhado (ex.: https://eqNN.dsc.rodrigor.com) — o guard de host abaixo
@@ -90,8 +93,8 @@ function parseSafeHost(rawUrl) {
   );
 })();
 
-// Nº máximo de VUs simultâneos (também define quantas cenas o setup() cria —
-// uma por VU, para que cada VU escreva sempre na sua própria cena).
+// Nº máximo de VUs simultâneos (também define quantos livros o setup() cria —
+// um por VU, para que cada VU edite sempre o próprio livro/cena).
 const VUS = Number(__ENV.VUS || 10);
 
 const WARMUP_DURATION = __ENV.WARMUP_DURATION || '30s';
@@ -104,7 +107,30 @@ const LOGIN_PASSWORD = __ENV.LOAD_TEST_PASSWORD;
 const THINK_TIME_MIN_S = Number(__ENV.THINK_TIME_MIN_S || 0.3);
 const THINK_TIME_MAX_S = Number(__ENV.THINK_TIME_MAX_S || 1);
 
+/**
+ * Valida um valor de duração no formato do k6 (Go duration: unidades
+ * ms/s/m/h encadeadas, ex. "10m", "90s", "1h30m") antes de aceitar
+ * SETUP_TIMEOUT/TEARDOWN_TIMEOUT — um valor malformado deve falhar cedo e de
+ * forma clara, não virar silenciosamente o timeout padrão de 60s do k6.
+ */
+function validateK6Duration(raw, name) {
+  if (!/^([0-9]+(ms|s|m|h))+$/.test(raw)) {
+    throw new Error(`${name} inválido: "${raw}". Use um formato de duração do k6 (ex.: "10m", "90s", "1h30m").`);
+  }
+  return raw;
+}
+
+// setup() cria 1 livro/seção/capítulo/cena por VU, em loop serial: o número
+// de requisições (e portanto o tempo de setup) cresce com VUS, então o
+// timeout de 60s padrão do k6 para setup()/teardown() não escala. Os
+// defaults abaixo cobrem folgadamente VUS na casa da centena em ambiente
+// local; suba SETUP_TIMEOUT/TEARDOWN_TIMEOUT explicitamente para VUS maior.
+const SETUP_TIMEOUT = validateK6Duration(__ENV.SETUP_TIMEOUT || '10m', 'SETUP_TIMEOUT');
+const TEARDOWN_TIMEOUT = validateK6Duration(__ENV.TEARDOWN_TIMEOUT || '10m', 'TEARDOWN_TIMEOUT');
+
 export const options = {
+  setupTimeout: SETUP_TIMEOUT,
+  teardownTimeout: TEARDOWN_TIMEOUT,
   stages: [
     { duration: WARMUP_DURATION, target: VUS },
     { duration: STEADY_DURATION, target: VUS },
@@ -130,10 +156,11 @@ export const options = {
     'http_req_duration{operation:load_outline}': ['p(95)<500'],
     'http_req_duration{operation:load_scene}': ['p(95)<500'],
     'http_req_duration{operation:save_scene}': ['p(95)<500'],
-    // Autenticação/setup/teardown: fora do loop medido (rodam 1x ou VUS
-    // vezes, nunca sob a carga em regime), orçamento mais folgado só para
-    // pegar uma chamada realmente travada — e, por terem threshold, o k6
-    // passa a reportar as métricas dessas tags separadas no summary.
+    // Autenticação/setup/teardown: fora do loop medido (rodam 1x, ou VUS
+    // vezes já que cada VU também autentica sozinho e setup() cria um livro
+    // por VU), orçamento mais folgado só para pegar uma chamada realmente
+    // travada — e, por terem threshold, o k6 passa a reportar as métricas
+    // dessas tags separadas no summary.
     'http_req_duration{operation:auth_csrf}': ['p(95)<2000'],
     // auth_login é a primeira requisição de verdade contra um backend recém
     // subido: bcrypt (deliberadamente lento) + JIT/warmup da JVM no primeiro
@@ -183,61 +210,24 @@ function jarCookie(jar, url, name) {
   return values && values[0];
 }
 
-function jsonHeaders(authHeaders, extra) {
-  return Object.assign({ 'Content-Type': 'application/json' }, authHeaders, extra || {});
-}
-
 /**
- * Tenta remover o livro sintético órfão antes de relançar a falha original.
- * Chamado quando seção/capítulo/cena falham depois que o livro já existe:
- * `teardown()` não roda se `setup()` lança, então sem isso o livro (e o que
- * já tiver sido criado sob ele) fica para trás.
+ * Autentica no contexto de execução atual — setup(), uma VU ou teardown()
+ * têm, cada um, seu próprio cookie jar isolado no k6 (é assim que o k6
+ * funciona: VUs nunca compartilham o jar de setup()). Deixa JSESSIONID +
+ * XSRF-TOKEN só nesse jar; nunca retorna nem guarda o cookie/token numa
+ * variável que sobreviva além dele. Quem precisa do header CSRF numa
+ * requisição lê de volta do jar, no momento da chamada, via
+ * `currentAuthHeaders()` — o cookie de sessão em si não precisa de header
+ * manual, o k6 já o reenvia automaticamente do jar ativo.
  */
-function cleanupOrphanedBook(authHeaders, bookId, marker, originalError) {
-  console.error(`setup() falhou após criar o livro sintético ${marker} (${bookId}): ${originalError.message}`);
-  const cleanupRes = http.del(`${BASE}/api/books/${bookId}`, null, {
-    headers: jsonHeaders(authHeaders),
-    tags: { operation: 'setup_cleanup_book', name: 'DELETE /api/books/{bookId}' },
-  });
-  if (cleanupRes.status === 204) {
-    console.error(`Limpeza automática removeu o livro órfão ${marker} (${bookId}).`);
-  } else {
-    console.error(
-      `Limpeza automática NÃO removeu o livro órfão ${marker} (${bookId}) — status ${cleanupRes.status}. ` +
-      `Limpeza manual necessária, veja loadtest/README.md.`
-    );
-  }
-  throw originalError;
-}
-
-/**
- * Login único, fora do loop de VUs: evita contaminar o rate limiter de login
- * (máx. configurado em IWRITE_LOGIN_RATE_LIMIT_MAX_PER_ACCOUNT/ORIGIN, padrão
- * 8/20 por janela de 1m — ver .env.example) e reflete o uso real do produto,
- * onde a sessão do servidor dura a visita inteira, não uma por requisição.
- */
-export function setup() {
-  if (!LOGIN_PASSWORD) {
-    throw new Error('LOAD_TEST_PASSWORD não definida. Nunca versione a senha; exporte a variável de ambiente antes de rodar (ver loadtest/README.md).');
-  }
-
-  const ping = http.get(`${BASE}/ping`, { tags: { operation: 'smoke', name: 'GET /ping' } });
-  if (ping.status !== 200) {
-    throw new Error(`Smoke check falhou: GET /ping retornou ${ping.status}. Suba o ambiente antes de rodar a carga.`);
-  }
-
+function login() {
   const csrfRes = http.get(`${BASE}/api/auth/csrf`, { tags: { operation: 'auth_csrf', name: 'GET /api/auth/csrf' } });
   if (csrfRes.status !== 204) {
     throw new Error(`GET /api/auth/csrf retornou ${csrfRes.status}, esperado 204.`);
   }
-  // Lido do cookie jar em vez do Set-Cookie desta resposta específica: o
-  // CsrfFilter do Spring Security já resolve/emite o XSRF-TOKEN em qualquer
-  // requisição (inclusive o /ping acima), então uma chamada já pode ter
-  // fixado o cookie e esta responder sem repetir o Set-Cookie.
-  const jar = http.cookieJar();
-  const csrfToken = jarCookie(jar, BASE, 'XSRF-TOKEN');
+  const csrfToken = jarCookie(http.cookieJar(), BASE, 'XSRF-TOKEN');
   if (!csrfToken) {
-    throw new Error('Backend não emitiu o cookie XSRF-TOKEN (nem em /ping nem em /api/auth/csrf).');
+    throw new Error('Backend não emitiu o cookie XSRF-TOKEN.');
   }
 
   const loginRes = http.post(
@@ -251,74 +241,163 @@ export function setup() {
   if (loginRes.status !== 200) {
     throw new Error(`Login falhou com status ${loginRes.status}. Confira LOAD_TEST_EMAIL/LOAD_TEST_PASSWORD contra o seed demo (docker-compose.demo.yml).`);
   }
-  const sessionId = jarCookie(jar, BASE, 'JSESSIONID');
-  if (!sessionId) {
+  if (!jarCookie(http.cookieJar(), BASE, 'JSESSIONID')) {
     throw new Error('Backend não emitiu o cookie JSESSIONID em /api/auth/login.');
   }
+}
 
-  const authHeaders = {
-    Cookie: `JSESSIONID=${sessionId}; XSRF-TOKEN=${csrfToken}`,
-    'X-XSRF-TOKEN': csrfToken,
-  };
+function currentAuthHeaders() {
+  const csrfToken = jarCookie(http.cookieJar(), BASE, 'XSRF-TOKEN');
+  return csrfToken ? { 'X-XSRF-TOKEN': csrfToken } : {};
+}
+
+function jsonHeaders(extra) {
+  return Object.assign({ 'Content-Type': 'application/json' }, currentAuthHeaders(), extra || {});
+}
+
+let vuAuthenticated = false;
+
+/**
+ * Login único por VU, feito na primeira iteração daquela VU — não em
+ * setup() nem repetido a cada iteração. Cada VU passa a ter sua própria
+ * sessão de servidor real, refletindo VUS sessões independentes do mesmo
+ * autor editando livros distintos, em vez de uma única sessão de setup()
+ * repassada manualmente via headers para todas. Falha ao autenticar não
+ * derruba a execução inteira: só a iteração atual desta VU é perdida (e a
+ * próxima iteração tenta autenticar de novo, já que `vuAuthenticated`
+ * continua `false`).
+ */
+function ensureVuAuthenticated() {
+  if (vuAuthenticated) {
+    return true;
+  }
+  try {
+    login();
+    vuAuthenticated = true;
+    return true;
+  } catch (err) {
+    console.error(`VU ${__VU}: falha ao autenticar: ${err.message}`);
+    return false;
+  }
+}
+
+/**
+ * Remove todos os livros já criados nesta execução de setup() antes de
+ * relançar o erro original — teardown() nunca roda quando setup() lança, e
+ * agora há até VUS livros órfãos possíveis (um por VU já provisionada), não
+ * só um. Loga quais limpezas falharam (só bookId + status HTTP, nunca
+ * sessão/CSRF) para permitir limpeza manual pontual em vez de exigir varrer
+ * tudo que casa com LOADTEST-.
+ */
+function cleanupBooks(bookIds, originalError) {
+  console.error(`setup() falhou após criar ${bookIds.length} livro(s) sintético(s): ${originalError.message}`);
+  const failedCleanups = [];
+  bookIds.forEach((bookId) => {
+    const cleanupRes = http.del(`${BASE}/api/books/${bookId}`, null, {
+      headers: jsonHeaders(),
+      tags: { operation: 'setup_cleanup_book', name: 'DELETE /api/books/{bookId}' },
+    });
+    if (cleanupRes.status !== 204) {
+      failedCleanups.push(`${bookId} (status ${cleanupRes.status})`);
+    }
+  });
+  if (failedCleanups.length) {
+    console.error(
+      `Limpeza automática NÃO removeu ${failedCleanups.length}/${bookIds.length} livro(s) órfão(s): ${failedCleanups.join(', ')}. ` +
+      `Limpeza manual necessária, veja loadtest/README.md.`
+    );
+  } else if (bookIds.length) {
+    console.error(`Limpeza automática removeu todos os ${bookIds.length} livro(s) órfão(s).`);
+  }
+  throw originalError;
+}
+
+/**
+ * setup() autentica só internamente (jar próprio de setup(), nunca
+ * devolvido) para provisionar 1 livro/seção/capítulo/cena por VU — cada VU
+ * autentica de novo, sozinha, na própria primeira iteração
+ * (ensureVuAuthenticated()). O retorno de setup() é só metadado não
+ * sensível ([{ bookId, sceneId }, ...]): nenhum cookie, header ou CSRF sai
+ * daqui, então nenhum caminho de summary do k6 — RESULT_PATH,
+ * --summary-export nativo ou K6_SUMMARY_EXPORT — consegue vazar sessão,
+ * nem mesmo o caminho nativo que ignora handleSummary() por completo.
+ */
+export function setup() {
+  if (!LOGIN_PASSWORD) {
+    throw new Error('LOAD_TEST_PASSWORD não definida. Nunca versione a senha; exporte a variável de ambiente antes de rodar (ver loadtest/README.md).');
+  }
+
+  const ping = http.get(`${BASE}/ping`, { tags: { operation: 'smoke', name: 'GET /ping' } });
+  if (ping.status !== 200) {
+    throw new Error(`Smoke check falhou: GET /ping retornou ${ping.status}. Suba o ambiente antes de rodar a carga.`);
+  }
+
+  login();
 
   const runId = `${Date.now().toString(36)}${Math.floor(Math.random() * 1e6).toString(36)}`;
-  const marker = `LOADTEST-${runId}`;
 
-  const bookRes = http.post(
-    `${BASE}/api/books`,
-    JSON.stringify({ title: marker, status: 'WRITING', targetWordCount: 1000 }),
-    { headers: jsonHeaders(authHeaders), tags: { operation: 'setup_create_book', name: 'POST /api/books' } }
-  );
-  if (bookRes.status !== 201) {
-    throw new Error(`Criação do livro sintético falhou com status ${bookRes.status}.`);
-  }
-  const bookId = bookRes.json('id');
-
-  // A partir daqui o livro já existe: qualquer falha abaixo precisa limpar
-  // esse livro órfão antes de reprovar o teste, porque teardown() nunca roda
-  // quando setup() lança.
-  let sceneIds;
+  // Um livro por VU (nunca compartilhado): cada VU edita seu próprio
+  // livro/seção/capítulo/cena, como sessões independentes do mesmo autor.
+  // Um livro único faria todo save_scene serializar no lock pessimista de
+  // linha do livro (SceneService.updateContent ->
+  // BookAccessService.requireBookEditAccessForUpdate ->
+  // BookRepository.findByIdAndTenantIdForUpdate), medindo contenção do
+  // harness, não latência real de escritas concorrentes de usuários
+  // diferentes.
+  const createdBookIds = [];
+  const resources = [];
   try {
-    const sectionRes = http.post(
-      `${BASE}/api/books/${bookId}/sections`,
-      JSON.stringify({ title: `${marker}-section`, type: 'PART', sortOrder: 0 }),
-      { headers: jsonHeaders(authHeaders), tags: { operation: 'setup_create_section', name: 'POST /api/books/{bookId}/sections' } }
-    );
-    if (sectionRes.status !== 201) {
-      throw new Error(`Criação da seção sintética falhou com status ${sectionRes.status}.`);
-    }
-    const sectionId = sectionRes.json('id');
-
-    const chapterRes = http.post(
-      `${BASE}/api/sections/${sectionId}/chapters`,
-      JSON.stringify({ title: `${marker}-chapter`, sortOrder: 0 }),
-      { headers: jsonHeaders(authHeaders), tags: { operation: 'setup_create_chapter', name: 'POST /api/sections/{sectionId}/chapters' } }
-    );
-    if (chapterRes.status !== 201) {
-      throw new Error(`Criação do capítulo sintético falhou com status ${chapterRes.status}.`);
-    }
-    const chapterId = chapterRes.json('id');
-
-    // Uma cena por VU máximo, para que cada VU escreva sempre na própria cena.
-    sceneIds = [];
     for (let i = 0; i < VUS; i++) {
+      const marker = `LOADTEST-${runId}-vu${i + 1}`;
+
+      const bookRes = http.post(
+        `${BASE}/api/books`,
+        JSON.stringify({ title: marker, status: 'WRITING', targetWordCount: 1000 }),
+        { headers: jsonHeaders(), tags: { operation: 'setup_create_book', name: 'POST /api/books' } }
+      );
+      if (bookRes.status !== 201) {
+        throw new Error(`Criação do livro sintético ${i + 1}/${VUS} falhou com status ${bookRes.status}.`);
+      }
+      const bookId = bookRes.json('id');
+      createdBookIds.push(bookId);
+
+      const sectionRes = http.post(
+        `${BASE}/api/books/${bookId}/sections`,
+        JSON.stringify({ title: `${marker}-section`, type: 'PART', sortOrder: 0 }),
+        { headers: jsonHeaders(), tags: { operation: 'setup_create_section', name: 'POST /api/books/{bookId}/sections' } }
+      );
+      if (sectionRes.status !== 201) {
+        throw new Error(`Criação da seção sintética ${i + 1}/${VUS} falhou com status ${sectionRes.status}.`);
+      }
+      const sectionId = sectionRes.json('id');
+
+      const chapterRes = http.post(
+        `${BASE}/api/sections/${sectionId}/chapters`,
+        JSON.stringify({ title: `${marker}-chapter`, sortOrder: 0 }),
+        { headers: jsonHeaders(), tags: { operation: 'setup_create_chapter', name: 'POST /api/sections/{sectionId}/chapters' } }
+      );
+      if (chapterRes.status !== 201) {
+        throw new Error(`Criação do capítulo sintético ${i + 1}/${VUS} falhou com status ${chapterRes.status}.`);
+      }
+      const chapterId = chapterRes.json('id');
+
       const sceneRes = http.post(
         `${BASE}/api/chapters/${chapterId}/scenes`,
-        JSON.stringify({ title: `${marker}-scene-${i + 1}`, sortOrder: i }),
-        { headers: jsonHeaders(authHeaders), tags: { operation: 'setup_create_scene', name: 'POST /api/chapters/{chapterId}/scenes' } }
+        JSON.stringify({ title: `${marker}-scene`, sortOrder: 0 }),
+        { headers: jsonHeaders(), tags: { operation: 'setup_create_scene', name: 'POST /api/chapters/{chapterId}/scenes' } }
       );
       if (sceneRes.status !== 201) {
         throw new Error(`Criação da cena sintética ${i + 1}/${VUS} falhou com status ${sceneRes.status}.`);
       }
-      sceneIds.push(sceneRes.json('id'));
+
+      resources.push({ bookId, sceneId: sceneRes.json('id') });
     }
   } catch (err) {
-    cleanupOrphanedBook(authHeaders, bookId, marker, err);
+    cleanupBooks(createdBookIds, err);
   }
 
-  console.log(`Setup concluído: livro ${marker} (${bookId}) com ${sceneIds.length} cena(s).`);
-
-  return { authHeaders, bookId, runId, marker, sceneIds };
+  console.log(`Setup concluído: ${resources.length} livro(s) sintético(s) (1 por VU, runId ${runId}).`);
+  return resources;
 }
 
 function thinkTime() {
@@ -326,19 +405,35 @@ function thinkTime() {
 }
 
 /**
- * list_books, load_outline e load_scene são pré-requisitos sequenciais do
- * fluxo real (não dá para abrir uma cena sem antes navegar até o outline, e
- * não dá para chegar no outline sem antes listar os livros). Uma falha em
- * qualquer um encerra a iteração imediatamente: nenhuma etapa seguinte roda,
- * e em particular nenhum PATCH é enviado usando um estado que o VU nunca
+ * Autenticação (uma vez por VU) e depois list_books/load_outline/load_scene
+ * são pré-requisitos sequenciais do fluxo real (não dá para abrir uma cena
+ * sem antes navegar até o outline, e não dá para chegar no outline sem
+ * antes listar os livros, nem fazer nada sem sessão). Uma falha em qualquer
+ * um encerra a iteração imediatamente: nenhuma etapa seguinte roda, e em
+ * particular nenhum PATCH é enviado usando um estado que o VU nunca
  * confirmou ter lido — uma falha de leitura não pode virar tráfego de
  * escrita nem distorcer a latência/erro de save_scene.
+ *
+ * Cada VU opera exclusivamente sobre o livro/cena no índice correspondente
+ * a __VU (`data[__VU - 1]`), criados 1:1 por setup() — nunca um recurso
+ * compartilhado com outra VU.
  */
 export default function (data) {
-  const { authHeaders, bookId, marker, sceneIds } = data;
+  if (!ensureVuAuthenticated()) {
+    sleep(thinkTime());
+    return;
+  }
+
+  const resource = data[__VU - 1];
+  if (!resource) {
+    console.error(`VU ${__VU}: nenhum livro provisionado por setup() (criou ${data.length}, VUS=${VUS}).`);
+    sleep(thinkTime());
+    return;
+  }
+  const { bookId, sceneId } = resource;
 
   const listRes = http.get(`${BASE}/api/books`, {
-    headers: jsonHeaders(authHeaders),
+    headers: jsonHeaders(),
     tags: { operation: 'list_books', name: 'GET /api/books' },
   });
   if (!check(listRes, { 'list_books status 200': (r) => r.status === 200 })) {
@@ -347,7 +442,7 @@ export default function (data) {
   }
 
   const outlineRes = http.get(`${BASE}/api/books/${bookId}/outline`, {
-    headers: jsonHeaders(authHeaders),
+    headers: jsonHeaders(),
     tags: { operation: 'load_outline', name: 'GET /api/books/{bookId}/outline' },
   });
   if (!check(outlineRes, { 'load_outline status 200': (r) => r.status === 200 })) {
@@ -355,15 +450,12 @@ export default function (data) {
     return;
   }
 
-  // Uma cena fixa por VU (índice estável em __VU), nunca compartilhada entre VUs.
-  const sceneId = sceneIds[(__VU - 1) % sceneIds.length];
-
   // A revisão vem sempre desta leitura, nunca de um cache local: assim uma
   // falha ambígua no PATCH anterior (commitou no servidor mas a resposta se
   // perdeu, por exemplo) nunca produz uma sequência de conflitos de revisão
   // artificiais — a próxima escrita sempre parte do estado real do servidor.
   const sceneRes = http.get(`${BASE}/api/scenes/${sceneId}`, {
-    headers: jsonHeaders(authHeaders),
+    headers: jsonHeaders(),
     tags: { operation: 'load_scene', name: 'GET /api/scenes/{sceneId}' },
   });
   if (!check(sceneRes, { 'load_scene status 200': (r) => r.status === 200 })) {
@@ -372,7 +464,7 @@ export default function (data) {
   }
   const revision = sceneRes.json('contentRevision');
 
-  const contentText = `${marker} conteúdo sintético VU${__VU} iter${__ITER} ${Date.now()}`;
+  const contentText = `LOADTEST conteúdo sintético VU${__VU} iter${__ITER} ${Date.now()}`;
   const saveRes = http.patch(
     `${BASE}/api/scenes/${sceneId}/content`,
     JSON.stringify({
@@ -385,48 +477,59 @@ export default function (data) {
       expectedContentRevision: revision,
       operationId: uuidv4(),
     }),
-    { headers: jsonHeaders(authHeaders), tags: { operation: 'save_scene', name: 'PATCH /api/scenes/{sceneId}/content' } }
+    { headers: jsonHeaders(), tags: { operation: 'save_scene', name: 'PATCH /api/scenes/{sceneId}/content' } }
   );
   check(saveRes, { 'save_scene status 200': (r) => r.status === 200 });
 
   sleep(thinkTime());
 }
 
+/**
+ * Reautentica no próprio contexto de teardown() — não reaproveita a sessão
+ * de nenhuma VU nem a de setup() (que já terminou e cujo jar não existe
+ * mais neste ponto) — antes de apagar todos os livros criados. Reprova a
+ * execução (lança) se qualquer DELETE não voltar 204: um teardown que só
+ * loga deixaria livros LOADTEST- para trás sem que nenhum threshold
+ * acusasse nada, já que essas chamadas acontecem fora do loop de VUs
+ * medido.
+ */
 export function teardown(data) {
-  const res = http.del(`${BASE}/api/books/${data.bookId}`, null, {
-    headers: jsonHeaders(data.authHeaders),
-    tags: { operation: 'teardown_delete_book', name: 'DELETE /api/books/{bookId}' },
+  login();
+
+  const failed = [];
+  data.forEach(({ bookId }) => {
+    const res = http.del(`${BASE}/api/books/${bookId}`, null, {
+      headers: jsonHeaders(),
+      tags: { operation: 'teardown_delete_book', name: 'DELETE /api/books/{bookId}' },
+    });
+    if (res.status !== 204) {
+      failed.push(`${bookId} (status ${res.status})`);
+    }
   });
-  if (res.status !== 204) {
-    // Reprova a execução em vez de só registrar: um teardown que falha
-    // silenciosamente deixa o livro LOADTEST- para trás e contamina medições
-    // futuras sem que `http_req_failed`/`checks` acusem nada, já que essa
-    // chamada acontece fora do loop de VUs medido.
+
+  if (failed.length) {
     throw new Error(
-      `Teardown falhou: DELETE /api/books/${data.bookId} retornou ${res.status} (esperado 204). ` +
-      `Livro sintético ${data.marker} não removido — limpeza manual necessária, veja loadtest/README.md.`
+      `Teardown falhou: ${failed.length}/${data.length} livro(s) não removido(s): ${failed.join(', ')} ` +
+      `(esperado 204 em cada). Limpeza manual necessária, veja loadtest/README.md.`
     );
   }
-  console.log(`Teardown concluído: livro ${data.marker} (${data.bookId}) removido.`);
+  console.log(`Teardown concluído: ${data.length} livro(s) removido(s).`);
 }
 
 /**
- * Mantém só o que é seguro versionar/ler no terminal: `setup_data` inclui o
- * retorno inteiro de setup(), então sem isto o cookie de sessão e o token
- * CSRF da execução iriam para qualquer summary (stdout ou arquivo), inclusive
- * quando um threshold falha. Allowlist, não denylist — um campo novo que
- * alguém adicionar ao retorno de setup() no futuro fica de fora por padrão
- * em vez de vazar por omissão.
+ * setup_data já não carrega segredo nenhum — é só [{ bookId, sceneId }, ...]
+ * — mas o allowlist continua aqui como defesa em profundidade: se um campo
+ * sensível for adicionado ao retorno de setup() no futuro por engano, é esta
+ * função (não a disciplina de quem editar setup()) que barra o vazamento
+ * para qualquer summary, terminal ou arquivo.
  */
 function redactSummary(data) {
   const clone = JSON.parse(JSON.stringify(data));
-  if (clone.setup_data) {
-    clone.setup_data = {
-      runId: clone.setup_data.runId,
-      marker: clone.setup_data.marker,
-      bookId: clone.setup_data.bookId,
-      sceneCount: Array.isArray(clone.setup_data.sceneIds) ? clone.setup_data.sceneIds.length : undefined,
-    };
+  if (Array.isArray(clone.setup_data)) {
+    clone.setup_data = clone.setup_data.map((r) => ({
+      bookId: r && r.bookId,
+      sceneId: r && r.sceneId,
+    }));
   }
   return clone;
 }
@@ -479,8 +582,12 @@ function renderShortSummary(data) {
 }
 
 // Substitui `--summary-export` + sanitização manual: definir handleSummary()
-// assume o controle de toda a saída do k6 (inclusive o texto no terminal),
-// então a redação acontece uma vez aqui e vale para qualquer destino.
+// assume o controle da saída do k6 gerada por ELE (terminal e RESULT_PATH),
+// então a redação acontece uma vez aqui e vale para os dois. Isso NÃO cobre
+// o `--summary-export`/`K6_SUMMARY_EXPORT` nativos do k6 (que ignoram
+// handleSummary() e escrevem o resumo bruto por conta própria) — por isso a
+// proteção real contra esses dois caminhos é setup() nunca devolver segredo
+// nenhum (ver comentário em setup()), não este redactSummary().
 export function handleSummary(data) {
   const redacted = redactSummary(data);
   const outputs = {
