@@ -28,6 +28,11 @@ public final class RegistrationMessages {
     public static final String TOO_MANY_REGISTRATION_ATTEMPTS =
             "Muitas tentativas de cadastro. Aguarde um momento e tente novamente.";
 
+    /** Registration is refused, not queued or merged, for a caller who already holds a session:
+     *  creating a second account from an authenticated session is not a supported flow. */
+    public static final String ALREADY_AUTHENTICATED =
+            "Você já está conectado. Saia da conta atual para cadastrar uma nova.";
+
     private RegistrationMessages() {
     }
 }

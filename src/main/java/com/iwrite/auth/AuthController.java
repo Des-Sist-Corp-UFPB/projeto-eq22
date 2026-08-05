@@ -3,6 +3,7 @@ package com.iwrite.auth;
 import com.iwrite.auth.dto.AuthenticatedUserResponse;
 import com.iwrite.auth.dto.LoginRequest;
 import com.iwrite.auth.dto.RegisterRequest;
+import com.iwrite.common.exception.ConflictException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.servlet.http.HttpSession;
@@ -118,6 +119,13 @@ public class AuthController {
      * behind. Re-authenticating rather than hand-building the response is also what guarantees the
      * session has the identical contract as one produced by {@code /api/auth/login}.
      *
+     * <p>Refused up front, before the synchronization is even registered, for a caller who already
+     * holds an authenticated session: public registration only ever starts a brand-new identity, and
+     * letting it run over one that already exists would rotate the caller's own session id and, on
+     * any failure, risk tearing that pre-existing session down for a mistake ({@code discardPartialSession}
+     * below is only ever safe to invoke against a session this method itself touched). The caller
+     * must log out first.
+     *
      * <p>A transaction rollback only undoes the database side; it does not by itself undo a session
      * id already rotated by {@link #establishSession} or a {@link SecurityContext} already installed
      * on this thread. The {@link TransactionSynchronization} below is what erases both whenever the
@@ -133,13 +141,24 @@ public class AuthController {
             HttpServletRequest httpRequest,
             HttpServletResponse httpResponse
     ) {
+        if (isAuthenticatedPrincipal()) {
+            throw new ConflictException(RegistrationMessages.ALREADY_AUTHENTICATED);
+        }
+
         registrationRateLimiter.checkOrigin(clientAddressResolver.resolve(httpRequest));
+
+        // Captured before anything below can create or rotate a session, so the rollback callback
+        // can tell "this session already existed" from "this session is what registration made" —
+        // the only thing that tells the two apart, since neither the request nor the transaction
+        // status says which session, if any, belongs to this attempt.
+        HttpSession sessionBeforeRegistration = httpRequest.getSession(false);
+        String preexistingSessionId = sessionBeforeRegistration != null ? sessionBeforeRegistration.getId() : null;
 
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
             @Override
             public void afterCompletion(int status) {
                 if (status != TransactionSynchronization.STATUS_COMMITTED) {
-                    discardPartialSession(httpRequest);
+                    discardPartialSession(httpRequest, preexistingSessionId);
                 }
             }
         });
@@ -153,15 +172,34 @@ public class AuthController {
         return establishSession(authentication, httpRequest, httpResponse);
     }
 
-    /** Invalidates whatever HTTP session {@link #establishSession} may have started and clears the
-     *  security context this thread just installed — the non-database half of rolling registration
-     *  back. A no-op when nothing got that far yet (e.g. {@code authenticate} failed first).
-     *  {@code invalidate} can race {@link GlobalExceptionHandler#handleInvalidSession}, which also
-     *  invalidates the same session for a {@code SessionAuthenticationException} thrown here — the
-     *  second caller finds it already gone, which is fine, not a state to fail on. */
-    private void discardPartialSession(HttpServletRequest httpRequest) {
+    /** A caller counts as already authenticated only if the security context carries IWrite's own
+     *  principal — the same test {@link com.iwrite.user.context.AuthenticatedCurrentUserProvider}
+     *  uses — so the default anonymous authentication Spring Security installs for every unauthenticated
+     *  request never trips this check. */
+    private boolean isAuthenticatedPrincipal() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        return authentication != null
+                && authentication.isAuthenticated()
+                && authentication.getPrincipal() instanceof IWriteUserDetails;
+    }
+
+    /**
+     * Invalidates the HTTP session only if it is not the one that already existed when {@link
+     * #register} started — i.e. only a session this registration attempt itself created or rotated
+     * (via {@link #establishSession}) — and always clears the security context this thread just
+     * installed. A no-op on the session side when nothing got that far yet (e.g. {@code authenticate}
+     * failed first) or when the caller's own pre-existing session was never touched; comparing ids
+     * rather than a flag set before {@link #establishSession} runs is what still catches the
+     * in-between case where session id rotation happened but the subsequent context save did not.
+     * {@code invalidate} can race {@link GlobalExceptionHandler#handleInvalidSession}, which also
+     * invalidates the same session for a {@code SessionAuthenticationException} thrown here — the
+     * second caller finds it already gone, which is fine, not a state to fail on.
+     */
+    private void discardPartialSession(HttpServletRequest httpRequest, String preexistingSessionId) {
         HttpSession session = httpRequest.getSession(false);
-        if (session != null) {
+        boolean sessionCreatedOrRotatedByRegistration =
+                session != null && !session.getId().equals(preexistingSessionId);
+        if (sessionCreatedOrRotatedByRegistration) {
             try {
                 session.invalidate();
             } catch (IllegalStateException alreadyInvalidated) {
