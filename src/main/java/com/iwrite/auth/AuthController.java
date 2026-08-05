@@ -2,8 +2,10 @@ package com.iwrite.auth;
 
 import com.iwrite.auth.dto.AuthenticatedUserResponse;
 import com.iwrite.auth.dto.LoginRequest;
+import com.iwrite.auth.dto.RegisterRequest;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.BadCredentialsException;
@@ -36,24 +38,30 @@ public class AuthController {
 
     private final AuthenticationManager authenticationManager;
     private final AuthSessionService authSessionService;
+    private final RegistrationService registrationService;
     private final SecurityContextRepository securityContextRepository;
     private final SessionAuthenticationStrategy sessionAuthenticationStrategy;
     private final LoginRateLimiter loginRateLimiter;
+    private final RegistrationRateLimiter registrationRateLimiter;
     private final ClientAddressResolver clientAddressResolver;
 
     public AuthController(
             AuthenticationManager authenticationManager,
             AuthSessionService authSessionService,
+            RegistrationService registrationService,
             SecurityContextRepository securityContextRepository,
             SessionAuthenticationStrategy sessionAuthenticationStrategy,
             LoginRateLimiter loginRateLimiter,
+            RegistrationRateLimiter registrationRateLimiter,
             ClientAddressResolver clientAddressResolver
     ) {
         this.authenticationManager = authenticationManager;
         this.authSessionService = authSessionService;
+        this.registrationService = registrationService;
         this.securityContextRepository = securityContextRepository;
         this.sessionAuthenticationStrategy = sessionAuthenticationStrategy;
         this.loginRateLimiter = loginRateLimiter;
+        this.registrationRateLimiter = registrationRateLimiter;
         this.clientAddressResolver = clientAddressResolver;
     }
 
@@ -82,7 +90,8 @@ public class AuthController {
                 throw new BadCredentialsException("Missing credentials");
             }
             authentication = authenticationManager.authenticate(
-                    UsernamePasswordAuthenticationToken.unauthenticated(request.email(), request.password()));
+                    UsernamePasswordAuthenticationToken.unauthenticated(
+                            EmailNormalizer.normalize(request.email()), request.password()));
         } catch (AuthenticationException e) {
             // The reservation stays spent: a real failure must keep counting against the account's
             // budget, and refunding here would let the same unit be spent twice concurrently.
@@ -94,10 +103,46 @@ public class AuthController {
         // successful logins.
         reservation.refund();
 
+        return establishSession(authentication, httpRequest, httpResponse);
+    }
+
+    /**
+     * Creates the personal workspace transactionally ({@link RegistrationService}), then
+     * authenticates through the exact same {@link AuthenticationManager} path {@link #login} uses,
+     * against the credential it just persisted — this is what guarantees the returned session has
+     * the identical contract as one produced by {@code /api/auth/login}, rather than a hand-built
+     * copy that could drift from it.
+     */
+    @PostMapping("/register")
+    public AuthenticatedUserResponse register(
+            @Valid @RequestBody RegisterRequest request,
+            HttpServletRequest httpRequest,
+            HttpServletResponse httpResponse
+    ) {
+        registrationRateLimiter.checkOrigin(clientAddressResolver.resolve(httpRequest));
+        registrationService.register(request);
+
+        String email = EmailNormalizer.normalize(request.email());
+        Authentication authentication = authenticationManager.authenticate(
+                UsernamePasswordAuthenticationToken.unauthenticated(email, request.password()));
+
+        return establishSession(authentication, httpRequest, httpResponse);
+    }
+
+    /**
+     * Rotates the session id, persists the {@link SecurityContext} (Spring Security 6 no longer
+     * does this implicitly — {@code requireExplicitSave} — so skipping it would leave the very next
+     * request anonymous), and returns the session payload. Shared by {@link #login} and
+     * {@link #register}: both end the same way, with a freshly authenticated principal that needs
+     * a real, persisted session built for it.
+     */
+    private AuthenticatedUserResponse establishSession(
+            Authentication authentication,
+            HttpServletRequest httpRequest,
+            HttpServletResponse httpResponse
+    ) {
         sessionAuthenticationStrategy.onAuthentication(authentication, httpRequest, httpResponse);
 
-        // Spring Security 6 no longer persists the context implicitly (requireExplicitSave), so
-        // without this save the login would succeed and the very next request would be anonymous.
         SecurityContext context = SecurityContextHolder.createEmptyContext();
         context.setAuthentication(authentication);
         SecurityContextHolder.setContext(context);

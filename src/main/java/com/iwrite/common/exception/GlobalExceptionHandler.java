@@ -2,6 +2,8 @@ package com.iwrite.common.exception;
 
 import com.iwrite.auth.AuthMessages;
 import com.iwrite.auth.LoginRateLimitExceededException;
+import com.iwrite.auth.RegistrationMessages;
+import com.iwrite.auth.RegistrationRateLimitExceededException;
 import com.iwrite.llm.gateway.LlmExecutionException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpSession;
@@ -94,6 +96,12 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(LoginRateLimitExceededException.class)
     public ResponseEntity<ApiErrorResponse> handleLoginRateLimited(LoginRateLimitExceededException exception) {
         return buildResponse(HttpStatus.TOO_MANY_REQUESTS, List.of(AuthMessages.TOO_MANY_LOGIN_ATTEMPTS));
+    }
+
+    /** Registration's own budget, tracked separately from {@link #handleLoginRateLimited}. */
+    @ExceptionHandler(RegistrationRateLimitExceededException.class)
+    public ResponseEntity<ApiErrorResponse> handleRegistrationRateLimited(RegistrationRateLimitExceededException exception) {
+        return buildResponse(HttpStatus.TOO_MANY_REQUESTS, List.of(RegistrationMessages.TOO_MANY_REGISTRATION_ATTEMPTS));
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)

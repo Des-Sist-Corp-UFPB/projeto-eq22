@@ -124,6 +124,13 @@ iwrite:
       max-attempts-per-account: ${IWRITE_LOGIN_RATE_LIMIT_MAX_PER_ACCOUNT:8}
       max-tracked-keys: ${IWRITE_LOGIN_RATE_LIMIT_MAX_TRACKED_KEYS:10000}
       window: ${IWRITE_LOGIN_RATE_LIMIT_WINDOW:1m}
+    # Own budget for POST /api/auth/register; see RegistrationRateLimiter. Origin only — a
+    # registration always targets a brand-new email, so an account dimension would not add
+    # protection an origin dimension does not already provide.
+    registration-rate-limit:
+      max-attempts-per-origin: ${IWRITE_REGISTRATION_RATE_LIMIT_MAX_PER_ORIGIN:10}
+      max-tracked-keys: ${IWRITE_REGISTRATION_RATE_LIMIT_MAX_TRACKED_KEYS:10000}
+      window: ${IWRITE_REGISTRATION_RATE_LIMIT_WINDOW:1m}
   current-user:
     development:
       enabled: ${IWRITE_DEVELOPMENT_CURRENT_USER_ENABLED:false}

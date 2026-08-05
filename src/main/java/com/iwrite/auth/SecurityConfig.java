@@ -57,7 +57,7 @@ public class SecurityConfig {
                     }
                 })
                 .authorizeHttpRequests(authorize -> {
-                    authorize.requestMatchers("/ping", "/api/auth/login", "/api/auth/csrf").permitAll();
+                    authorize.requestMatchers("/ping", "/api/auth/login", "/api/auth/register", "/api/auth/csrf").permitAll();
                     if (mcpServerEnabled) {
                         // Deliberately conditional: when MCP is disabled — the default, and the
                         // posture for the demo and for production — these paths are not mapped and
