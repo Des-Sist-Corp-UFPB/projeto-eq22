@@ -42,6 +42,13 @@ RUN apk add --no-cache openjdk21-jre
 WORKDIR /app
 
 ENV NODE_ENV=production
+# Esta imagem serve o frontend na própria porta 8080, então o navegador manda
+# Origin: http://localhost:8080 (ou 127.0.0.1:8080). O default global do
+# WebConfig (localhost:3000) é para o Compose separado, onde o frontend roda
+# em outra origem — aqui ele rejeitaria login/mutations com 403 Invalid CORS.
+# `ENV` só define um default: um `-e APP_CORS_ALLOWED_ORIGINS=...` em runtime
+# ainda vence. Um domínio real precisa ser informado no deployment de produção.
+ENV APP_CORS_ALLOWED_ORIGINS="http://localhost:8080,http://127.0.0.1:8080"
 
 COPY --from=backend-build \
     /backend/target/iwrite-backend-0.0.1-SNAPSHOT.jar \
