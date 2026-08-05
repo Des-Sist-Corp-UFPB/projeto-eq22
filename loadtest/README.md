@@ -497,16 +497,17 @@ silenciosamente — ver [§3](#3-autenticação).
 ## 9. Resultados obtidos
 
 Execuções reais, ambiente local isolado (ver limitações abaixo). **Estes
-números são de um cenário diferente do da medição anterior** — 1 livro por
-VU em vez de um único livro compartilhado, e sessão própria por VU em vez de
-uma sessão de `setup()` repassada a todas — então não são comparáveis
-diretamente aos números antigos deste README; a mudança de cenário por si só
-já altera o comportamento medido, especialmente em `save_scene`.
+números são de um cenário diferente da medição anterior deste README** — o
+`PATCH` bem-sucedido agora dispara um `GET` extra do outline
+(`refresh_outline_after_save`, [§1](#1-o-que-o-teste-faz)), espelhando o
+`invalidateQueries` do frontend real — então os commits `16d2ef6`/`c206b29`
+(4 operações por iteração) ficam só como evidência histórica, não como a
+medição final desta PR.
 
-- **`measured_code_commit`**: `16d2ef638701cb939d6ac4e49f51c0325869d3d3` — o
+- **`measured_code_commit`**: `884701abde423b9ffa117a09b660c12e0d83e7e5` — o
   commit de `loadtest/carga.js` exatamente como executado para gerar os
   números abaixo, com working tree limpo, sem nenhuma mudança de código
-  depois. Reproduzir: `git checkout 16d2ef6 -- loadtest/carga.js`.
+  depois. Reproduzir: `git checkout 884701a -- loadtest/carga.js`.
 - **`evidence_commit`**: o commit imediatamente seguinte nesta branch, que só
   adiciona/atualiza `resultado.json`, `resultados/*.json` e este README — sem
   nenhuma mudança de comportamento do script. Hash exato na descrição da PR
@@ -518,73 +519,85 @@ Resumo comparativo completo, estruturado, em
 [`resultados/resultado-10vus.json`](resultados/resultado-10vus.json) e
 [`resultados/resultado-30vus.json`](resultados/resultado-30vus.json).
 
-**Execução completa** (todas as requisições — smoke, auth, setup, as 4
+**Execução completa** (todas as requisições — smoke, auth, setup, as 5
 operações principais e teardown):
 
-| | VUs | Duração | Requests | RPS global | p50 (ms) | p90 (ms) | p95 (ms) | p99 (ms) | Erros | Checks |
-|---|---|---|---|---|---|---|---|---|---|---|
-| Baseline | 10 | 3m (30s/2m/30s) | 7587 | 41.1 | 29.6 | 80.1 | 110.9 | 214.8 | 0% (0/7587) | 100% (7512/7512) |
-| Carga ampliada | 30 | 3m (30s/2m/30s) | 17667 | 96.2 | 64.2 | 208.2 | 302.7 | 507.4 | 0% (0/17667) | 100% (17452/17452) |
+| | VUs | Duração | Requests | RPS global | p50 (ms) | p90 (ms) | p95 (ms) | p99 (ms) | Erros | Checks | `vu_auth_success` |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| Baseline | 10 | 3m (30s/2m/30s) | 9520 | 52.0 | 16.8 | 66.7 | 87.9 | 145.5 | 0% (0/9520) | 100% (9445/9445) | 100% (10/10) |
+| Carga ampliada | 30 | 3m (30s/2m/30s) | 13170 | 70.3 | 154.3 | 488.6 | 666.9 | 1044.3 | 0% (0/13170) | 100% (12955/12955) | 100% (30/30) |
 
-Esses percentis incluem auth/setup/teardown — não são a latência do loop
-principal. Diferente da medição anterior, `auth_login` já não domina o `max`
-global: com uma sessão por VU (`VUS+1` logins por execução, não mais 1),
-só a primeira amostra carrega algum custo de warmup, e o restante já é
-bcrypt contra um backend aquecido — ver tabela de auth/setup/teardown
-abaixo. Para a latência do loop principal isolada, a tabela seguinte:
+`vu_auth_success` confirma exatamente uma autenticação bem-sucedida por VU
+nas duas execuções — nenhuma VU rodou sem sessão própria
+([§3](#3-autenticação)). Esses percentis incluem auth/setup/teardown — não
+são a latência do loop principal; para isso, a tabela seguinte.
 
 **Operações principais** (p95/p99 em ms, medidas só dentro do loop de VUs —
-sem misturar com auth/setup/teardown):
+sem misturar com auth/setup/teardown). `refresh_outline_after_save` é nova
+nesta medição:
 
 | Operação | 10 VUs p95 | 10 VUs p99 | 30 VUs p95 | 30 VUs p99 |
 |---|---|---|---|---|
-| `list_books` | 173.4 | 290.7 | 405.5 | 671.5 |
-| `load_outline` | 49.4 | 91.4 | 242.9 | 425.8 |
-| `load_scene` | 43.5 | 76.1 | 201.8 | 347.2 |
-| `save_scene` | 125.1 | 215.2 | 313.8 | 522.1 |
+| `list_books` | 91.2 | 134.2 | 958.5 | 1308.6 |
+| `load_outline` | 25.1 | 39.1 | 692.4 | 990.0 |
+| `load_scene` | 23.4 | 37.4 | 498.2 | 843.2 |
+| `save_scene` | 139.6 | 179.6 | 609.8 | 1010.7 |
+| `refresh_outline_after_save` | 24.7 | 44.0 | 298.4 | 592.6 |
 
-Todos os thresholds passaram nas duas execuções. `save_scene` — que na
-medição anterior (livro único compartilhado) era a operação mais lenta e a
-única perto do teto — cai para bem abaixo das três leituras em 10 VUs
-(125.1ms vs. 385.1ms antes) e volta a ficar comparável a `list_books`/`load_outline`
-em 30 VUs: o efeito esperado de eliminar a serialização artificial no lock
-pessimista de linha de um único livro (ver "Gargalo" abaixo). Em troca,
-`list_books` se aproxima do teto em 30 VUs (p95 405.5ms, p99 671.5ms) — não
-por contenção de escrita, mas porque o cenário agora cria `VUS` livros no
-tenant do autor de teste, e listar/serializar essa coleção maior cresce com
-`VUS` por construção.
+Em cada execução, a contagem do check `refresh_outline_after_save status
+200` bate exatamente com `save_scene status 200` (1889/1889 em 10 VUs,
+2591/2591 em 30 VUs, zero falhas) — confirmando que o refetch só roda após
+um save bem-sucedido, nunca a mais nem a menos.
+
+Todos os thresholds passaram em 10 VUs. Em 30 VUs, **3 de 5 thresholds de
+operação principal falharam** (`list_books` p95 958.5ms, `load_outline` p95
+692.4ms, `save_scene` p95 609.8ms — todos acima do teto de 500ms;
+`load_scene` passou com margem mínima, 498.2ms; `refresh_outline_after_save`
+passou, 298.4ms). Essa execução específica de 30 VUs rodou sob contenção de
+host mais forte que a medição anterior — `crm-marketing-backend` chegou a
+~200% de CPU durante a execução, e outro worktree do IWrite (stack dev
+completa) também estava ativo na mesma máquina — então não é possível
+separar quanto da piora vem do `+1` requisição por iteração
+(`refresh_outline_after_save`) e quanto vem da contenção do host nesta
+rodada específica (ver "Limitações" e `resultado.json` →
+`comparacao_com_medicao_anterior_16d2ef6` para a comparação bruta com a
+medição anterior). `checks` (100%) e `http_req_failed` (0%) passaram nas
+duas execuções — nenhuma requisição falhou, só ficou mais lenta que o
+threshold.
 
 **Auth/setup/teardown** (fora do loop medido — `auth_csrf`/`auth_login`
-rodam `VUS+1` vezes; `setup_create_book/section/chapter/scene` e
-`teardown_delete_book` rodam `VUS` vezes, um livro por VU):
+rodam `VUS+2` vezes agora: setup + 1/VU + teardown; `setup_create_book/section/chapter/scene`
+e `teardown_delete_book` rodam `VUS` vezes, um livro por VU):
 
 | Operação | 10 VUs avg | 10 VUs p95 | 30 VUs avg | 30 VUs p95 |
 |---|---|---|---|---|
-| `auth_csrf` | 20.0ms | 55.0ms | 6.8ms | 10.8ms |
-| `auth_login` | 170.5ms | 263.5ms | 139.3ms | 414.3ms |
-| `setup_create_book` | 84.7ms | 137.7ms | 24.2ms | 42.5ms |
-| `setup_create_section` | 52.5ms | 84.6ms | 11.8ms | 20.8ms |
-| `setup_create_chapter` | 73.2ms | 135.5ms | 12.2ms | 21.3ms |
-| `setup_create_scene` | 94.3ms | 144.6ms | 24.4ms | 41.2ms |
-| `teardown_delete_book` | 48.5ms | 54.7ms | 34.2ms | 60.9ms |
+| `auth_csrf` | 7.5ms | 11.9ms | 9.0ms | 15.4ms |
+| `auth_login` | 109.2ms | 133.2ms | 176.7ms | 369.1ms |
+| `setup_create_book` | 62.5ms | 72.0ms | 43.2ms | 65.4ms |
+| `setup_create_section` | 40.2ms | 57.4ms | 19.9ms | 33.6ms |
+| `setup_create_chapter` | 46.6ms | 60.5ms | 23.2ms | 34.7ms |
+| `setup_create_scene` | 69.0ms | 91.0ms | 43.4ms | 61.0ms |
+| `teardown_delete_book` | 52.1ms | 67.1ms | 89.1ms | 138.3ms |
 
-**Gargalo principal:** já não é uma única operação dominante nas duas
-cargas. Em 10 VUs, todas as quatro operações principais têm folga confortável
-frente ao teto de 500ms. Em 30 VUs, `list_books` (p95 405.5ms) e `save_scene`
-(p95 313.8ms) são as mais perto do limite, por razões diferentes:
-`save_scene` continua sendo a única escrita do cenário (auditoria via
-`@AuditedOperation`, versionamento de `contentJson`/`contentText`, ledger de
-contagem de palavras — mais trabalho por requisição que uma leitura, mesmo
-sem a contenção do livro compartilhado); `list_books` cresce porque o
-cenário agora mantém `VUS` livros simultâneos no tenant do autor de teste
-(mais os do seed demo), e listar/serializar essa coleção maior é mais caro
-quanto maior `VUS`. Nenhum dos dois foi decomposto neste PR.
+**Gargalo principal:** em 10 VUs, todas as cinco operações principais têm
+folga confortável frente ao teto de 500ms. Em 30 VUs, `list_books` continua
+sendo a operação mais perto/acima do teto (já era a mais sensível a `VUS` na
+medição anterior, por construção do cenário — cresce com o tamanho da
+coleção de livros do tenant); nesta execução `load_outline` e `save_scene`
+também romperam o teto, num quadro dominado pela contenção de host desta
+rodada específica somada ao `+1` requisição/iteração do
+`refresh_outline_after_save`. Nenhum dos dois efeitos foi isolado neste PR
+— ver "Próxima ação recomendada".
 
 **Limitações desta execução:**
 - Rodada em uma stack Docker isolada só para este teste (`docker-compose -p
-  iwrite-k6`, portas remapeadas), na mesma máquina de desenvolvimento
-  concorrendo com um container não relacionado (`crm-marketing`) — os
-  números absolutos variam com a contenção do host no momento da execução.
+  iwrite-k6smoke`, container_name/portas remapeados via overlay não
+  versionado), na mesma máquina de desenvolvimento concorrendo com **outro
+  worktree do IWrite** (stack dev completa ativa, container `iwrite-db`) e
+  com um container não relacionado (`crm-marketing-backend`, que chegou a
+  ~200% de CPU durante a execução de 30 VUs) — contenção mais forte que a
+  medição anterior (16d2ef6), que não tinha essa concorrência adicional. Os
+  números absolutos de 30 VUs desta rodada devem ser lidos com essa ressalva.
 - Backend, Postgres e k6 rodam na mesma máquina (sem separação de rede/CPU
   entre gerador de carga e alvo), então parte da latência medida pode ser
   contenção local, não custo real de rede.
@@ -593,30 +606,32 @@ quanto maior `VUS`. Nenhum dos dois foi decomposto neste PR.
   30, esse custo pode se tornar o novo fator dominante antes mesmo de
   qualquer contenção real de escrita. Não investigado neste PR (paginação?
   índice? projeção mais enxuta na listagem?).
+- `refresh_outline_after_save` adiciona uma leitura de outline por iteração
+  bem-sucedida — em `VUS` alto, soma-se ao mesmo custo de listar/serializar
+  que já pressiona `list_books`/`load_outline`; não isolado quanto desse
+  aumento é esperado vs. atribuível à contenção do host nesta execução.
 - Sem OTel habilitado durante a execução (evita adicionar overhead de
-  instrumentação à medição); a decomposição do custo de `save_scene`/`list_books`
-  entre suas etapas internas não foi feita neste PR.
+  instrumentação à medição); a decomposição do custo de
+  `save_scene`/`list_books`/`load_outline` entre suas etapas internas não
+  foi feita neste PR.
 - `contentJson` sintético é um único parágrafo curto — não representa uma
   cena longa de verdade. `save_scene` sob um payload realisticamente maior
   tende a ser mais lento ainda que o medido aqui.
-- `IWRITE_LOGIN_RATE_LIMIT_MAX_PER_ACCOUNT`/`_ORIGIN` foram elevados só nesta
-  stack local isolada para acomodar `VUS+1` logins por execução — os
-  defaults de produção em `application.yml`/`.env.example` não foram
-  alterados. Nesta execução específica o ajuste veio de um overlay local não
-  versionado; reproduções posteriores devem usar o overlay versionado
-  [`docker-compose.loadtest.yml`](../docker-compose.loadtest.yml) (ver
-  [§2](#2-pré-requisitos)/[§3](#3-autenticação)), que aplica o mesmo ajuste
-  de forma reproduzível.
+- `IWRITE_LOADTEST_LOGIN_RATE_LIMIT` (overlay versionado
+  `docker-compose.loadtest.yml`) foi mantido no default (`1000`) nesta
+  execução — cobre folgadamente `VUS` até `998`; os defaults de produção em
+  `application.yml`/`.env.example` não foram alterados — ver
+  [§2](#2-pré-requisitos).
 
-**Próxima ação recomendada:** investigar o crescimento de `list_books` com o
-tamanho da coleção de livros do tenant antes de rodar com `VUS` bem maior
-que 30. Rodar o teste com OTel habilitado
-(`docker-compose.observability.yml`) e usar os traces correlacionados de
-`scene_content_save` e da consulta de `list_books` para decompor os dois
-custos. Vale também medir `save_scene` com um `contentJson` de tamanho mais
-realista (múltiplos parágrafos) e, dado que ambas as operações têm margem
-estreita em 30 VUs, rodar em hardware não compartilhado para obter um número
-de referência estável.
+**Próxima ação recomendada:** repetir 10/30 VUs em hardware não
+compartilhado (sem outro worktree do IWrite nem `crm-marketing` concorrendo)
+para isolar quanto da piora em 30 VUs vem do `refresh_outline_after_save`
+vs. da contenção de host desta execução específica. Investigar o
+crescimento de `list_books`/`load_outline` com o tamanho da coleção de
+livros do tenant antes de rodar com `VUS` bem maior que 30. Rodar o teste
+com OTel habilitado (`docker-compose.observability.yml`) e usar os traces
+correlacionados de `scene_content_save`, `list_books` e `load_outline` para
+decompor os três custos.
 
 ---
 
