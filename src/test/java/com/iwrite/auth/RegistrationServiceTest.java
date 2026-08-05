@@ -219,4 +219,105 @@ class RegistrationServiceTest {
         // by this exception actually propagating out of the method, not being swallowed.
         verifyNoInteractions(tenantRepository, membershipRepository, personaRepository);
     }
+
+    @Test
+    void displayNameCom255CaracteresEAceito() {
+        stubHappyPathCollaborators();
+        String displayName = "A".repeat(255);
+        RegisterRequest request = new RegisterRequest(displayName, " Nova@IWrite.local ", RAW_PASSWORD, RAW_PASSWORD, "writer", "America/Sao_Paulo");
+
+        service.register(request);
+
+        ArgumentCaptor<User> userCaptor = ArgumentCaptor.forClass(User.class);
+        verify(userRepository).saveAndFlush(userCaptor.capture());
+        assertThat(userCaptor.getValue().getDisplayName()).hasSize(255);
+    }
+
+    @Test
+    void displayNameCom256CaracteresRetorna400SemGravarNada() {
+        String displayName = "A".repeat(256);
+        RegisterRequest request = new RegisterRequest(displayName, "nova@iwrite.local", RAW_PASSWORD, RAW_PASSWORD, "writer", "America/Sao_Paulo");
+
+        assertThatThrownBy(() -> service.register(request))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessage(RegistrationMessages.DISPLAY_NAME_TOO_LONG);
+
+        verifyNoInteractions(userRepository, credentialRepository, tenantRepository, membershipRepository, personaRepository, timeZoneValidator);
+    }
+
+    @Test
+    void nomeDeTenantDerivadoNuncaExcede255CaracteresMesmoComDisplayNameNoLimite() {
+        stubHappyPathCollaborators();
+        // 254 chars: "Espaço de " (10 chars) + this displayName is 264 chars, forcing truncation
+        // of the derived tenant name while the user's own displayName stays whole.
+        String displayName = "A".repeat(254);
+        RegisterRequest request = new RegisterRequest(displayName, " Nova@IWrite.local ", RAW_PASSWORD, RAW_PASSWORD, "writer", "America/Sao_Paulo");
+
+        service.register(request);
+
+        ArgumentCaptor<User> userCaptor = ArgumentCaptor.forClass(User.class);
+        verify(userRepository).saveAndFlush(userCaptor.capture());
+        assertThat(userCaptor.getValue().getDisplayName()).hasSize(254);
+
+        ArgumentCaptor<Tenant> tenantCaptor = ArgumentCaptor.forClass(Tenant.class);
+        verify(tenantRepository).save(tenantCaptor.capture());
+        String tenantName = tenantCaptor.getValue().getName();
+        assertThat(tenantName.codePointCount(0, tenantName.length())).isLessThanOrEqualTo(255);
+        assertThat(tenantName).startsWith("Espaço de ");
+    }
+
+    @Test
+    void deriveTenantNameTruncaPorCodePointsSemCortarSurrogatePair() {
+        // U+1F600 ("😀") is a surrogate pair in UTF-16: 2 chars, 1 code point. 250 of them is 250
+        // code points (well past the 245 available after the 10-char prefix), so truncation must
+        // land on a code point boundary or the result would contain half a surrogate pair.
+        String emojiDisplayName = "😀".repeat(250);
+
+        String tenantName = RegistrationService.deriveTenantName(emojiDisplayName);
+
+        assertThat(tenantName.codePointCount(0, tenantName.length())).isEqualTo(255);
+        assertThat(tenantName).isEqualTo("Espaço de " + "😀".repeat(245));
+    }
+
+    @Test
+    void email255CaracteresEAceito() {
+        stubHappyPathCollaborators();
+        String longLocalPart = "n" + "a".repeat(241);
+        String email = longLocalPart + "@iwrite.local"; // 255 chars total
+        assertThat(email).hasSize(255);
+        when(userRepository.findByEmail(email)).thenReturn(Optional.empty());
+        RegisterRequest request = new RegisterRequest("Nova Autora", email, RAW_PASSWORD, RAW_PASSWORD, "writer", "America/Sao_Paulo");
+
+        service.register(request);
+
+        verify(userRepository).saveAndFlush(any(User.class));
+    }
+
+    @Test
+    void email256CaracteresRetorna400SemGravarNada() {
+        String longLocalPart = "n" + "a".repeat(242);
+        String email = longLocalPart + "@iwrite.local"; // 256 chars total
+        assertThat(email).hasSize(256);
+        RegisterRequest request = new RegisterRequest("Nova Autora", email, RAW_PASSWORD, RAW_PASSWORD, "writer", "America/Sao_Paulo");
+
+        assertThatThrownBy(() -> service.register(request))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessage(RegistrationMessages.EMAIL_TOO_LONG);
+
+        verifyNoInteractions(userRepository, credentialRepository, tenantRepository, membershipRepository, personaRepository, timeZoneValidator);
+    }
+
+    @Test
+    void violacaoDeIntegridadeNaoRelacionadaAUkUsersEmailNaoViraConflito() {
+        lenient().when(timeZoneValidator.validate("America/Sao_Paulo")).thenReturn(ZoneId.of("America/Sao_Paulo"));
+        when(userRepository.findByEmail("nova@iwrite.local")).thenReturn(Optional.empty());
+        DataIntegrityViolationException unrelated = new DataIntegrityViolationException("chk_some_other_constraint");
+        when(userRepository.saveAndFlush(any(User.class))).thenThrow(unrelated);
+
+        assertThatThrownBy(() -> service.register(validRequest()))
+                .isSameAs(unrelated);
+
+        // Never reported as a duplicate email, and nothing downstream is attempted either way.
+        verifyNoInteractions(credentialRepository, tenantRepository, membershipRepository, personaRepository);
+    }
 }

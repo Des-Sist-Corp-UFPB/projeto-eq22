@@ -375,6 +375,71 @@ class RegistrationIntegrationTest {
     }
 
     @Test
+    void displayNameCom255CaracteresEAceitoETenantNomeadoDerivadoRespeitaOLimite() throws Exception {
+        String email = uniqueEmail();
+        String displayName = "A".repeat(255);
+        Map<String, Object> body = registerBody(email, displayName, VALID_PASSWORD, VALID_PASSWORD, "WRITER", "America/Sao_Paulo");
+
+        mockMvc.perform(withCsrf(post("/api/auth/register"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(body)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.user.displayName").value(displayName));
+
+        User user = userRepository.findByEmail(email).orElseThrow();
+        assertThat(user.getDisplayName()).hasSize(255);
+        UUID tenantId = membershipRepository.findByUser_Id(user.getId()).get(0).getTenant().getId();
+        String tenantName = tenantRepository.findById(tenantId).orElseThrow().getName();
+        assertThat(tenantName.codePointCount(0, tenantName.length())).isLessThanOrEqualTo(255);
+    }
+
+    @Test
+    void displayNameCom256CaracteresRetorna400SemCriarNada() throws Exception {
+        String email = uniqueEmail();
+        String displayName = "A".repeat(256);
+        Map<String, Object> body = registerBody(email, displayName, VALID_PASSWORD, VALID_PASSWORD, "WRITER", "America/Sao_Paulo");
+
+        String responseBody = mockMvc.perform(withCsrf(post("/api/auth/register"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(body)))
+                .andExpect(status().isBadRequest())
+                .andReturn().getResponse().getContentAsString();
+
+        assertThat(responseBody).contains(RegistrationMessages.DISPLAY_NAME_TOO_LONG);
+        assertThat(userRepository.findByEmail(email)).isEmpty();
+    }
+
+    @Test
+    void email255CaracteresEAceito() throws Exception {
+        String email = emailOfExactLength(255);
+        assertThat(email).hasSize(255);
+        Map<String, Object> body = registerBody(email, "Alguém", VALID_PASSWORD, VALID_PASSWORD, "WRITER", "America/Sao_Paulo");
+
+        mockMvc.perform(withCsrf(post("/api/auth/register"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(body)))
+                .andExpect(status().isOk());
+
+        assertThat(userRepository.findByEmail(email)).isPresent();
+    }
+
+    @Test
+    void email256CaracteresRetorna400NuncaConflitoSemCriarNada() throws Exception {
+        String email = emailOfExactLength(256);
+        assertThat(email).hasSize(256);
+        Map<String, Object> body = registerBody(email, "Alguém", VALID_PASSWORD, VALID_PASSWORD, "WRITER", "America/Sao_Paulo");
+
+        String responseBody = mockMvc.perform(withCsrf(post("/api/auth/register"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(body)))
+                .andExpect(status().isBadRequest())
+                .andReturn().getResponse().getContentAsString();
+
+        assertThat(responseBody).contains(RegistrationMessages.EMAIL_TOO_LONG);
+        assertThat(userRepository.findByEmail(EmailNormalizer.normalize(email))).isEmpty();
+    }
+
+    @Test
     void usuarioLegadoEPersonaDeBackfillPermanecemIntactos() {
         Optional<User> legacyUser = userRepository.findByEmail("carlos.legacy@iwrite.local");
         assertThat(legacyUser).isPresent();
@@ -419,5 +484,14 @@ class RegistrationIntegrationTest {
 
     private String uniqueEmail() {
         return "registro-" + UUID.randomUUID() + "@iwrite.local";
+    }
+
+    /** A unique, syntactically valid email of exactly {@code totalLength} characters. */
+    private String emailOfExactLength(int totalLength) {
+        String domain = "@iwrite.local";
+        int localLength = totalLength - domain.length();
+        String unique = UUID.randomUUID().toString().replace("-", "");
+        String local = unique + "a".repeat(localLength - unique.length());
+        return local + domain;
     }
 }
