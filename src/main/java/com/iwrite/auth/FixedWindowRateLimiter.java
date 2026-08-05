@@ -2,6 +2,7 @@ package com.iwrite.auth;
 
 import java.time.Clock;
 import java.time.Duration;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -30,6 +31,12 @@ final class FixedWindowRateLimiter {
     // not, is there room after reclaiming only expired entries"), which a bare
     // ConcurrentHashMap.computeIfAbsent cannot express on its own. Ordinary get/increment/reset on
     // an *existing* key never takes this lock.
+    //
+    // Lock order (only one direction is ever taken, so the two locks can never deadlock against
+    // each other): a thread may hold admissionLock while acquiring a single Window's monitor (one
+    // at a time, in pruneExpired below), but reserve() never acquires admissionLock while holding a
+    // Window's monitor — it always releases the monitor first (falls out of the synchronized block)
+    // before looping back through statesGet(), which is the only path that can take admissionLock.
     private final Object admissionLock = new Object();
 
     FixedWindowRateLimiter(int maxAttempts, int maxTrackedKeys, Duration window, Clock clock) {
@@ -56,17 +63,27 @@ final class FixedWindowRateLimiter {
      * back safely later.
      */
     Reservation reserve(String key) {
-        Window state = statesGet(key);
-        if (state == null) {
-            return null;
-        }
-        synchronized (state) {
-            resetIfExpired(state);
-            if (state.count >= maxAttempts) {
+        while (true) {
+            Window state = statesGet(key);
+            if (state == null) {
                 return null;
             }
-            state.count++;
-            return new Reservation(state, state.generation);
+            synchronized (state) {
+                // A concurrent admitNewKey cleanup (see pruneExpired) may have evicted this exact
+                // instance from the map between statesGet() returning it and this thread acquiring
+                // its monitor. Reserving against that now-orphaned object would silently discard the
+                // reservation — nothing will ever read it back through the map again — so detect the
+                // mismatch and retry through statesGet() instead, which re-admits the key fresh.
+                if (states.get(key) != state) {
+                    continue;
+                }
+                resetIfExpired(state);
+                if (state.count >= maxAttempts) {
+                    return null;
+                }
+                state.count++;
+                return new Reservation(state, state.generation);
+            }
         }
     }
 
@@ -102,7 +119,7 @@ final class FixedWindowRateLimiter {
             }
             long now = clock.millis();
             if (states.size() >= maxTrackedKeys) {
-                states.entrySet().removeIf(entry -> now - entry.getValue().startMillis >= window.toMillis());
+                pruneExpired(now);
             }
             if (states.size() >= maxTrackedKeys) {
                 return null;
@@ -111,6 +128,31 @@ final class FixedWindowRateLimiter {
             created.startMillis = now;
             states.put(key, created);
             return created;
+        }
+    }
+
+    /**
+     * Called only while holding {@link #admissionLock}. Re-checks each candidate's expiration under
+     * its own monitor rather than trusting a bare read of {@code startMillis} (the previous
+     * {@code removeIf(entry -> now - entry.getValue().startMillis >= ...)} read it unsynchronized):
+     * a concurrent {@link #reserve} can be renewing that exact window at the same instant, and
+     * without the shared monitor there is no happens-before edge guaranteeing this thread observes
+     * the renewal rather than a stale, already-superseded value — which could otherwise evict a
+     * window a concurrent caller just legitimately extended.
+     *
+     * <p>{@code states.remove(key, candidate)} is the conditional two-argument form: it only removes
+     * the mapping if {@code candidate} is still exactly what the key maps to, so two concurrent
+     * prune passes (or a prune racing an admission that already replaced this key) can never double-
+     * remove or remove a newer window than the one just inspected.
+     */
+    private void pruneExpired(long now) {
+        for (Map.Entry<String, Window> entry : states.entrySet()) {
+            Window candidate = entry.getValue();
+            synchronized (candidate) {
+                if (now - candidate.startMillis >= window.toMillis()) {
+                    states.remove(entry.getKey(), candidate);
+                }
+            }
         }
     }
 

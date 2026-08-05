@@ -134,9 +134,84 @@ describe("RegisterForm", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
+  // Same code points PasswordPolicyTest uses on the backend — both sides must agree on exactly the
+  // same examples. Outside the BMP, so each is a surrogate pair in JS too; only a Unicode-aware
+  // (`u` flag) regex reads the pair back as one code point instead of two lone surrogates.
+  test("aceita letra fora do BMP como único caractere classificado como letra", async () => {
+    // U+10400 DESERET CAPITAL LETTER LONG A — no BMP letters anywhere else in the password.
+    const password = "123456789𐐀";
+    renderWithClient(<RegisterForm />);
+    fillForm({ password, passwordConfirmation: password });
+
+    submit();
+
+    await waitFor(() => expect(authApi.register).toHaveBeenCalled());
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  test("aceita dígito fora do BMP como único caractere classificado como dígito", async () => {
+    // U+1D7CE MATHEMATICAL BOLD DIGIT ZERO — no BMP digits anywhere else in the password.
+    const password = "abcdefghij𝟎";
+    renderWithClient(<RegisterForm />);
+    fillForm({ password, passwordConfirmation: password });
+
+    submit();
+
+    await waitFor(() => expect(authApi.register).toHaveBeenCalled());
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
   test("recusa nome de exibição com mais de 255 caracteres no cliente", async () => {
     renderWithClient(<RegisterForm />);
     fillForm({ displayName: "A".repeat(256) });
+
+    submit();
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "O nome de exibição deve ter no máximo 255 caracteres.",
+    );
+    expect(authApi.register).not.toHaveBeenCalled();
+  });
+
+  // The DOM `maxlength` attribute truncates by UTF-16 code unit; an emoji like 😀 (U+1F600) is two
+  // of those units for one code point, so `maxLength={255}` on the input would have cut off a paste
+  // well before the real, code-point-based 255 limit `validate` enforces. The field must carry no
+  // such attribute at all — the code-point count is the only limit — and the count itself must land
+  // on the right boundary regardless of how many UTF-16 units the same string takes up.
+  test("o campo de nome de exibição não trunca por unidade UTF-16", () => {
+    renderWithClient(<RegisterForm />);
+    expect(screen.getByLabelText("Nome de exibição")).not.toHaveAttribute("maxlength");
+  });
+
+  test("128 emojis podem ser inseridos integralmente, sem truncar por unidade UTF-16", async () => {
+    const displayName = "😀".repeat(128); // 128 code points, 256 UTF-16 code units
+    renderWithClient(<RegisterForm />);
+    fillForm({ displayName });
+
+    submit();
+
+    await waitFor(() =>
+      expect(authApi.register).toHaveBeenCalledWith(expect.objectContaining({ displayName })),
+    );
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  test("aceita nome de exibição com exatamente 255 code points em emoji", async () => {
+    const displayName = "😀".repeat(255);
+    renderWithClient(<RegisterForm />);
+    fillForm({ displayName });
+
+    submit();
+
+    await waitFor(() =>
+      expect(authApi.register).toHaveBeenCalledWith(expect.objectContaining({ displayName })),
+    );
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  test("recusa nome de exibição com 256 code points em emoji", async () => {
+    renderWithClient(<RegisterForm />);
+    fillForm({ displayName: "😀".repeat(256) });
 
     submit();
 

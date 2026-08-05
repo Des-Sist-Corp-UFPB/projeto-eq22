@@ -17,13 +17,14 @@ public final class PasswordPolicy {
         if (password == null || password.length() < MIN_LENGTH) {
             return false;
         }
-        boolean hasLetter = false;
-        boolean hasDigit = false;
-        for (int i = 0; i < password.length(); i++) {
-            char c = password.charAt(i);
-            hasLetter = hasLetter || Character.isLetter(c);
-            hasDigit = hasDigit || Character.isDigit(c);
-        }
+        // codePoints(), not charAt()/Character.isLetter(char): a supplementary-plane letter or digit
+        // (outside the BMP) is a surrogate pair, and the char overloads only ever see one half of
+        // that pair — neither half is itself a letter or digit, so the char-based scan silently
+        // never counts it. The frontend mirrors this with \p{L}/\p{Nd}, which already match by code
+        // point, so this keeps the two in agreement rather than the backend under-accepting what the
+        // frontend already allowed through.
+        boolean hasLetter = password.codePoints().anyMatch(Character::isLetter);
+        boolean hasDigit = password.codePoints().anyMatch(Character::isDigit);
         return hasLetter && hasDigit;
     }
 }

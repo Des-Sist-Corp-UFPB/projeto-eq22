@@ -86,7 +86,10 @@ export function RegisterForm() {
           type="text"
           autoComplete="name"
           autoFocus
-          maxLength={MAX_DISPLAY_NAME_LENGTH}
+          // No maxLength here: the DOM attribute truncates by UTF-16 code unit, not code point, so
+          // it would cut off a paste of more than ~127 astral characters (e.g. emoji, each two code
+          // units) well before the real 255-code-point limit `validate` below enforces correctly via
+          // [...trimmedDisplayName].length. Enforcing both would just make the DOM one wrong first.
           value={displayName}
           onChange={(event) => setDisplayName(event.target.value)}
         />
