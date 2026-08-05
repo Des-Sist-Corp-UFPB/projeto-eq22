@@ -90,6 +90,13 @@ Remove-Item Env:\IWRITE_CREDENTIAL_PROVISIONING_ENABLED, Env:\IWRITE_CREDENTIAL_
 Autentique com `POST /api/auth/login` usando o email e a senha provisionados; o cookie de sessão
 resultante já é suficiente para chamar qualquer API protegida.
 
+Alternativamente, qualquer pessoa pode criar a própria conta pela interface (`/register`) ou via
+`POST /api/auth/register`: cria usuário, credencial, workspace pessoal, membership `OWNER`, persona
+principal e sessão autenticada em uma única transação. Política de senha: no mínimo 10 caracteres,
+com ao menos uma letra e um dígito, validada no backend (`PasswordPolicy`) e apenas replicada no
+frontend como conveniência. Detalhes de contrato, migrations, segurança e limitação de tentativas em
+[docs/authentication-multitenancy.md](docs/authentication-multitenancy.md#cadastro-público-143).
+
 Compile o backend no Linux/macOS:
 
 ```bash
@@ -134,6 +141,7 @@ Banco e runtime:
 - `IWRITE_DEVELOPMENT_CURRENT_USER_ENABLED`: habilita somente a identidade temporária de desenvolvimento.
 - `IWRITE_DEVELOPMENT_CURRENT_USER_ID`, `IWRITE_DEVELOPMENT_TENANT_ID`, `IWRITE_DEVELOPMENT_TIME_ZONE_ID`: identidade temporária local.
 - `IWRITE_CREDENTIAL_PROVISIONING_ENABLED`, `IWRITE_CREDENTIAL_PROVISIONING_EMAIL`, `IWRITE_CREDENTIAL_PROVISIONING_PASSWORD`: provisiona a credencial de login de um usuário já existente (nunca cria um usuário); sem padrão de senha, remova as três depois de usar. Ver [docs/authentication-multitenancy.md](docs/authentication-multitenancy.md).
+- `IWRITE_REGISTRATION_RATE_LIMIT_MAX_PER_ORIGIN` (padrão 10), `IWRITE_REGISTRATION_RATE_LIMIT_MAX_TRACKED_KEYS` (padrão 10000), `IWRITE_REGISTRATION_RATE_LIMIT_WINDOW` (padrão `1m`): orçamento próprio de `POST /api/auth/register`, independente do de login. Ver [docs/authentication-multitenancy.md](docs/authentication-multitenancy.md#cadastro-público-143).
 
 Observabilidade (opcional):
 

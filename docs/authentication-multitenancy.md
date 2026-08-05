@@ -242,13 +242,89 @@ via `MockMvc` (`LoginRateLimitingIntegrationTest`).
   seletor de tenant está fora do escopo de #136 e permanece na visão completa da #63.
 - **Sessões em memória.** A sessão vive no servlet container; reiniciar o backend derruba todas as
   sessões e exige novo login. Não há armazenamento externo de sessão.
-- **Sem cadastro público**, recuperação de senha, verificação de email ou SSO — ver #63.
+- Cadastro público existe desde a #143 — ver "Cadastro público (#143)" abaixo. Ainda não há
+  recuperação de senha, verificação de email ou SSO — ver #63.
 - **Sem seed de demonstração** nesta fatia; é a #137. O `docker-compose.yml` já roda com
   `IWRITE_DEVELOPMENT_CURRENT_USER_ENABLED=false`, porque com a identidade fixa ligada todo usuário
   autenticado cairia no mesmo workspace. A consequência é que, até a #137, subir o compose não dá
-  nenhuma conta com a qual entrar — as credenciais de demonstração são criadas lá.
-- A tela de login **não** oferece cadastro, recuperação de senha nem login social, porque nada disso
-  existe no backend. Botão que não faz nada é pior que ausência.
+  nenhuma conta com a qual entrar além das criadas pelo próprio cadastro — as credenciais de
+  demonstração são criadas lá.
+- A tela de login oferece cadastro (`/register`, #143), mas ainda não recuperação de senha nem
+  login social, porque nada disso existe no backend. Botão que não faz nada é pior que ausência.
+
+## Cadastro público (#143)
+
+`POST /api/auth/register` cria o workspace pessoal completo em uma única transação
+(`RegistrationService`, `com.iwrite.auth`) e devolve o mesmo contrato de `/api/auth/login` e
+`/api/auth/me` — a sessão já sai autenticada, sem exigir um segundo login.
+
+Entrada: `displayName`, `email`, `password`, `passwordConfirmation`, `primaryPersona`
+(`WRITER`, `EDITOR`, `REVIEWER`, `BETA_READER` ou `OTHER`) e `timeZone` (IANA, detectado pelo
+navegador com fallback seguro no frontend). Sem username: o login continua por email.
+
+Ordem da transação, tudo ou nada:
+
+1. normaliza e valida o formato do email (mesma normalização do login, `EmailNormalizer` —
+   `trim` + minúsculas; nenhum dos dois duplica essa regra);
+2. valida a política de senha e a confirmação;
+3. valida a persona e o fuso horário;
+4. verifica duplicidade (pré-checagem rápida antes de qualquer escrita) e cria `User` via
+   `saveAndFlush`, capturando `DataIntegrityViolationException` da constraint `uk_users_email`
+   para o caso de corrida concorrente — os dois casos (sequencial e concorrente) respondem `409`
+   com a mesma mensagem estável, nunca `500`;
+5. cria `UserCredential` (hash adaptativo, mesmo `PasswordEncoder` do login);
+6. cria o `Tenant` pessoal e a `TenantMembership` `OWNER`;
+7. registra a `UserPersona` principal.
+
+Qualquer falha em qualquer etapa reverte a transação inteira; nenhuma entidade parcial sobrevive.
+Depois de persistir, o controller reautentica com a própria credencial recém-criada pelo mesmo
+`AuthenticationManager` que `/api/auth/login` usa (`AuthController#register` reaproveita
+`establishSession`, extraído de `login`) — a sessão resultante é indistinguível de uma sessão de
+login, não uma cópia construída à mão. `tenantId`, `userId` e `role` enviados pelo cliente nunca são
+lidos; tudo é decidido pelo servidor.
+
+### Persona
+
+`user_personas` (`V31__create_user_personas.sql`): `user_id`, `persona`, `is_primary`,
+`created_at`, `updated_at`; único em `(user_id, persona)` e um índice único parcial garante no
+máximo uma persona principal por usuário. A migration faz backfill do usuário legado
+(`carlos.legacy@iwrite.local`, localizado por email, não por id fixo) como `WRITER` principal.
+
+Persona é puramente declarativa: personaliza o produto, nunca autoriza nada. Nenhuma consulta de
+autorização existente ou futura deve inspecionar `user_personas` — a fundação foi desenhada para
+suportar múltiplas personas por usuário mais tarde sem remodelagem destrutiva, mas esta fatia grava
+só a principal, no cadastro.
+
+### Política de senha
+
+Aplicada em `PasswordPolicy` (`com.iwrite.auth`), única fonte de verdade: no mínimo 10 caracteres,
+com ao menos uma letra e um dígito. O frontend replica a mesma checagem apenas como conveniência —
+o backend nunca confia nela. `passwordConfirmation` é comparada e descartada; nunca chega à
+persistência nem é logada.
+
+### Limitação de tentativas de cadastro
+
+`RegistrationRateLimiter` tem orçamento próprio, nunca o do `LoginRateLimiter` — os dois agora
+compartilham a mesma engine de janela fixa (`FixedWindowRateLimiter`, extraída do que antes vivia
+só dentro de `LoginRateLimiter`), mas cada um com seu próprio estado e sua própria configuração.
+Só a dimensão de origem: um cadastro sempre mira um email nunca visto, então uma dimensão de conta
+não agregaria proteção — abuso distribuído por muitos emails diferentes da mesma origem já é pego
+pela dimensão de origem. A checagem roda antes do bcrypt e das quatro escritas da transação.
+
+Variáveis: `IWRITE_REGISTRATION_RATE_LIMIT_MAX_PER_ORIGIN` (padrão 10),
+`IWRITE_REGISTRATION_RATE_LIMIT_MAX_TRACKED_KEYS` (padrão 10000),
+`IWRITE_REGISTRATION_RATE_LIMIT_WINDOW` (padrão `1m`). Excedido, responde `429` com
+`RegistrationMessages.TOO_MANY_REGISTRATION_ATTEMPTS` — mensagem própria, nunca a de login.
+
+### Frontend
+
+`/register` (`web/src/app/register/page.tsx` + `RegisterForm`) segue o mesmo estilo visual de
+`/login`. Ao concluir, `useRegister` (`features/auth/session.ts`) executa exatamente a mesma
+sequência de `useLogin` — cancela queries em voo, purga caches autenticados, avança a geração de
+reconciliação, grava a sessão confirmada pelo servidor e só então navega para `/library` — via um
+helper (`applyNewSession`) compartilhado entre os dois hooks. `SessionGuard` trata `/register` como
+trata `/login`: renderiza sem esperar sessão, e quem já está autenticado é redirecionado para
+`/library` em vez de permanecer na tela.
 
 ## Isolamento do banco de testes entre worktrees
 
