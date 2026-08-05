@@ -32,6 +32,20 @@ perdeu) nunca produz uma sequência artificial de conflitos de revisão: a
 próxima escrita sempre parte do estado real e atual do servidor. Um novo
 `operationId` é gerado a cada `PATCH`.
 
+Os passos 1-3 são **pré-requisitos sequenciais**: um usuário real não abre uma
+cena sem antes navegar até o outline, nem chega no outline sem antes listar os
+livros. Se `list_books`, `load_outline` ou `load_scene` retornar algo
+diferente de 200, a iteração encerra ali mesmo (think time + `return`) — os
+passos seguintes não rodam. Isso evita que uma falha de leitura vire tráfego
+de escrita e distorça a latência/taxa de erro de `save_scene`.
+
+Cada requisição carrega duas tags: `operation` (dimensão funcional, ex.
+`save_scene`) e `name` (rota HTTP normalizada, ex. `PATCH
+/api/scenes/{sceneId}/content`) — a tag automática `url` do k6, que carregaria
+a URL concreta com o `bookId`/`sceneId` sintéticos embutidos, é desabilitada
+via `systemTags`. Nenhuma tag exportada carrega ID, título, conteúdo, usuário
+ou tenant — ver [§8](#8-como-ler-o-resultado).
+
 O `contentJson` enviado é o mesmo documento ProseMirror que o editor real
 produz e versiona (`web/src/features/scenes/editor/tiptap-editor.tsx`,
 `plainTextToDocument`), não apenas `contentText` — a versão anterior deste
@@ -115,6 +129,12 @@ IPv6 (`[::1]`) e **rejeita qualquer URL com user-info** (`user@host` ou
 host real, ela é recusada inteira, porque tentar adivinhar o host por trás de
 credenciais é exatamente a superfície que um parser baseado em regex
 simples pode errar.
+
+Nenhuma mensagem de erro do parser imprime a `BASE_URL` bruta — só uma
+descrição genérica do problema (`BASE_URL inválida.`, `BASE_URL rejeitada
+porque contém user-info.`, etc.). Uma URL rejeitada por conter user-info pode
+literalmente carregar uma senha (`http://usuario:senha@host`); ecoar a URL
+inteira em stdout/stderr vazaria exatamente o que a rejeição deveria proteger.
 
 Qualquer host fora da lista, ou URL inválida, faz o script abortar **antes de
 criar qualquer dado ou logar**, com uma mensagem explicando como liberar
@@ -220,6 +240,11 @@ antes de serializar qualquer coisa — inclusive quando um threshold falha ou
 sanitizar": não há como gerar um resumo com `JSESSIONID`/`XSRF-TOKEN` dentro,
 porque o próprio script nunca os inclui na saída, ponto algum.
 
+O resumo impresso no terminal é minimalista e **gerado localmente** — `carga.js`
+não importa nenhuma biblioteca remota (nem o `jslib` oficial do k6 para o
+texto colorido padrão). O teste tem que conseguir iniciar sem acesso à
+internet; os JSONs em `RESULT_PATH` continuam sendo a evidência principal.
+
 `loadtest/resultado.json` **não é** uma cópia de execução — é o resumo
 comparativo (10 vs. 30 VUs) descrito em [§9](#9-resultados-obtidos):
 commit, ambiente, RPS, percentis, thresholds, limitações, gargalo e próxima
@@ -249,13 +274,24 @@ rodam 1x ou `VUS` vezes por execução, nunca sob a carga em regime.
 
 ## 8. Como ler o resultado
 
+- **Tags exportadas:** só `operation` (dimensão funcional: `list_books`,
+  `save_scene`, `auth_login`, ...) e `name` (rota HTTP normalizada, ex. `GET
+  /api/scenes/{sceneId}`) — nunca a URL concreta. A tag automática `url` do
+  k6 está desabilitada via `systemTags`, então nenhum `bookId`, `sceneId`,
+  `runId`, título, conteúdo, usuário ou tenant vaza para uma tag, mesmo que o
+  resultado seja exportado para um time-series output (`--out json=...`) ou o
+  k6 cloud — validado rodando um smoke com `--out json=` e conferindo que
+  nenhum UUID aparece em `data.tags` (arquivo temporário, nunca versionado).
 - **`http_req_duration{operation:...}`** — cada operação tem sua própria série
   de percentis (`avg`, `min`, `med`=p50, `p(90)`, `p(95)`, `p(99)`, `max`),
-  graças às tags fixas e a `summaryTrendStats` configurado no script. IDs,
-  título, usuário, tenant e conteúdo **não** são usados como tag — só o nome
-  da operação.
-- **`http_reqs.rate`** — RPS agregado do run inteiro (inclui as 4 operações
-  principais **e** auth/setup/teardown).
+  graças a essas tags e a `summaryTrendStats` configurado no script.
+- **`http_req_duration` (sem tag) e `http_reqs.rate`** — agregam **todas** as
+  requisições da execução: smoke, auth, setup do livro/seção/capítulo/cenas,
+  as 4 operações principais **e** o teardown. Não representam a latência do
+  loop principal sozinho — para isso, leia as séries individuais de
+  `list_books`/`load_outline`/`load_scene`/`save_scene`. `resultado.json`
+  mantém essa distinção explícita (`execucao_completa` vs.
+  `operacoes_principais` vs. `auth_setup_teardown`).
 - **`checks`** — as 4 asserções de status das operações principais
   (`list_books`, `load_outline`, `load_scene`, `save_scene`).
 - Para investigar a operação mais lenta (`save_scene`, ver §9), use a
@@ -269,70 +305,89 @@ rodam 1x ou `VUS` vezes por execução, nunca sob a carga em regime.
 
 ## 9. Resultados obtidos
 
-Execuções reais, ambiente local isolado (containers dedicados, ver
-limitações abaixo) — commit `eee876a`. Resumo comparativo completo, estruturado,
-em [`resultado.json`](resultado.json); JSONs brutos por execução em
+Execuções reais, ambiente local isolado (ver limitações abaixo).
+
+- **`measured_code_commit`**: `be6d59941e9b287b988503c54832f7e7f4c87c0b` — o
+  commit de `loadtest/carga.js` exatamente como executado para gerar os
+  números abaixo, com working tree limpo, sem nenhuma mudança de código
+  depois. Reproduzir: `git checkout be6d599 -- loadtest/carga.js`.
+- **`evidence_commit`**: o commit imediatamente seguinte nesta branch, que só
+  adiciona/atualiza `resultado.json`, `resultados/*.json` e este README — sem
+  nenhuma mudança de comportamento do script. Hash exato na descrição da PR
+  #141 (não dá para gravar o próprio hash dentro do arquivo que ele versiona
+  sem autorreferência).
+
+Resumo comparativo completo, estruturado, em
+[`resultado.json`](resultado.json); JSONs brutos por execução em
 [`resultados/resultado-10vus.json`](resultados/resultado-10vus.json) e
 [`resultados/resultado-30vus.json`](resultados/resultado-30vus.json).
 
-**Operações principais** (medidas sob carga, dentro do loop de VUs):
+**Execução completa** (todas as requisições — smoke, auth, setup, as 4
+operações principais e teardown):
 
-| | VUs | Duração | RPS | p50 (ms) | p90 (ms) | p95 (ms) | p99 (ms) | Erros | Checks |
-|---|---|---|---|---|---|---|---|---|---|
-| Baseline | 10 | 3m (30s/2m/30s) | 30.8 | 57.9 | 228.1 | 328.4 | 542.9 | 0% (0/5809) | 100% (5792/5792) |
-| Carga ampliada | 30 | 3m (30s/2m/30s) | 53.8 | 215.7 | 603.3 | 754.9 | 1036.6 | 0% (0/10221) | 100% (10184/10184) |
+| | VUs | Duração | Requests | RPS global | p50 (ms) | p90 (ms) | p95 (ms) | p99 (ms) | Erros | Checks |
+|---|---|---|---|---|---|---|---|---|---|---|
+| Baseline | 10 | 3m (30s/2m/30s) | 7393 | 39.6 | 20.4 | 73.9 | 122.2 | 417.5 | 0% (0/7393) | 100% (7376/7376) |
+| Carga ampliada | 30 | 3m (30s/2m/30s) | 19829 | 105.3 | 30.0 | 160.3 | 244.1 | 469.9 | 0% (0/19829) | 100% (19792/19792) |
 
-Por operação principal (p95, ms):
+Esses percentis **incluem** auth/setup/teardown (em especial o `auth_login`
+de ~5.1-5.3s, que sozinho puxa o `max` e o `p99` para cima) — não são a
+latência do loop principal. Para isso, a tabela abaixo:
 
-| Operação | 10 VUs | 30 VUs |
-|---|---|---|
-| `list_books` | 148.0 | 485.0 |
-| `load_outline` | 117.7 | 421.3 |
-| `load_scene` | 99.9 | 441.8 |
-| `save_scene` | **518.0** ✗ | **985.7** ✗ |
+**Operações principais** (p95/p99 em ms, medidas só dentro do loop de VUs —
+sem misturar com auth/setup/teardown):
+
+| Operação | 10 VUs p95 | 10 VUs p99 | 30 VUs p95 | 30 VUs p99 |
+|---|---|---|---|---|
+| `list_books` | 52.4 | 77.2 | 181.8 | 376.2 |
+| `load_outline` | 45.3 | 66.9 | 149.6 | 343.8 |
+| `load_scene` | 40.0 | 66.7 | 142.3 | 319.4 |
+| `save_scene` | 385.1 | 552.5 | 381.3 | 669.0 |
+
+Todos os thresholds passaram nas duas execuções, inclusive o de `save_scene`
+(`p(95)<500ms`) — mas com margem estreita: o `p99` de `save_scene` já passa
+de 550-670ms nas duas cargas, e uma execução anterior deste mesmo PR (código
+equivalente, ambiente igualmente compartilhado) excedeu 500ms de p95 sob
+condições de contenção de host diferentes. Ler como "está dentro do
+orçamento agora, com pouca margem", não como "nunca vai estourar".
 
 **Auth/setup/teardown** (fora do loop medido — rodam 1x, ou `VUS` vezes no
 caso de `setup_create_scene`):
 
 | Operação | 10 VUs | 30 VUs |
 |---|---|---|
-| `auth_csrf` | 24.2ms | 10.5ms |
-| `auth_login` | 5272.3ms | 5303.4ms |
-| `setup_create_book` | 194.8ms | 110.0ms |
-| `setup_create_section` | 123.7ms | 94.4ms |
-| `setup_create_chapter` | 104.7ms | 92.7ms |
-| `setup_create_scene` (p95) | 303.5ms | 143.3ms |
-| `teardown_delete_book` | 353.1ms | 629.9ms |
-
-`http_req_failed` e `checks` passaram nas duas execuções — **zero erros**, só
-os thresholds de latência é que foram violados (`save_scene` nas duas cargas;
-o `http_req_duration` global também na de 30 VUs). O `k6 run` saiu com código
-diferente de zero em ambas, como esperado quando um threshold é violado.
+| `auth_csrf` | 5.1ms | 8.4ms |
+| `auth_login` | 5107.5ms | 5257.3ms |
+| `setup_create_book` | 61.8ms | 66.0ms |
+| `setup_create_section` | 26.4ms | 23.7ms |
+| `setup_create_chapter` | 32.9ms | 52.5ms |
+| `setup_create_scene` (p95) | 78.5ms | 103.1ms |
+| `teardown_delete_book` | 389.2ms | 1005.1ms |
 
 **Gargalo principal:** `PATCH /api/scenes/{id}/content` (`save_scene`) é
-consistentemente a operação mais lenta e a que mais degrada com o aumento de
-VUs (p95 sobe de 518ms para 986ms, ~1.9× de 10 para 30 VUs). Depois da
-correção que passou a enviar o mesmo `contentJson` que o editor real produz
-(antes o script só enviava `contentText`), o custo medido de `save_scene`
-subiu de forma visível frente à medição anterior deste PR — o benchmark
-anterior estava subestimando esse caminho por não exercitar o payload real.
-`save_scene` é a única escrita do cenário: passa por auditoria
-(`@AuditedOperation`), versionamento de cena e ledger de contagem de
-palavras. Não foi isolado neste PR qual dessas etapas domina o custo.
+consistentemente a operação mais lenta do loop principal — 7-9× o `load_scene`
+em ambas as cargas — e a única cujo p95 fica perto do teto de 500ms. É a
+única escrita do cenário: passa por auditoria (`@AuditedOperation`),
+versionamento de cena (`contentJson` + `contentText`, agora medido
+corretamente — a versão anterior deste script só enviava `contentText` e
+subestimava esse caminho) e ledger de contagem de palavras. Não foi isolado
+neste PR qual dessas etapas domina o custo.
 
 **Limitações desta execução:**
 - Rodada em uma stack Docker isolada só para este teste (`docker-compose -p
   iwrite-k6`, portas remapeadas), na mesma máquina de desenvolvimento
   concorrendo com outros containers (outro worktree do IWrite + um projeto
-  não relacionado) — os números absolutos não refletem hardware dedicado.
+  não relacionado) — os números absolutos, e a margem de `save_scene` frente
+  ao threshold de 500ms, variam com a contenção do host no momento da
+  execução.
 - Backend, Postgres e k6 rodam na mesma máquina (sem separação de rede/CPU
   entre gerador de carga e alvo), então parte da latência medida pode ser
   contenção local, não custo real de rede.
-- `auth_login` levou ~5.3s em ambas as execuções — bcrypt (deliberadamente
-  lento) rodando uma única vez por execução contra um host sob contenção de
-  CPU. Não faz parte do cenário medido sob carga e não deve ser lido como
-  latência típica de login; por isso tem orçamento próprio (`p(95)<8000ms`),
-  bem mais folgado que o das operações principais.
+- `auth_login` (~5.1-5.3s) é bcrypt + cold start da JVM numa única chamada
+  por execução; `teardown_delete_book` (389ms-1s) é uma cascata de DELETE
+  (livro→seção→capítulo→cenas) também numa única chamada. Nenhum dos dois
+  faz parte do loop medido sob carga, por isso têm threshold próprio
+  (`p(95)<8000ms` e `p(95)<2000ms`) em vez do orçamento de 500ms.
 - Sem OTel habilitado durante a execução (evita adicionar overhead de
   instrumentação à medição); a decomposição do custo de `save_scene` entre
   auditoria/versionamento/ledger de palavras não foi feita neste PR.
@@ -343,9 +398,10 @@ palavras. Não foi isolado neste PR qual dessas etapas domina o custo.
 **Próxima ação recomendada:** rodar o teste com OTel habilitado
 (`docker-compose.observability.yml`) e usar os traces correlacionados de
 `scene_content_save` para decompor o tempo do `PATCH` entre auditoria,
-versionamento e ledger de palavras, e então decidir se algum desses passos
-pode sair do caminho síncrono do save. Vale também medir com um `contentJson`
-de tamanho mais realista (múltiplos parágrafos).
+versionamento e ledger de palavras. Dado que a margem de `save_scene` frente
+ao threshold de 500ms é estreita, também vale rodar em hardware não
+compartilhado para obter um número de referência estável, e medir com um
+`contentJson` de tamanho mais realista (múltiplos parágrafos).
 
 ---
 
@@ -357,6 +413,20 @@ de tamanho mais realista (múltiplos parágrafos).
       (`http://localhost:8085@host-externo`, `http://usuario:senha@localhost:8085`)
       — ambos recusados — e contra `http://[::1]:porta`, aceito e conectando
       normalmente
+- [x] Nenhuma mensagem de erro do parser imprime a `BASE_URL` bruta: testado
+      com uma senha-canário embutida como user-info
+      (`http://usuario:SENHA_CANARIO@localhost:porta`) e conferido que o
+      valor não aparece em stdout/stderr — só a mensagem genérica
+- [x] `carga.js` não importa nenhuma biblioteca remota — `k6 inspect` e
+      `k6 run` funcionam sem depender de internet para iniciar
+- [x] `list_books`/`load_outline` falhando (fault injection) encerra a
+      iteração imediatamente: confirmado, com `--out json=` temporário
+      (não versionado), que zero requisições `load_scene`/`save_scene`
+      acontecem quando um pré-requisito falha
+- [x] Tags exportadas testadas com `--out json=` temporário (não versionado):
+      zero ocorrências de `"url"` como chave de tag e zero UUIDs em
+      `data.tags` em toda a execução — só `operation` e `name` (rota
+      normalizada)
 - [x] Falha de `setup()` após a criação do livro (seção/capítulo/cena)
       testada com fault injection: limpeza automática do livro órfão
       confirmada, erro original preservado, `k6 run` sai com código
@@ -365,9 +435,11 @@ de tamanho mais realista (múltiplos parágrafos).
       `k6 run` sai com código diferente de zero em vez de só logar
 - [x] `teardown()` remove o livro sintético nas execuções normais —
       confirmado sem resíduo `LOADTEST-` após todas as execuções (smoke, 10
-      VUs, 30 VUs, e os dois testes de fault injection acima)
+      VUs, 30 VUs, e os testes de fault injection acima)
 - [x] `loadtest/resultado.json` e `loadtest/resultados/*.json` sem cookies,
       credenciais ou conteúdo de cena (sanitização automática via
-      `handleSummary()`, não um passo manual)
-- [x] Resultados reproduzíveis: mesmo script, mesma stack local, mesma
-      violação de threshold em `save_scene` nas duas execuções
+      `handleSummary()`, não um passo manual) — `bookId`/`runId` em
+      `setup_data` são metadados de correlação do run, não tags de métrica,
+      e não criam cardinalidade
+- [x] Resultados gerados com working tree limpo, exatamente no commit
+      registrado como `measured_code_commit` em `resultado.json`

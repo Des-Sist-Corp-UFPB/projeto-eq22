@@ -1,7 +1,9 @@
 {
   "resumo_comparativo": {
-    "commit": "eee876a6b88166e96b14b7fd59d2759d0d59ae7a",
-    "data_execucao": "2026-08-05T04:31:10Z",
+    "measured_code_commit": "be6d59941e9b287b988503c54832f7e7f4c87c0b",
+    "evidence_commit": "ver a descrição da PR #141 — o commit que versiona este arquivo não pode conter o próprio hash sem autorreferência",
+    "nota_commits": "measured_code_commit é o commit de loadtest/carga.js exatamente como executado para gerar os números abaixo (working tree limpo, nenhuma mudança de código depois). evidence_commit é o commit posterior que só versiona este resumo e os JSONs brutos — não contém nenhuma mudança de comportamento do script.",
+    "data_execucao": "2026-08-05T05:15:29Z",
     "k6_version": "k6.exe v2.1.0 (commit/83a87a41e2, go1.26.4, windows/amd64)",
     "ambiente": {
       "descricao": "Stack Docker isolada dedicada a este teste (docker compose -p iwrite-k6, containers e portas remapeados só para não colidir com outro worktree já em uso na mesma máquina de desenvolvimento).",
@@ -14,108 +16,90 @@
       "GET /api/scenes/{sceneId} (load_scene)",
       "PATCH /api/scenes/{sceneId}/content (save_scene) — contentText + contentJson (documento ProseMirror no mesmo formato do editor real)"
     ],
+    "notas_de_metodologia": [
+      "list_books, load_outline e load_scene são pré-requisitos sequenciais: a iteração encerra imediatamente (com think time) se qualquer um retornar status inesperado, então nenhum PATCH é enviado atrás de uma leitura que falhou.",
+      "Tags exportadas por requisição: 'operation' (dimensão funcional) e 'name' (rota normalizada, ex. 'GET /api/scenes/{sceneId}'). A tag automática 'url' do k6 foi desabilitada via systemTags — nenhuma tag carrega bookId, sceneId, runId, título, conteúdo, usuário ou tenant.",
+      "http_req_duration_global (RPS, p50-p99 agregados) inclui TODAS as requisições da execução: smoke, auth, setup do livro/seção/capítulo/cenas, as 4 operações principais sob carga, e o teardown. Não é a latência do loop principal — para isso, ver operacoes_principais.",
+      "auth_login demora ~5.1-5.3s nas duas execuções: é a primeira requisição real contra um backend recém-subido (bcrypt deliberadamente lento + JIT/warmup da JVM), roda uma única vez por execução, fora do loop medido, e por isso tem threshold próprio (p(95)<8000ms) em vez do orçamento de 500ms das operações principais."
+    ],
     "execucoes": {
       "10_vus": {
-        "vus": 10,
-        "duracao": "3m (30s aquecimento / 2m carga estável / 30s desaceleração)",
-        "requests_totais": 5809,
-        "rps": 30.79,
-        "iterations": 1448,
-        "operacoes_principais": {
-          "descricao": "Medidas sob carga, dentro do loop de VUs (list_books, load_outline, load_scene, save_scene)",
-          "http_req_duration_agregado": { "p50": 57.92, "p90": 228.09, "p95": 328.35, "p99": 542.94, "max": 5272.29, "unidade": "ms" },
-          "por_operacao_p95_ms": {
-            "list_books": 148.02,
-            "load_outline": 117.72,
-            "load_scene": 99.92,
-            "save_scene": 518.01
-          },
-          "por_operacao_p99_ms": {
-            "list_books": 204.89,
-            "load_outline": 160.40,
-            "load_scene": 142.86,
-            "save_scene": 680.75
+        "execucao_completa": {
+          "vus": 10,
+          "duracao": "3m (30s aquecimento / 2m carga estável / 30s desaceleração)",
+          "requests_totais": 7393,
+          "rps_global": 39.63,
+          "http_req_duration_global": { "p50": 20.39, "p90": 73.87, "p95": 122.23, "p99": 417.47, "max": 5107.52, "unidade": "ms" },
+          "erros": { "http_req_failed_rate": 0, "http_req_failed_total": 0, "de": 7393 },
+          "checks": { "rate": 1, "passes": 7376, "fails": 0 },
+          "thresholds_globais": {
+            "http_req_failed<1%": "passou",
+            "checks>99%": "passou",
+            "http_req_duration_global_p95<500ms": "passou (122.23ms)"
           }
+        },
+        "operacoes_principais": {
+          "descricao": "Medidas sob carga, dentro do loop de VUs. Percentis individuais por operação — não existe um agregado único das 4 operações (misturaria séries com perfis de latência bem diferentes).",
+          "iterations": 1844,
+          "list_books": { "p50": 20.01, "p90": 44.15, "p95": 52.37, "p99": 77.23, "max": 207.77, "threshold_p95<500ms": "passou" },
+          "load_outline": { "p50": 15.21, "p90": 35.36, "p95": 45.35, "p99": 66.88, "max": 483.79, "threshold_p95<500ms": "passou" },
+          "load_scene": { "p50": 13.10, "p90": 30.03, "p95": 40.01, "p99": 66.71, "max": 437.76, "threshold_p95<500ms": "passou" },
+          "save_scene": { "p50": 61.34, "p90": 272.53, "p95": 385.11, "p99": 552.50, "max": 999.25, "threshold_p95<500ms": "passou" }
         },
         "auth_setup_teardown": {
           "descricao": "Fora do loop medido: rodam 1x (auth, setup do livro/seção/capítulo, teardown) ou VUS vezes (setup_create_scene, uma por VU)",
-          "auth_csrf_ms": 24.18,
-          "auth_login_ms": 5272.29,
-          "setup_create_book_ms": 194.82,
-          "setup_create_section_ms": 123.75,
-          "setup_create_chapter_ms": 104.72,
-          "setup_create_scene_p95_ms": 303.53,
-          "teardown_delete_book_ms": 353.06
-        },
-        "erros": { "http_req_failed_rate": 0, "http_req_failed_total": 0, "de": 5809 },
-        "checks": { "rate": 1, "passes": 5792, "fails": 0 },
-        "thresholds": {
-          "http_req_failed<1%": "passou",
-          "checks>99%": "passou",
-          "http_req_duration_global_p95<500ms": "passou (328.35ms)",
-          "list_books_p95<500ms": "passou (148.02ms)",
-          "load_outline_p95<500ms": "passou (117.72ms)",
-          "load_scene_p95<500ms": "passou (99.92ms)",
-          "save_scene_p95<500ms": "FALHOU (518.01ms)",
-          "auth_login_p95<8000ms": "passou (5272.29ms — bcrypt sob contenção de CPU do host, ver limitações)"
-        },
-        "exit_code": "diferente de zero (threshold save_scene violado)"
+          "auth_csrf_ms": 5.05,
+          "auth_login_ms": 5107.52,
+          "setup_create_book_ms": 61.83,
+          "setup_create_section_ms": 26.42,
+          "setup_create_chapter_ms": 32.90,
+          "setup_create_scene_p95_ms": 78.50,
+          "teardown_delete_book_ms": 389.20
+        }
       },
       "30_vus": {
-        "vus": 30,
-        "duracao": "3m (30s aquecimento / 2m carga estável / 30s desaceleração)",
-        "requests_totais": 10221,
-        "rps": 53.81,
-        "iterations": 2546,
-        "operacoes_principais": {
-          "descricao": "Medidas sob carga, dentro do loop de VUs (list_books, load_outline, load_scene, save_scene)",
-          "http_req_duration_agregado": { "p50": 215.73, "p90": 603.25, "p95": 754.86, "p99": 1036.61, "max": 5303.42, "unidade": "ms" },
-          "por_operacao_p95_ms": {
-            "list_books": 484.99,
-            "load_outline": 421.35,
-            "load_scene": 441.85,
-            "save_scene": 985.68
-          },
-          "por_operacao_p99_ms": {
-            "list_books": 719.47,
-            "load_outline": 637.13,
-            "load_scene": 671.03,
-            "save_scene": 1266.79
+        "execucao_completa": {
+          "vus": 30,
+          "duracao": "3m (30s aquecimento / 2m carga estável / 30s desaceleração)",
+          "requests_totais": 19829,
+          "rps_global": 105.27,
+          "http_req_duration_global": { "p50": 29.98, "p90": 160.26, "p95": 244.09, "p99": 469.94, "max": 5257.33, "unidade": "ms" },
+          "erros": { "http_req_failed_rate": 0, "http_req_failed_total": 0, "de": 19829 },
+          "checks": { "rate": 1, "passes": 19792, "fails": 0 },
+          "thresholds_globais": {
+            "http_req_failed<1%": "passou",
+            "checks>99%": "passou",
+            "http_req_duration_global_p95<500ms": "passou (244.09ms)"
           }
+        },
+        "operacoes_principais": {
+          "descricao": "Medidas sob carga, dentro do loop de VUs. Percentis individuais por operação — não existe um agregado único das 4 operações (misturaria séries com perfis de latência bem diferentes).",
+          "iterations": 4948,
+          "list_books": { "p50": 23.16, "p90": 115.45, "p95": 181.75, "p99": 376.16, "max": 837.20, "threshold_p95<500ms": "passou" },
+          "load_outline": { "p50": 19.92, "p90": 95.33, "p95": 149.60, "p99": 343.77, "max": 925.47, "threshold_p95<500ms": "passou" },
+          "load_scene": { "p50": 15.91, "p90": 89.87, "p95": 142.31, "p99": 319.38, "max": 844.98, "threshold_p95<500ms": "passou" },
+          "save_scene": { "p50": 94.76, "p90": 273.60, "p95": 381.30, "p99": 669.03, "max": 1667.96, "threshold_p95<500ms": "passou" }
         },
         "auth_setup_teardown": {
           "descricao": "Fora do loop medido: rodam 1x (auth, setup do livro/seção/capítulo, teardown) ou VUS vezes (setup_create_scene, uma por VU)",
-          "auth_csrf_ms": 10.46,
-          "auth_login_ms": 5303.42,
-          "setup_create_book_ms": 110.03,
-          "setup_create_section_ms": 94.43,
-          "setup_create_chapter_ms": 92.69,
-          "setup_create_scene_p95_ms": 143.28,
-          "teardown_delete_book_ms": 629.93
-        },
-        "erros": { "http_req_failed_rate": 0, "http_req_failed_total": 0, "de": 10221 },
-        "checks": { "rate": 1, "passes": 10184, "fails": 0 },
-        "thresholds": {
-          "http_req_failed<1%": "passou",
-          "checks>99%": "passou",
-          "http_req_duration_global_p95<500ms": "FALHOU (754.86ms)",
-          "list_books_p95<500ms": "passou (484.99ms)",
-          "load_outline_p95<500ms": "passou (421.35ms)",
-          "load_scene_p95<500ms": "passou (441.85ms)",
-          "save_scene_p95<500ms": "FALHOU (985.68ms)",
-          "auth_login_p95<8000ms": "passou (5303.42ms — bcrypt sob contenção de CPU do host, ver limitações)"
-        },
-        "exit_code": "diferente de zero (thresholds global e save_scene violados)"
+          "auth_csrf_ms": 8.40,
+          "auth_login_ms": 5257.33,
+          "setup_create_book_ms": 66.03,
+          "setup_create_section_ms": 23.68,
+          "setup_create_chapter_ms": 52.48,
+          "setup_create_scene_p95_ms": 103.08,
+          "teardown_delete_book_ms": 1005.15
+        }
       }
     },
-    "gargalo_identificado": "PATCH /api/scenes/{id}/content (save_scene) é a operação mais lenta em ambas as cargas (p95 3.5-4.5x maior que list_books) e a que mais degrada com o aumento de VUs (p95 sobe de 518ms para 986ms, ~1.9x, entre 10 e 30 VUs). É a única escrita do cenário: passa por auditoria (@AuditedOperation), versionamento de cena (contentJson + contentText, agora medido corretamente após a correção da issue) e ledger de contagem de palavras. Com a correção que passou a enviar o mesmo contentJson que o editor real produz, o custo de save_scene cresceu sensivelmente frente à medição anterior deste PR (que só enviava contentText) — o benchmark anterior subestimava esse caminho.",
+    "gargalo_identificado": "save_scene (PATCH /api/scenes/{id}/content) é consistentemente a operação mais lenta do loop principal nas duas cargas — p95 de 385ms/10VUs e 381ms/30VUs, contra 40-52ms (10 VUs) e 142-182ms (30 VUs) das três leituras. Nesta execução específica, save_scene ficou dentro do threshold de 500ms nas duas cargas (diferente de uma execução anterior deste mesmo PR, que excedeu o threshold sob condições de contenção de host diferentes) — a margem é estreita o suficiente (p99 já passa de 550-670ms) para que o resultado dependa de quanto a máquina de desenvolvimento está ocupada no momento da execução. save_scene é a única escrita do cenário: passa por auditoria (@AuditedOperation), versionamento de cena (contentJson + contentText) e ledger de contagem de palavras — mais trabalho por requisição que as três leituras, e por isso mais sensível à contenção de CPU/IO do host.",
     "limitacoes": [
-      "Execução na mesma máquina de desenvolvimento concorrendo com outros containers Docker não relacionados a este teste (não é hardware dedicado); os números absolutos não são comparáveis a um ambiente isolado.",
+      "Execução na mesma máquina de desenvolvimento concorrendo com outros containers Docker não relacionados a este teste (não é hardware dedicado); os números absolutos e a margem de save_scene frente ao threshold de 500ms variam com a contenção do host no momento da execução.",
       "Backend, Postgres e k6 rodam na mesma máquina, sem separação de rede/CPU entre gerador de carga e alvo — parte da latência medida pode ser contenção local, não custo real de rede.",
-      "auth_login apresentou ~5.3s em ambas as execuções (bcrypt, deliberadamente lento, executado uma única vez por run contra um host sob contenção de CPU) — não faz parte do cenário medido sob carga e não deve ser lido como latência típica de login em produção.",
+      "auth_login e teardown_delete_book aparecem com latência alta (5.1-5.3s e 389ms-1s) — auth_login é bcrypt + cold start da JVM numa única chamada por execução; teardown_delete_book é uma cascata de DELETE (livro→seção→capítulo→cenas) também numa única chamada. Nenhum dos dois faz parte do loop medido sob carga.",
       "Sem OTel habilitado durante a execução (evita overhead de instrumentação na medição); a decomposição do custo de save_scene entre auditoria/versionamento/ledger de palavras não foi feita neste PR.",
-      "max de ambas as execuções (5.27s e 5.30s) no http_req_duration agregado corresponde à própria chamada de auth_login incluída no agregado geral, não a uma operação do loop principal."
+      "contentJson sintético é um único parágrafo curto — não representa uma cena longa de verdade. save_scene sob um payload realisticamente maior tende a ser mais lento ainda que o medido aqui."
     ],
-    "proxima_acao_recomendada": "Rodar o teste com OTel habilitado (docker-compose.observability.yml) e usar os traces correlacionados de scene_content_save para decompor o tempo do PATCH entre auditoria, versionamento de cena e ledger de palavras, e então decidir se algum desses passos pode sair do caminho síncrono do save. Também vale medir save_scene com um payload de contentJson de tamanho realista maior (parágrafos múltiplos), já que este teste usa um documento de um parágrafo curto."
+    "proxima_acao_recomendada": "Rodar o teste com OTel habilitado (docker-compose.observability.yml) e usar os traces correlacionados de scene_content_save para decompor o tempo do PATCH entre auditoria, versionamento e ledger de palavras. Vale também medir save_scene com um contentJson de tamanho mais realista (múltiplos parágrafos) e, dado que a margem frente ao threshold de 500ms é estreita, rodar em hardware não compartilhado para obter um número de referência estável."
   }
 }
