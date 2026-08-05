@@ -1,6 +1,5 @@
 import http from 'k6/http';
 import { check, sleep } from 'k6';
-import { textSummary } from 'https://jslib.k6.io/k6-summary/0.1.0/index.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Teste de carga realista — k6 (issue #129)
@@ -29,35 +28,40 @@ const DANGEROUS_OVERRIDE_VALUE = 'eu-autorizo-um-destino-externo';
  * credenciais é recusada mesmo que o host à direita seja local, porque um
  * parser ingênuo já provou ser a superfície de bypass aqui), resolve
  * `[::1]` como literal IPv6 e valida a porta.
+ *
+ * Nenhuma mensagem de erro aqui embute `rawUrl`: uma BASE_URL rejeitada por
+ * conter user-info pode literalmente conter uma senha (ex.:
+ * `http://usuario:senha@host`), e ecoar a URL inteira em stdout/stderr
+ * vazaria exatamente o que a rejeição deveria proteger.
  */
 function parseSafeHost(rawUrl) {
   const schemeMatch = /^([a-zA-Z][a-zA-Z0-9+.-]*):\/\//.exec(rawUrl);
   if (!schemeMatch) {
-    throw new Error(`BASE_URL inválida (sem esquema http(s)://): "${rawUrl}"`);
+    throw new Error('BASE_URL inválida.');
   }
   const scheme = schemeMatch[1].toLowerCase();
   if (scheme !== 'http' && scheme !== 'https') {
-    throw new Error(`BASE_URL usa esquema não suportado "${scheme}:" (só http/https são aceitos): "${rawUrl}"`);
+    throw new Error('BASE_URL usa protocolo não permitido.');
   }
 
   const rest = rawUrl.slice(schemeMatch[0].length);
   const authorityEnd = rest.search(/[\/?#]/);
   const authority = authorityEnd === -1 ? rest : rest.slice(0, authorityEnd);
   if (!authority) {
-    throw new Error(`BASE_URL inválida (sem host): "${rawUrl}"`);
+    throw new Error('BASE_URL inválida.');
   }
   if (authority.indexOf('@') !== -1) {
-    throw new Error(`BASE_URL não pode conter usuário/senha na URL ("user@host") — destino rejeitado: "${rawUrl}"`);
+    throw new Error('BASE_URL rejeitada porque contém user-info.');
   }
 
   if (authority[0] === '[') {
     const closeIdx = authority.indexOf(']');
     if (closeIdx === -1) {
-      throw new Error(`BASE_URL inválida (colchete IPv6 não fechado): "${rawUrl}"`);
+      throw new Error('BASE_URL possui autoridade IPv6 inválida.');
     }
     const afterBracket = authority.slice(closeIdx + 1);
     if (afterBracket !== '' && !/^:\d+$/.test(afterBracket)) {
-      throw new Error(`BASE_URL inválida após o literal IPv6: "${rawUrl}"`);
+      throw new Error('BASE_URL possui autoridade IPv6 inválida.');
     }
     return authority.slice(1, closeIdx).toLowerCase();
   }
@@ -65,7 +69,7 @@ function parseSafeHost(rawUrl) {
   const portIdx = authority.indexOf(':');
   const host = portIdx === -1 ? authority : authority.slice(0, portIdx);
   if (!host || (portIdx !== -1 && !/^\d+$/.test(authority.slice(portIdx + 1)))) {
-    throw new Error(`BASE_URL inválida: "${rawUrl}"`);
+    throw new Error('BASE_URL inválida.');
   }
   return host.toLowerCase();
 }
@@ -105,6 +109,17 @@ export const options = {
     { duration: WARMUP_DURATION, target: VUS },
     { duration: STEADY_DURATION, target: VUS },
     { duration: RAMPDOWN_DURATION, target: 0 },
+  ],
+  // Lista padrão do k6 menos 'url': a tag automática 'url' carrega a URL
+  // concreta de cada requisição (com o bookId/sceneId sintéticos embutidos),
+  // o que criaria uma série por livro/cena caso o resultado seja exportado
+  // para um time-series output ou o k6 cloud. Toda requisição abaixo define
+  // um `name` fixo (rota normalizada) para navegação/agrupamento no lugar da
+  // URL, e `operation` como dimensão funcional — nenhuma tag exportada
+  // carrega bookId, sceneId, runId, título, conteúdo, usuário ou tenant.
+  systemTags: [
+    'proto', 'subproto', 'status', 'method', 'name', 'group', 'check',
+    'error', 'error_code', 'tls_version', 'scenario', 'service', 'expected_response',
   ],
   thresholds: {
     http_req_failed: ['rate<0.01'],
@@ -182,7 +197,7 @@ function cleanupOrphanedBook(authHeaders, bookId, marker, originalError) {
   console.error(`setup() falhou após criar o livro sintético ${marker} (${bookId}): ${originalError.message}`);
   const cleanupRes = http.del(`${BASE}/api/books/${bookId}`, null, {
     headers: jsonHeaders(authHeaders),
-    tags: { operation: 'setup_cleanup_book' },
+    tags: { operation: 'setup_cleanup_book', name: 'DELETE /api/books/{bookId}' },
   });
   if (cleanupRes.status === 204) {
     console.error(`Limpeza automática removeu o livro órfão ${marker} (${bookId}).`);
@@ -206,12 +221,12 @@ export function setup() {
     throw new Error('LOAD_TEST_PASSWORD não definida. Nunca versione a senha; exporte a variável de ambiente antes de rodar (ver loadtest/README.md).');
   }
 
-  const ping = http.get(`${BASE}/ping`, { tags: { operation: 'smoke' } });
+  const ping = http.get(`${BASE}/ping`, { tags: { operation: 'smoke', name: 'GET /ping' } });
   if (ping.status !== 200) {
     throw new Error(`Smoke check falhou: GET /ping retornou ${ping.status}. Suba o ambiente antes de rodar a carga.`);
   }
 
-  const csrfRes = http.get(`${BASE}/api/auth/csrf`, { tags: { operation: 'auth_csrf' } });
+  const csrfRes = http.get(`${BASE}/api/auth/csrf`, { tags: { operation: 'auth_csrf', name: 'GET /api/auth/csrf' } });
   if (csrfRes.status !== 204) {
     throw new Error(`GET /api/auth/csrf retornou ${csrfRes.status}, esperado 204.`);
   }
@@ -230,7 +245,7 @@ export function setup() {
     JSON.stringify({ email: LOGIN_EMAIL, password: LOGIN_PASSWORD }),
     {
       headers: { 'Content-Type': 'application/json', 'X-XSRF-TOKEN': csrfToken },
-      tags: { operation: 'auth_login' },
+      tags: { operation: 'auth_login', name: 'POST /api/auth/login' },
     }
   );
   if (loginRes.status !== 200) {
@@ -252,7 +267,7 @@ export function setup() {
   const bookRes = http.post(
     `${BASE}/api/books`,
     JSON.stringify({ title: marker, status: 'WRITING', targetWordCount: 1000 }),
-    { headers: jsonHeaders(authHeaders), tags: { operation: 'setup_create_book' } }
+    { headers: jsonHeaders(authHeaders), tags: { operation: 'setup_create_book', name: 'POST /api/books' } }
   );
   if (bookRes.status !== 201) {
     throw new Error(`Criação do livro sintético falhou com status ${bookRes.status}.`);
@@ -267,7 +282,7 @@ export function setup() {
     const sectionRes = http.post(
       `${BASE}/api/books/${bookId}/sections`,
       JSON.stringify({ title: `${marker}-section`, type: 'PART', sortOrder: 0 }),
-      { headers: jsonHeaders(authHeaders), tags: { operation: 'setup_create_section' } }
+      { headers: jsonHeaders(authHeaders), tags: { operation: 'setup_create_section', name: 'POST /api/books/{bookId}/sections' } }
     );
     if (sectionRes.status !== 201) {
       throw new Error(`Criação da seção sintética falhou com status ${sectionRes.status}.`);
@@ -277,7 +292,7 @@ export function setup() {
     const chapterRes = http.post(
       `${BASE}/api/sections/${sectionId}/chapters`,
       JSON.stringify({ title: `${marker}-chapter`, sortOrder: 0 }),
-      { headers: jsonHeaders(authHeaders), tags: { operation: 'setup_create_chapter' } }
+      { headers: jsonHeaders(authHeaders), tags: { operation: 'setup_create_chapter', name: 'POST /api/sections/{sectionId}/chapters' } }
     );
     if (chapterRes.status !== 201) {
       throw new Error(`Criação do capítulo sintético falhou com status ${chapterRes.status}.`);
@@ -290,7 +305,7 @@ export function setup() {
       const sceneRes = http.post(
         `${BASE}/api/chapters/${chapterId}/scenes`,
         JSON.stringify({ title: `${marker}-scene-${i + 1}`, sortOrder: i }),
-        { headers: jsonHeaders(authHeaders), tags: { operation: 'setup_create_scene' } }
+        { headers: jsonHeaders(authHeaders), tags: { operation: 'setup_create_scene', name: 'POST /api/chapters/{chapterId}/scenes' } }
       );
       if (sceneRes.status !== 201) {
         throw new Error(`Criação da cena sintética ${i + 1}/${VUS} falhou com status ${sceneRes.status}.`);
@@ -306,20 +321,39 @@ export function setup() {
   return { authHeaders, bookId, runId, marker, sceneIds };
 }
 
+function thinkTime() {
+  return THINK_TIME_MIN_S + Math.random() * (THINK_TIME_MAX_S - THINK_TIME_MIN_S);
+}
+
+/**
+ * list_books, load_outline e load_scene são pré-requisitos sequenciais do
+ * fluxo real (não dá para abrir uma cena sem antes navegar até o outline, e
+ * não dá para chegar no outline sem antes listar os livros). Uma falha em
+ * qualquer um encerra a iteração imediatamente: nenhuma etapa seguinte roda,
+ * e em particular nenhum PATCH é enviado usando um estado que o VU nunca
+ * confirmou ter lido — uma falha de leitura não pode virar tráfego de
+ * escrita nem distorcer a latência/erro de save_scene.
+ */
 export default function (data) {
   const { authHeaders, bookId, marker, sceneIds } = data;
 
   const listRes = http.get(`${BASE}/api/books`, {
     headers: jsonHeaders(authHeaders),
-    tags: { operation: 'list_books' },
+    tags: { operation: 'list_books', name: 'GET /api/books' },
   });
-  check(listRes, { 'list_books status 200': (r) => r.status === 200 });
+  if (!check(listRes, { 'list_books status 200': (r) => r.status === 200 })) {
+    sleep(thinkTime());
+    return;
+  }
 
   const outlineRes = http.get(`${BASE}/api/books/${bookId}/outline`, {
     headers: jsonHeaders(authHeaders),
-    tags: { operation: 'load_outline' },
+    tags: { operation: 'load_outline', name: 'GET /api/books/{bookId}/outline' },
   });
-  check(outlineRes, { 'load_outline status 200': (r) => r.status === 200 });
+  if (!check(outlineRes, { 'load_outline status 200': (r) => r.status === 200 })) {
+    sleep(thinkTime());
+    return;
+  }
 
   // Uma cena fixa por VU (índice estável em __VU), nunca compartilhada entre VUs.
   const sceneId = sceneIds[(__VU - 1) % sceneIds.length];
@@ -330,14 +364,10 @@ export default function (data) {
   // artificiais — a próxima escrita sempre parte do estado real do servidor.
   const sceneRes = http.get(`${BASE}/api/scenes/${sceneId}`, {
     headers: jsonHeaders(authHeaders),
-    tags: { operation: 'load_scene' },
+    tags: { operation: 'load_scene', name: 'GET /api/scenes/{sceneId}' },
   });
-  const sceneOk = check(sceneRes, { 'load_scene status 200': (r) => r.status === 200 });
-  if (!sceneOk) {
-    // Sem uma revisão confiável não há PATCH seguro para mandar nesta
-    // iteração: interrompe só esta iteração deste VU, controladamente, em
-    // vez de arriscar um `expectedContentRevision` desatualizado.
-    sleep(THINK_TIME_MIN_S + Math.random() * (THINK_TIME_MAX_S - THINK_TIME_MIN_S));
+  if (!check(sceneRes, { 'load_scene status 200': (r) => r.status === 200 })) {
+    sleep(thinkTime());
     return;
   }
   const revision = sceneRes.json('contentRevision');
@@ -355,17 +385,17 @@ export default function (data) {
       expectedContentRevision: revision,
       operationId: uuidv4(),
     }),
-    { headers: jsonHeaders(authHeaders), tags: { operation: 'save_scene' } }
+    { headers: jsonHeaders(authHeaders), tags: { operation: 'save_scene', name: 'PATCH /api/scenes/{sceneId}/content' } }
   );
   check(saveRes, { 'save_scene status 200': (r) => r.status === 200 });
 
-  sleep(THINK_TIME_MIN_S + Math.random() * (THINK_TIME_MAX_S - THINK_TIME_MIN_S));
+  sleep(thinkTime());
 }
 
 export function teardown(data) {
   const res = http.del(`${BASE}/api/books/${data.bookId}`, null, {
     headers: jsonHeaders(data.authHeaders),
-    tags: { operation: 'teardown_delete_book' },
+    tags: { operation: 'teardown_delete_book', name: 'DELETE /api/books/{bookId}' },
   });
   if (res.status !== 204) {
     // Reprova a execução em vez de só registrar: um teardown que falha
@@ -401,13 +431,60 @@ function redactSummary(data) {
   return clone;
 }
 
+/**
+ * Resumo textual mínimo, sem dependência de rede: nenhum import de CDN (nem
+ * o jslib oficial do k6 para o texto colorido padrão), porque o teste não
+ * pode falhar em iniciar por falta de internet. O JSON sanitizado
+ * (RESULT_PATH) continua sendo a evidência principal; isto aqui é só uma
+ * conferência rápida no terminal.
+ */
+function renderShortSummary(data) {
+  const m = data.metrics || {};
+  const pct = (rate) => `${(rate * 100).toFixed(2)}%`;
+  const lines = ['--- resumo curto (o JSON sanitizado é a evidência completa) ---'];
+
+  if (m.checks) {
+    const { passes, fails, rate } = m.checks.values;
+    lines.push(`checks: ${pct(rate)} (${passes}/${passes + fails})`);
+  }
+  if (m.http_req_failed) {
+    lines.push(`http_req_failed: ${pct(m.http_req_failed.values.rate)}`);
+  }
+  if (m.http_reqs) {
+    lines.push(`http_reqs: ${m.http_reqs.values.count} (${m.http_reqs.values.rate.toFixed(2)}/s)`);
+  }
+  ['list_books', 'load_outline', 'load_scene', 'save_scene'].forEach((op) => {
+    const trend = m[`http_req_duration{operation:${op}}`];
+    if (trend) {
+      lines.push(`${op} p95: ${trend.values['p(95)'].toFixed(1)}ms`);
+    }
+  });
+
+  const failedThresholds = [];
+  Object.keys(m).forEach((key) => {
+    const thresholds = m[key].thresholds || {};
+    Object.keys(thresholds).forEach((expr) => {
+      if (thresholds[expr].ok === false) {
+        failedThresholds.push(`${key} ${expr}`);
+      }
+    });
+  });
+  lines.push(
+    failedThresholds.length
+      ? `THRESHOLDS FALHARAM: ${failedThresholds.join(', ')}`
+      : 'Todos os thresholds passaram.'
+  );
+
+  return lines.join('\n') + '\n';
+}
+
 // Substitui `--summary-export` + sanitização manual: definir handleSummary()
 // assume o controle de toda a saída do k6 (inclusive o texto no terminal),
 // então a redação acontece uma vez aqui e vale para qualquer destino.
 export function handleSummary(data) {
   const redacted = redactSummary(data);
   const outputs = {
-    stdout: textSummary(redacted, { indent: ' ', enableColors: true }),
+    stdout: renderShortSummary(redacted),
   };
   if (__ENV.RESULT_PATH) {
     outputs[__ENV.RESULT_PATH] = JSON.stringify(redacted, null, 2) + '\n';
