@@ -82,6 +82,70 @@ describe("RegisterForm", () => {
     expect(authApi.register).not.toHaveBeenCalled();
   });
 
+  test("recusa senha sem nenhum dígito, mesmo longa", async () => {
+    renderWithClient(<RegisterForm />);
+    fillForm({ password: "somente-letras-aqui", passwordConfirmation: "somente-letras-aqui" });
+
+    submit();
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "A senha deve ter ao menos 10 caracteres, incluindo letras e números.",
+    );
+    expect(authApi.register).not.toHaveBeenCalled();
+  });
+
+  test("recusa senha sem nenhuma letra, mesmo longa", async () => {
+    renderWithClient(<RegisterForm />);
+    fillForm({ password: "1234567890123", passwordConfirmation: "1234567890123" });
+
+    submit();
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "A senha deve ter ao menos 10 caracteres, incluindo letras e números.",
+    );
+    expect(authApi.register).not.toHaveBeenCalled();
+  });
+
+  // The backend policy (PasswordPolicy.isValid) tests Unicode letters/digits via
+  // Character.isLetter/Character.isDigit, not [a-zA-Z]/[0-9] — the client must accept the same
+  // passwords the server would, or a legitimate password gets rejected before it ever reaches the API.
+  test("aceita senha com letra acentuada, sem recusar no cliente", async () => {
+    // No ASCII a-z/A-Z at all — only accented letters — so the old [a-zA-Z] regex would have
+    // rejected this as "no letter" even though it plainly has letters.
+    const password = "áéíóúâêîôû12";
+    renderWithClient(<RegisterForm />);
+    fillForm({ password, passwordConfirmation: password });
+
+    submit();
+
+    await waitFor(() => expect(authApi.register).toHaveBeenCalled());
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  test("aceita senha com dígito Unicode não ASCII, sem recusar no cliente", async () => {
+    // U+0661 ARABIC-INDIC DIGIT ONE: Character.isDigit and \p{Nd} both recognize it, [0-9] does not.
+    const password = "senha-valida-١aaa";
+    renderWithClient(<RegisterForm />);
+    fillForm({ password, passwordConfirmation: password });
+
+    submit();
+
+    await waitFor(() => expect(authApi.register).toHaveBeenCalled());
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  test("recusa nome de exibição com mais de 255 caracteres no cliente", async () => {
+    renderWithClient(<RegisterForm />);
+    fillForm({ displayName: "A".repeat(256) });
+
+    submit();
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "O nome de exibição deve ter no máximo 255 caracteres.",
+    );
+    expect(authApi.register).not.toHaveBeenCalled();
+  });
+
   test("recusa senha e confirmação divergentes no cliente", async () => {
     renderWithClient(<RegisterForm />);
     fillForm({ passwordConfirmation: "outra-senha-1" });

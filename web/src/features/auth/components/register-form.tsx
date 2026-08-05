@@ -22,6 +22,9 @@ const PERSONAS: { value: string; label: string }[] = [
 
 const FALLBACK_TIME_ZONE = "America/Sao_Paulo";
 
+// Matches users.display_name varchar(255) (backend RegistrationService, RegistrationMessages).
+const MAX_DISPLAY_NAME_LENGTH = 255;
+
 /** Best-effort browser detection with a safe, always-valid IANA fallback: registration must never
  *  fail because a sandboxed or unusual environment can't report a time zone. */
 export function detectTimeZone(): string {
@@ -83,6 +86,7 @@ export function RegisterForm() {
           type="text"
           autoComplete="name"
           autoFocus
+          maxLength={MAX_DISPLAY_NAME_LENGTH}
           value={displayName}
           onChange={(event) => setDisplayName(event.target.value)}
         />
@@ -171,9 +175,18 @@ export function RegisterForm() {
   );
 }
 
+// Mirrors the backend's PasswordPolicy, which tests Unicode letters/digits via
+// Character.isLetter/Character.isDigit — not the ASCII-only [a-zA-Z]/[0-9] a plain regex would use.
+const PASSWORD_HAS_LETTER = /\p{L}/u;
+const PASSWORD_HAS_DIGIT = /\p{Nd}/u;
+
 function validate(displayName: string, email: string, password: string, passwordConfirmation: string) {
-  if (!displayName.trim()) {
+  const trimmedDisplayName = displayName.trim();
+  if (!trimmedDisplayName) {
     return "Informe seu nome de exibição.";
+  }
+  if ([...trimmedDisplayName].length > MAX_DISPLAY_NAME_LENGTH) {
+    return "O nome de exibição deve ter no máximo 255 caracteres.";
   }
   if (!email.trim()) {
     return "Informe seu email.";
@@ -184,7 +197,7 @@ function validate(displayName: string, email: string, password: string, password
   if (!password) {
     return "Informe uma senha.";
   }
-  if (password.length < 10 || !/[a-zA-Z]/.test(password) || !/[0-9]/.test(password)) {
+  if (password.length < 10 || !PASSWORD_HAS_LETTER.test(password) || !PASSWORD_HAS_DIGIT.test(password)) {
     return "A senha deve ter ao menos 10 caracteres, incluindo letras e números.";
   }
   if (password !== passwordConfirmation) {
