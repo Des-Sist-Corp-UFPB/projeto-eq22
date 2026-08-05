@@ -128,6 +128,22 @@ docker compose `
 padrão de produção (8 tentativas/conta por minuto) e a execução recebe `429`
 antes de todas as VUs terminarem de autenticar — ver [§1](#1-o-que-o-teste-faz).
 
+O orçamento padrão do overlay é **1000** tentativas/janela (conta e origem),
+suficiente para `VUS` até `998` (regra: `IWRITE_LOADTEST_LOGIN_RATE_LIMIT >=
+VUS + 2` — 1 login de `setup()` + `VUS` logins das VUs + 1 de `teardown()`).
+Para uma execução com `VUS` maior que isso, sobrescreva antes de subir a
+stack:
+
+```bash
+# bash
+export IWRITE_LOADTEST_LOGIN_RATE_LIMIT=1000
+```
+
+```powershell
+# PowerShell
+$env:IWRITE_LOADTEST_LOGIN_RATE_LIMIT = "1000"
+```
+
 Tenha o k6 disponível (`k6.io/docs` para instalação, ou use a imagem
 `grafana/k6` via Docker apontando `BASE_URL` para `host.docker.internal`).
 
@@ -167,11 +183,22 @@ faz o próprio handshake, no seu próprio cookie jar isolado do k6:
 | `LOAD_TEST_PASSWORD` | **sim** | nenhum — o script aborta sem ela |
 | `LOAD_TEST_EMAIL` | não | `autor-a@iwrite.local` |
 
-Use a mesma senha do seed demo:
+Use a mesma senha do seed demo. O Docker Compose **não** exporta variáveis do
+`.env` para o seu shell — `.env` só é lido pelo `docker compose` ao subir os
+containers — então não basta apontar para `IWRITE_DEMO_AUTOR_A_PASSWORD`,
+essa variável não existe no shell. Digite a senha explicitamente, sem eco:
 
 ```bash
 # bash
-export LOAD_TEST_PASSWORD="$IWRITE_DEMO_AUTOR_A_PASSWORD"
+read -rsp "Senha do autor-a, igual à configurada no .env: " LOAD_TEST_PASSWORD
+echo
+export LOAD_TEST_PASSWORD
+```
+
+```powershell
+# PowerShell
+$securePassword = Read-Host "Senha do autor-a, igual à configurada no .env" -AsSecureString
+$env:LOAD_TEST_PASSWORD = [System.Net.NetworkCredential]::new("", $securePassword).Password
 ```
 
 O script nunca imprime a senha (só o e-mail aparece nos logs, em caso de erro
@@ -287,27 +314,62 @@ Validação estática antes de rodar:
 k6 inspect loadtest/carga.js
 ```
 
+Os três comandos abaixo assumem que `LOAD_TEST_PASSWORD` já foi definida
+explicitamente como em [§3](#3-autenticação) — nunca via
+`IWRITE_DEMO_AUTOR_A_PASSWORD`, que não existe no shell (só no `.env` lido
+pelo Docker Compose).
+
 ### Smoke curto
 
 ```bash
-k6 run -e BASE_URL=http://localhost:8085 -e LOAD_TEST_PASSWORD=$IWRITE_DEMO_AUTOR_A_PASSWORD \
+k6 run \
+  -e BASE_URL=http://localhost:8085 \
+  -e LOAD_TEST_PASSWORD="$LOAD_TEST_PASSWORD" \
   -e VUS=2 -e WARMUP_DURATION=5s -e STEADY_DURATION=10s -e RAMPDOWN_DURATION=5s \
+  loadtest/carga.js
+```
+
+```powershell
+k6 run `
+  -e BASE_URL=http://localhost:8085 `
+  -e "LOAD_TEST_PASSWORD=$env:LOAD_TEST_PASSWORD" `
+  -e VUS=2 -e WARMUP_DURATION=5s -e STEADY_DURATION=10s -e RAMPDOWN_DURATION=5s `
   loadtest/carga.js
 ```
 
 ### Baseline — 10 VUs (padrão de estágios: 30s/2m/30s)
 
 ```bash
-k6 run -e BASE_URL=http://localhost:8085 -e LOAD_TEST_PASSWORD=$IWRITE_DEMO_AUTOR_A_PASSWORD \
+k6 run \
+  -e BASE_URL=http://localhost:8085 \
+  -e LOAD_TEST_PASSWORD="$LOAD_TEST_PASSWORD" \
   -e VUS=10 -e RESULT_PATH=loadtest/resultados/resultado-10vus.json \
+  loadtest/carga.js
+```
+
+```powershell
+k6 run `
+  -e BASE_URL=http://localhost:8085 `
+  -e "LOAD_TEST_PASSWORD=$env:LOAD_TEST_PASSWORD" `
+  -e VUS=10 -e RESULT_PATH=loadtest/resultados/resultado-10vus.json `
   loadtest/carga.js
 ```
 
 ### Carga ampliada — 30 VUs
 
 ```bash
-k6 run -e BASE_URL=http://localhost:8085 -e LOAD_TEST_PASSWORD=$IWRITE_DEMO_AUTOR_A_PASSWORD \
+k6 run \
+  -e BASE_URL=http://localhost:8085 \
+  -e LOAD_TEST_PASSWORD="$LOAD_TEST_PASSWORD" \
   -e VUS=30 -e RESULT_PATH=loadtest/resultados/resultado-30vus.json \
+  loadtest/carga.js
+```
+
+```powershell
+k6 run `
+  -e BASE_URL=http://localhost:8085 `
+  -e "LOAD_TEST_PASSWORD=$env:LOAD_TEST_PASSWORD" `
+  -e VUS=30 -e RESULT_PATH=loadtest/resultados/resultado-30vus.json `
   loadtest/carga.js
 ```
 
