@@ -1,199 +1,121 @@
 {
-  "metrics": {
-    "checks": {
-      "passes": 5853,
-      "fails": 0,
-      "thresholds": {
-        "rate>0.99": false
+  "resumo_comparativo": {
+    "commit": "eee876a6b88166e96b14b7fd59d2759d0d59ae7a",
+    "data_execucao": "2026-08-05T04:31:10Z",
+    "k6_version": "k6.exe v2.1.0 (commit/83a87a41e2, go1.26.4, windows/amd64)",
+    "ambiente": {
+      "descricao": "Stack Docker isolada dedicada a este teste (docker compose -p iwrite-k6, containers e portas remapeados só para não colidir com outro worktree já em uso na mesma máquina de desenvolvimento).",
+      "backend_containers": "db + backend apenas (profile demo), sem frontend",
+      "hardware": "não dedicado — máquina de desenvolvimento compartilhada com outros stacks Docker (outro worktree do IWrite + um projeto não relacionado) rodando simultaneamente"
+    },
+    "cenario": [
+      "GET /api/books (list_books)",
+      "GET /api/books/{bookId}/outline (load_outline)",
+      "GET /api/scenes/{sceneId} (load_scene)",
+      "PATCH /api/scenes/{sceneId}/content (save_scene) — contentText + contentJson (documento ProseMirror no mesmo formato do editor real)"
+    ],
+    "execucoes": {
+      "10_vus": {
+        "vus": 10,
+        "duracao": "3m (30s aquecimento / 2m carga estável / 30s desaceleração)",
+        "requests_totais": 5809,
+        "rps": 30.79,
+        "iterations": 1448,
+        "operacoes_principais": {
+          "descricao": "Medidas sob carga, dentro do loop de VUs (list_books, load_outline, load_scene, save_scene)",
+          "http_req_duration_agregado": { "p50": 57.92, "p90": 228.09, "p95": 328.35, "p99": 542.94, "max": 5272.29, "unidade": "ms" },
+          "por_operacao_p95_ms": {
+            "list_books": 148.02,
+            "load_outline": 117.72,
+            "load_scene": 99.92,
+            "save_scene": 518.01
+          },
+          "por_operacao_p99_ms": {
+            "list_books": 204.89,
+            "load_outline": 160.40,
+            "load_scene": 142.86,
+            "save_scene": 680.75
+          }
+        },
+        "auth_setup_teardown": {
+          "descricao": "Fora do loop medido: rodam 1x (auth, setup do livro/seção/capítulo, teardown) ou VUS vezes (setup_create_scene, uma por VU)",
+          "auth_csrf_ms": 24.18,
+          "auth_login_ms": 5272.29,
+          "setup_create_book_ms": 194.82,
+          "setup_create_section_ms": 123.75,
+          "setup_create_chapter_ms": 104.72,
+          "setup_create_scene_p95_ms": 303.53,
+          "teardown_delete_book_ms": 353.06
+        },
+        "erros": { "http_req_failed_rate": 0, "http_req_failed_total": 0, "de": 5809 },
+        "checks": { "rate": 1, "passes": 5792, "fails": 0 },
+        "thresholds": {
+          "http_req_failed<1%": "passou",
+          "checks>99%": "passou",
+          "http_req_duration_global_p95<500ms": "passou (328.35ms)",
+          "list_books_p95<500ms": "passou (148.02ms)",
+          "load_outline_p95<500ms": "passou (117.72ms)",
+          "load_scene_p95<500ms": "passou (99.92ms)",
+          "save_scene_p95<500ms": "FALHOU (518.01ms)",
+          "auth_login_p95<8000ms": "passou (5272.29ms — bcrypt sob contenção de CPU do host, ver limitações)"
+        },
+        "exit_code": "diferente de zero (threshold save_scene violado)"
       },
-      "value": 1
-    },
-    "http_req_waiting": {
-      "min": 0.7117,
-      "med": 24.99725,
-      "p(90)": 89.40719000000001,
-      "p(95)": 121.90020500000003,
-      "p(99)": 232.1888660000001,
-      "max": 5415.466,
-      "avg": 42.07021442930163
-    },
-    "http_req_duration{operation:list_books}": {
-      "avg": 26.013223936442795,
-      "min": 3.7406,
-      "med": 19.8793,
-      "p(90)": 43.676,
-      "p(95)": 61.653549999999996,
-      "p(99)": 130.7783,
-      "max": 286.0893,
-      "thresholds": {
-        "p(95)<500": false
+      "30_vus": {
+        "vus": 30,
+        "duracao": "3m (30s aquecimento / 2m carga estável / 30s desaceleração)",
+        "requests_totais": 10221,
+        "rps": 53.81,
+        "iterations": 2546,
+        "operacoes_principais": {
+          "descricao": "Medidas sob carga, dentro do loop de VUs (list_books, load_outline, load_scene, save_scene)",
+          "http_req_duration_agregado": { "p50": 215.73, "p90": 603.25, "p95": 754.86, "p99": 1036.61, "max": 5303.42, "unidade": "ms" },
+          "por_operacao_p95_ms": {
+            "list_books": 484.99,
+            "load_outline": 421.35,
+            "load_scene": 441.85,
+            "save_scene": 985.68
+          },
+          "por_operacao_p99_ms": {
+            "list_books": 719.47,
+            "load_outline": 637.13,
+            "load_scene": 671.03,
+            "save_scene": 1266.79
+          }
+        },
+        "auth_setup_teardown": {
+          "descricao": "Fora do loop medido: rodam 1x (auth, setup do livro/seção/capítulo, teardown) ou VUS vezes (setup_create_scene, uma por VU)",
+          "auth_csrf_ms": 10.46,
+          "auth_login_ms": 5303.42,
+          "setup_create_book_ms": 110.03,
+          "setup_create_section_ms": 94.43,
+          "setup_create_chapter_ms": 92.69,
+          "setup_create_scene_p95_ms": 143.28,
+          "teardown_delete_book_ms": 629.93
+        },
+        "erros": { "http_req_failed_rate": 0, "http_req_failed_total": 0, "de": 10221 },
+        "checks": { "rate": 1, "passes": 10184, "fails": 0 },
+        "thresholds": {
+          "http_req_failed<1%": "passou",
+          "checks>99%": "passou",
+          "http_req_duration_global_p95<500ms": "FALHOU (754.86ms)",
+          "list_books_p95<500ms": "passou (484.99ms)",
+          "load_outline_p95<500ms": "passou (421.35ms)",
+          "load_scene_p95<500ms": "passou (441.85ms)",
+          "save_scene_p95<500ms": "FALHOU (985.68ms)",
+          "auth_login_p95<8000ms": "passou (5303.42ms — bcrypt sob contenção de CPU do host, ver limitações)"
+        },
+        "exit_code": "diferente de zero (thresholds global e save_scene violados)"
       }
     },
-    "http_req_duration{expected_response:true}": {
-      "max": 5416.0446,
-      "avg": 42.51883495741062,
-      "min": 3.7406,
-      "med": 25.3923,
-      "p(90)": 90.27747000000001,
-      "p(95)": 122.60437500000003,
-      "p(99)": 232.36795300000034
-    },
-    "vus_max": {
-      "max": 10,
-      "value": 10,
-      "min": 10
-    },
-    "http_reqs": {
-      "count": 5870,
-      "rate": 31.276623259810908
-    },
-    "http_req_connecting": {
-      "med": 0,
-      "p(90)": 0,
-      "p(95)": 0,
-      "p(99)": 0.561313000000005,
-      "max": 17.9905,
-      "avg": 0.0240493185689949,
-      "min": 0
-    },
-    "iteration_duration": {
-      "avg": 778.7866587391076,
-      "min": 351.1111,
-      "med": 772.4999,
-      "p(90)": 1063.4829,
-      "p(95)": 1109.25685,
-      "p(99)": 1282.14515,
-      "max": 1504.1671
-    },
-    "vus": {
-      "value": 1,
-      "min": 0,
-      "max": 10
-    },
-    "http_req_duration{operation:load_outline}": {
-      "avg": 19.672537262942075,
-      "min": 4.1347,
-      "med": 15.0026,
-      "p(90)": 32.578,
-      "p(95)": 44.2909,
-      "p(99)": 97.99289999999999,
-      "max": 157.9915,
-      "thresholds": {
-        "p(95)<500": false
-      }
-    },
-    "http_req_blocked": {
-      "med": 0,
-      "p(90)": 0,
-      "p(95)": 0,
-      "p(99)": 1.048831,
-      "max": 25.7574,
-      "avg": 0.0443127086882453,
-      "min": 0
-    },
-    "http_req_tls_handshaking": {
-      "avg": 0,
-      "min": 0,
-      "med": 0,
-      "p(90)": 0,
-      "p(95)": 0,
-      "p(99)": 0,
-      "max": 0
-    },
-    "http_req_duration{operation:save_scene}": {
-      "avg": 78.54112901076374,
-      "min": 9.2062,
-      "med": 61.5955,
-      "p(90)": 135.7011,
-      "p(95)": 189.95440000000002,
-      "p(99)": 320.17575,
-      "max": 484.8767,
-      "thresholds": {
-        "p(95)<500": false
-      }
-    },
-    "data_received": {
-      "count": 10262522,
-      "rate": 54680.92577334262
-    },
-    "iterations": {
-      "count": 1951,
-      "rate": 10.3953478671024
-    },
-    "data_sent": {
-      "count": 2149210,
-      "rate": 11451.453403103613
-    },
-    "http_req_duration": {
-      "avg": 42.51883495741062,
-      "min": 3.7406,
-      "med": 25.3923,
-      "p(90)": 90.27747000000001,
-      "p(95)": 122.60437500000003,
-      "p(99)": 232.36795300000034,
-      "max": 5416.0446,
-      "thresholds": {
-        "p(95)<500": false
-      }
-    },
-    "http_req_receiving": {
-      "min": 0,
-      "med": 0,
-      "p(90)": 0.7565,
-      "p(95)": 1.1817300000000013,
-      "p(99)": 4.484413000000013,
-      "max": 18.9377,
-      "avg": 0.3876427257240201
-    },
-    "http_req_failed": {
-      "passes": 0,
-      "fails": 5870,
-      "thresholds": {
-        "rate<0.01": false
-      },
-      "value": 0
-    },
-    "http_req_sending": {
-      "avg": 0.060977802385008495,
-      "min": 0,
-      "med": 0,
-      "p(90)": 0,
-      "p(95)": 0.5565100000000001,
-      "p(99)": 0.9988860000000003,
-      "max": 8.5382
-    }
-  },
-  "setup_data": {
-    "runId": "msfj0n8zhwpd",
-    "sceneCount": 10
-  },
-  "root_group": {
-    "path": "",
-    "id": "d41d8cd98f00b204e9800998ecf8427e",
-    "groups": {},
-    "checks": {
-      "list_books status 200": {
-        "name": "list_books status 200",
-        "path": "::list_books status 200",
-        "id": "ca0a6530ef9d6f6b4bb485d769e42ef6",
-        "passes": 1951,
-        "fails": 0
-      },
-      "load_outline status 200": {
-        "passes": 1951,
-        "fails": 0,
-        "name": "load_outline status 200",
-        "path": "::load_outline status 200",
-        "id": "8f148692b2c7b87007d258b2389a251b"
-      },
-      "save_scene status 200": {
-        "fails": 0,
-        "name": "save_scene status 200",
-        "path": "::save_scene status 200",
-        "id": "6fe5186dbef0326b5fcca7692e245f95",
-        "passes": 1951
-      }
-    },
-    "name": ""
+    "gargalo_identificado": "PATCH /api/scenes/{id}/content (save_scene) é a operação mais lenta em ambas as cargas (p95 3.5-4.5x maior que list_books) e a que mais degrada com o aumento de VUs (p95 sobe de 518ms para 986ms, ~1.9x, entre 10 e 30 VUs). É a única escrita do cenário: passa por auditoria (@AuditedOperation), versionamento de cena (contentJson + contentText, agora medido corretamente após a correção da issue) e ledger de contagem de palavras. Com a correção que passou a enviar o mesmo contentJson que o editor real produz, o custo de save_scene cresceu sensivelmente frente à medição anterior deste PR (que só enviava contentText) — o benchmark anterior subestimava esse caminho.",
+    "limitacoes": [
+      "Execução na mesma máquina de desenvolvimento concorrendo com outros containers Docker não relacionados a este teste (não é hardware dedicado); os números absolutos não são comparáveis a um ambiente isolado.",
+      "Backend, Postgres e k6 rodam na mesma máquina, sem separação de rede/CPU entre gerador de carga e alvo — parte da latência medida pode ser contenção local, não custo real de rede.",
+      "auth_login apresentou ~5.3s em ambas as execuções (bcrypt, deliberadamente lento, executado uma única vez por run contra um host sob contenção de CPU) — não faz parte do cenário medido sob carga e não deve ser lido como latência típica de login em produção.",
+      "Sem OTel habilitado durante a execução (evita overhead de instrumentação na medição); a decomposição do custo de save_scene entre auditoria/versionamento/ledger de palavras não foi feita neste PR.",
+      "max de ambas as execuções (5.27s e 5.30s) no http_req_duration agregado corresponde à própria chamada de auth_login incluída no agregado geral, não a uma operação do loop principal."
+    ],
+    "proxima_acao_recomendada": "Rodar o teste com OTel habilitado (docker-compose.observability.yml) e usar os traces correlacionados de scene_content_save para decompor o tempo do PATCH entre auditoria, versionamento de cena e ledger de palavras, e então decidir se algum desses passos pode sair do caminho síncrono do save. Também vale medir save_scene com um payload de contentJson de tamanho realista maior (parágrafos múltiplos), já que este teste usa um documento de um parágrafo curto."
   }
 }

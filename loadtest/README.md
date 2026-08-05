@@ -6,7 +6,7 @@ Substitui o teste anterior, que só exercitava `/ping`.
 
 > ⚠️ **Rode SEMPRE contra o seu ambiente LOCAL.** O script recusa qualquer
 > `BASE_URL` que não resolva para `localhost`, `127.0.0.1`, `::1`,
-> `host.docker.internal` ou `backend` — ver [Segurança de destino](#segurança-de-destino).
+> `host.docker.internal` ou `backend` — ver [Segurança de destino](#4-segurança-de-destino).
 > **Nunca** aponte para Render, produção ou o servidor acadêmico compartilhado
 > (`https://eqNN.dsc.rodrigor.com`): o Postgres é compartilhado com outras equipes.
 
@@ -18,12 +18,25 @@ Fluxo por VU, uma vez por iteração:
 
 1. `GET /api/books` — tag `operation=list_books`
 2. `GET /api/books/{bookId}/outline` — tag `operation=load_outline`
-3. `PATCH /api/scenes/{sceneId}/content` — tag `operation=save_scene`
-4. think time curto (0.3–1s, configurável)
+3. `GET /api/scenes/{sceneId}` — tag `operation=load_scene` (o mesmo que o
+   `SceneEditor` real faz ao abrir uma cena — `getScene(sceneId)` em
+   `web/src/features/scenes/api/scenes-api.ts`)
+4. `PATCH /api/scenes/{sceneId}/content` — tag `operation=save_scene`
+5. think time curto (0.3–1s, configurável)
 
 Sem chamadas de IA. Cada VU escreve **somente na própria cena** (uma cena por VU
-máximo, criada no `setup()`), controlando `contentRevision` e gerando um
-`operationId` novo a cada `PATCH` — exatamente o que a UI real faz ao salvar.
+máximo, criada no `setup()`). A `expectedContentRevision` do `PATCH` vem sempre
+da leitura do passo 3, **nunca de um cache local** — assim uma falha ambígua no
+`PATCH` anterior (ex.: a escrita foi aplicada no servidor mas a resposta se
+perdeu) nunca produz uma sequência artificial de conflitos de revisão: a
+próxima escrita sempre parte do estado real e atual do servidor. Um novo
+`operationId` é gerado a cada `PATCH`.
+
+O `contentJson` enviado é o mesmo documento ProseMirror que o editor real
+produz e versiona (`web/src/features/scenes/editor/tiptap-editor.tsx`,
+`plainTextToDocument`), não apenas `contentText` — a versão anterior deste
+script só enviava texto puro, o que subestimava o custo real do caminho de
+save (ver [§9](#9-resultados-obtidos)).
 
 Login acontece **uma única vez em `setup()`**, não por VU nem por iteração: a
 sessão (`JSESSIONID`) e o token CSRF (`XSRF-TOKEN`) são obtidos ali e
@@ -93,9 +106,19 @@ de login).
 ## 4. Segurança de destino
 
 `BASE_URL` só é aceita sem override se o host resolver para um destes:
-`localhost`, `127.0.0.1`, `::1`, `host.docker.internal`, `backend`. Qualquer
-outro host faz o script abortar **antes de criar qualquer dado ou logar**, com
-uma mensagem explicando como liberar deliberadamente:
+`localhost`, `127.0.0.1`, `::1`, `host.docker.internal`, `backend`. A
+resolução do host **não usa regex ingênua** — o parser (`parseSafeHost` em
+`carga.js`) só aceita esquema `http:`/`https:`, resolve corretamente literais
+IPv6 (`[::1]`) e **rejeita qualquer URL com user-info** (`user@host` ou
+`user:senha@host`) mesmo que o host à direita seja local: uma URL como
+`http://localhost:8085@host-externo` não é "reinterpretada" para extrair o
+host real, ela é recusada inteira, porque tentar adivinhar o host por trás de
+credenciais é exatamente a superfície que um parser baseado em regex
+simples pode errar.
+
+Qualquer host fora da lista, ou URL inválida, faz o script abortar **antes de
+criar qualquer dado ou logar**, com uma mensagem explicando como liberar
+deliberadamente:
 
 ```bash
 -e ALLOW_UNSAFE_TARGET=eu-autorizo-um-destino-externo
@@ -116,9 +139,22 @@ cena existente):
 - 1 cena por VU máximo (`VUS`), cada uma escrita só pelo VU correspondente
   (`sceneIds[(__VU - 1) % sceneIds.length]`)
 
+**Se seção, capítulo ou alguma cena falhar depois que o livro já existe**, o
+`setup()` tenta excluir o livro sintético (removendo em cascata o que já
+tiver sido criado sob ele) antes de relançar o erro original e reprovar o
+teste — necessário porque `teardown()` nunca roda quando `setup()` lança. O
+log da tentativa de limpeza contém só `runId`/`bookId`/status HTTP, nunca
+cookies ou o token CSRF.
+
 `teardown()` apaga o livro (cascata apaga seção/capítulo/cenas via
-`CascadeType.ALL` + `orphanRemoval`). Se o teste for interrompido (Ctrl+C, k6
-morto, timeout) antes do `teardown()` rodar, limpe manualmente:
+`CascadeType.ALL` + `orphanRemoval`) e **reprova a execução** (lança e faz o
+`k6 run` sair com código diferente de zero) se o `DELETE` final não retornar
+`204` — um teardown que só loga e segue deixaria o livro `LOADTEST-` para trás
+sem que nenhum threshold acusasse nada, já que essa chamada acontece fora do
+loop de VUs medido.
+
+Se o teste for interrompido (Ctrl+C, k6 morto, timeout) antes do `teardown()`
+rodar, limpe manualmente:
 
 ```bash
 # lista os livros LOADTEST- residuais de uma sessão autenticada (substitua os
@@ -144,6 +180,7 @@ Variáveis de carga (todas opcionais, com padrão realista):
 | `STEADY_DURATION` | carga estável | `2m` |
 | `RAMPDOWN_DURATION` | desaquecimento | `30s` |
 | `THINK_TIME_MIN_S` / `THINK_TIME_MAX_S` | think time por iteração | `0.3` / `1` |
+| `RESULT_PATH` | caminho do resumo JSON já sanitizado (opcional) | nenhum — só imprime no terminal |
 
 Validação estática antes de rodar:
 
@@ -163,28 +200,30 @@ k6 run -e BASE_URL=http://localhost:8085 -e LOAD_TEST_PASSWORD=$IWRITE_DEMO_AUTO
 
 ```bash
 k6 run -e BASE_URL=http://localhost:8085 -e LOAD_TEST_PASSWORD=$IWRITE_DEMO_AUTOR_A_PASSWORD \
-  -e VUS=10 --summary-export=loadtest/resultados/resultado-10vus.json \
+  -e VUS=10 -e RESULT_PATH=loadtest/resultados/resultado-10vus.json \
   loadtest/carga.js
-node loadtest/scrub-summary.js loadtest/resultados/resultado-10vus.json
 ```
 
 ### Carga ampliada — 30 VUs
 
 ```bash
 k6 run -e BASE_URL=http://localhost:8085 -e LOAD_TEST_PASSWORD=$IWRITE_DEMO_AUTOR_A_PASSWORD \
-  -e VUS=30 --summary-export=loadtest/resultados/resultado-30vus.json \
+  -e VUS=30 -e RESULT_PATH=loadtest/resultados/resultado-30vus.json \
   loadtest/carga.js
-node loadtest/scrub-summary.js loadtest/resultados/resultado-30vus.json
 ```
 
-**Sempre rode `scrub-summary.js` antes de commitar um resultado.** O
-`--summary-export` do k6 inclui integralmente o retorno de `setup()` no campo
-`setup_data` — isto é, o cookie de sessão e o token CSRF usados na execução. O
-script remove esses campos e mantém só `runId`/`sceneCount`. Sem esse passo
-você comita uma sessão viva (ainda que efêmera) no repositório.
+**Sanitização é automática, não um passo manual.** `carga.js` define
+`handleSummary()`, que assume toda a saída do k6 (terminal e arquivo) e
+remove `setup_data` (onde vive o cookie de sessão e o token CSRF da execução)
+antes de serializar qualquer coisa — inclusive quando um threshold falha ou
+`setup()`/`teardown()` lança. Não existe mais um passo de "rodar e depois
+sanitizar": não há como gerar um resumo com `JSESSIONID`/`XSRF-TOKEN` dentro,
+porque o próprio script nunca os inclui na saída, ponto algum.
 
-`loadtest/resultado.json` é uma cópia do resultado de 10 VUs, mantida pela
-convenção anterior de entrega (raiz de `loadtest/`).
+`loadtest/resultado.json` **não é** uma cópia de execução — é o resumo
+comparativo (10 vs. 30 VUs) descrito em [§9](#9-resultados-obtidos):
+commit, ambiente, RPS, percentis, thresholds, limitações, gargalo e próxima
+ação. Os JSONs brutos por execução ficam em `loadtest/resultados/`.
 
 ---
 
@@ -194,11 +233,17 @@ convenção anterior de entrega (raiz de `loadtest/`).
 http_req_failed          < 1%
 checks                   > 99%
 http_req_duration p(95)  < 500ms   (global)
-http_req_duration p(95)  < 500ms   (por operação: list_books, load_outline, save_scene)
+http_req_duration p(95)  < 500ms   (por operação principal: list_books, load_outline, load_scene, save_scene)
+http_req_duration p(95)  < 2000ms  (auth/setup/teardown — fora do loop medido)
+http_req_duration p(95)  < 8000ms  (auth_login — bcrypt + cold start da JVM, ver §9)
 ```
 
 Qualquer violação faz o `k6 run` sair com código diferente de zero — apropriado
-para gate de CI/CD.
+para gate de CI/CD. Os thresholds de auth/setup/teardown existem sobretudo
+para que o k6 reporte as métricas dessas tags separadas das operações
+principais no summary (ele só cria uma série por tag quando há threshold
+associado), não como um orçamento de performance rígido — são operações que
+rodam 1x ou `VUS` vezes por execução, nunca sob a carga em regime.
 
 ---
 
@@ -209,8 +254,10 @@ para gate de CI/CD.
   graças às tags fixas e a `summaryTrendStats` configurado no script. IDs,
   título, usuário, tenant e conteúdo **não** são usados como tag — só o nome
   da operação.
-- **`http_reqs.rate`** — RPS agregado do run inteiro (inclui as 3 operações).
-- **`checks`** — cada uma das 3 asserções de status por operação.
+- **`http_reqs.rate`** — RPS agregado do run inteiro (inclui as 4 operações
+  principais **e** auth/setup/teardown).
+- **`checks`** — as 4 asserções de status das operações principais
+  (`list_books`, `load_outline`, `load_scene`, `save_scene`).
 - Para investigar a operação mais lenta (`save_scene`, ver §9), use a
   observabilidade já existente do projeto (OTel + Loki/Tempo/Grafana via
   `docker-compose.observability.yml`) e procure os eventos de negócio
@@ -223,34 +270,55 @@ para gate de CI/CD.
 ## 9. Resultados obtidos
 
 Execuções reais, ambiente local isolado (containers dedicados, ver
-limitações abaixo) — arquivos completos em
+limitações abaixo) — commit `eee876a`. Resumo comparativo completo, estruturado,
+em [`resultado.json`](resultado.json); JSONs brutos por execução em
 [`resultados/resultado-10vus.json`](resultados/resultado-10vus.json) e
 [`resultados/resultado-30vus.json`](resultados/resultado-30vus.json).
 
-| | Commit | k6 | VUs | Duração | RPS | p50 (ms) | p90 (ms) | p95 (ms) | p99 (ms) | Erros | Checks |
-|---|---|---|---|---|---|---|---|---|---|---|---|
-| Baseline | `c9921c9` | v2.1.0 | 10 | 3m (30s/2m/30s) | 31.3 | 25.4 | 90.3 | 122.6 | 232.4 | 0% (0/5870) | 100% (5853/5853) |
-| Carga ampliada | `c9921c9` | v2.1.0 | 30 | 3m (30s/2m/30s) | 83.8 | 30.3 | 181.1 | 286.0 | 560.9 | 0% (0/15676) | 100% (15639/15639) |
+**Operações principais** (medidas sob carga, dentro do loop de VUs):
 
-Por operação (p95, ms):
+| | VUs | Duração | RPS | p50 (ms) | p90 (ms) | p95 (ms) | p99 (ms) | Erros | Checks |
+|---|---|---|---|---|---|---|---|---|---|
+| Baseline | 10 | 3m (30s/2m/30s) | 30.8 | 57.9 | 228.1 | 328.4 | 542.9 | 0% (0/5809) | 100% (5792/5792) |
+| Carga ampliada | 30 | 3m (30s/2m/30s) | 53.8 | 215.7 | 603.3 | 754.9 | 1036.6 | 0% (0/10221) | 100% (10184/10184) |
+
+Por operação principal (p95, ms):
 
 | Operação | 10 VUs | 30 VUs |
 |---|---|---|
-| `list_books` | 61.7 | 180.5 |
-| `load_outline` | 44.3 | 127.9 |
-| `save_scene` | **190.0** | **420.8** |
+| `list_books` | 148.0 | 485.0 |
+| `load_outline` | 117.7 | 421.3 |
+| `load_scene` | 99.9 | 441.8 |
+| `save_scene` | **518.0** ✗ | **985.7** ✗ |
 
-Todos os thresholds configurados (global e por operação) passaram nas duas
-execuções.
+**Auth/setup/teardown** (fora do loop medido — rodam 1x, ou `VUS` vezes no
+caso de `setup_create_scene`):
+
+| Operação | 10 VUs | 30 VUs |
+|---|---|---|
+| `auth_csrf` | 24.2ms | 10.5ms |
+| `auth_login` | 5272.3ms | 5303.4ms |
+| `setup_create_book` | 194.8ms | 110.0ms |
+| `setup_create_section` | 123.7ms | 94.4ms |
+| `setup_create_chapter` | 104.7ms | 92.7ms |
+| `setup_create_scene` (p95) | 303.5ms | 143.3ms |
+| `teardown_delete_book` | 353.1ms | 629.9ms |
+
+`http_req_failed` e `checks` passaram nas duas execuções — **zero erros**, só
+os thresholds de latência é que foram violados (`save_scene` nas duas cargas;
+o `http_req_duration` global também na de 30 VUs). O `k6 run` saiu com código
+diferente de zero em ambas, como esperado quando um threshold é violado.
 
 **Gargalo principal:** `PATCH /api/scenes/{id}/content` (`save_scene`) é
-consistentemente a operação mais lenta — cerca de 3× o `list_books` em ambas
-as cargas — e a que mais degrada com o aumento de VUs (p95 sobe 2.2× de 10
-para 30 VUs, contra ~2× nas leituras). Esperado: é a única escrita do
-cenário, e passa por auditoria (`@AuditedOperation`), versionamento de cena e
-ledger de contagem de palavras — mais trabalho por requisição que os `GET`s.
-Não foi isolado neste PR qual dessas etapas domina o custo; a investigação via
-Loki/Tempo (eventos `scene_content_save`) fica como próxima ação.
+consistentemente a operação mais lenta e a que mais degrada com o aumento de
+VUs (p95 sobe de 518ms para 986ms, ~1.9× de 10 para 30 VUs). Depois da
+correção que passou a enviar o mesmo `contentJson` que o editor real produz
+(antes o script só enviava `contentText`), o custo medido de `save_scene`
+subiu de forma visível frente à medição anterior deste PR — o benchmark
+anterior estava subestimando esse caminho por não exercitar o payload real.
+`save_scene` é a única escrita do cenário: passa por auditoria
+(`@AuditedOperation`), versionamento de cena e ledger de contagem de
+palavras. Não foi isolado neste PR qual dessas etapas domina o custo.
 
 **Limitações desta execução:**
 - Rodada em uma stack Docker isolada só para este teste (`docker-compose -p
@@ -260,19 +328,24 @@ Loki/Tempo (eventos `scene_content_save`) fica como próxima ação.
 - Backend, Postgres e k6 rodam na mesma máquina (sem separação de rede/CPU
   entre gerador de carga e alvo), então parte da latência medida pode ser
   contenção local, não custo real de rede.
+- `auth_login` levou ~5.3s em ambas as execuções — bcrypt (deliberadamente
+  lento) rodando uma única vez por execução contra um host sob contenção de
+  CPU. Não faz parte do cenário medido sob carga e não deve ser lido como
+  latência típica de login; por isso tem orçamento próprio (`p(95)<8000ms`),
+  bem mais folgado que o das operações principais.
 - Sem OTel habilitado durante a execução (evita adicionar overhead de
-  instrumentação à medição); a investigação do gargalo via traces é um passo
-  separado, não feito neste PR.
-- `max` de ambas as execuções (5.1–5.4s) aparece só no `http_req_duration`
-  agregado, fora das séries por operação — provavelmente uma requisição de
-  setup (criação de livro/seção/capítulo/cenas, fora do loop principal) atingida
-  por cold start do container; não investigado a fundo.
+  instrumentação à medição); a decomposição do custo de `save_scene` entre
+  auditoria/versionamento/ledger de palavras não foi feita neste PR.
+- `contentJson` sintético é um único parágrafo curto — não representa uma
+  cena longa de verdade. `save_scene` sob um payload realisticamente maior
+  tende a ser mais lento ainda que o medido aqui.
 
 **Próxima ação recomendada:** rodar o teste com OTel habilitado
 (`docker-compose.observability.yml`) e usar os traces correlacionados de
 `scene_content_save` para decompor o tempo do `PATCH` entre auditoria,
 versionamento e ledger de palavras, e então decidir se algum desses passos
-pode sair do caminho síncrono do save.
+pode sair do caminho síncrono do save. Vale também medir com um `contentJson`
+de tamanho mais realista (múltiplos parágrafos).
 
 ---
 
@@ -280,10 +353,21 @@ pode sair do caminho síncrono do save.
 
 - [x] `k6 inspect loadtest/carga.js` sem erros
 - [x] Login + CSRF reais (não mockados) contra o backend com o profile `demo`
-- [x] `teardown()` remove o livro sintético — confirmado sem resíduo
-      `LOADTEST-` após as 3 execuções (`GET /api/books` só retorna os livros
-      seed dos dois autores demo)
+- [x] Guard de host testado contra os dois exemplos de bypass por user-info
+      (`http://localhost:8085@host-externo`, `http://usuario:senha@localhost:8085`)
+      — ambos recusados — e contra `http://[::1]:porta`, aceito e conectando
+      normalmente
+- [x] Falha de `setup()` após a criação do livro (seção/capítulo/cena)
+      testada com fault injection: limpeza automática do livro órfão
+      confirmada, erro original preservado, `k6 run` sai com código
+      diferente de zero
+- [x] Falha de `teardown()` testada com fault injection (livro já ausente):
+      `k6 run` sai com código diferente de zero em vez de só logar
+- [x] `teardown()` remove o livro sintético nas execuções normais —
+      confirmado sem resíduo `LOADTEST-` após todas as execuções (smoke, 10
+      VUs, 30 VUs, e os dois testes de fault injection acima)
 - [x] `loadtest/resultado.json` e `loadtest/resultados/*.json` sem cookies,
-      credenciais ou conteúdo de cena (ver `loadtest/scrub-summary.js`)
-- [x] Resultados reproduzíveis: mesmo script, mesma stack local, thresholds
-      passam de forma consistente
+      credenciais ou conteúdo de cena (sanitização automática via
+      `handleSummary()`, não um passo manual)
+- [x] Resultados reproduzíveis: mesmo script, mesma stack local, mesma
+      violação de threshold em `save_scene` nas duas execuções

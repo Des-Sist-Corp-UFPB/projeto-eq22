@@ -1,12 +1,14 @@
 import http from 'k6/http';
 import { check, sleep } from 'k6';
+import { textSummary } from 'https://jslib.k6.io/k6-summary/0.1.0/index.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Teste de carga realista — k6 (issue #129)
 //
 // Cenário: GET /api/books → GET /api/books/{bookId}/outline →
-// PATCH /api/scenes/{sceneId}/content, autenticado com sessão real (cookie
-// JSESSIONID + CSRF de duplo envio), contra o SEU AMBIENTE LOCAL.
+// GET /api/scenes/{sceneId} → PATCH /api/scenes/{sceneId}/content, autenticado
+// com sessão real (cookie JSESSIONID + CSRF de duplo envio), contra o SEU
+// AMBIENTE LOCAL.
 //
 // IMPORTANTE: NUNCA aponte para Render, produção ou o servidor acadêmico
 // compartilhado (ex.: https://eqNN.dsc.rodrigor.com) — o guard de host abaixo
@@ -20,13 +22,56 @@ const BASE = (__ENV.BASE_URL || 'http://localhost:8085').replace(/\/+$/, '');
 const SAFE_HOSTS = ['localhost', '127.0.0.1', '::1', 'host.docker.internal', 'backend'];
 const DANGEROUS_OVERRIDE_VALUE = 'eu-autorizo-um-destino-externo';
 
-function extractHost(url) {
-  const match = /^https?:\/\/(?:\[)?([^\/:\]]+)(?:\])?/i.exec(url);
-  return match ? match[1].toLowerCase() : '';
+/**
+ * Parser de autoridade HTTP com semântica real (sem depender de `URL`, que
+ * este runtime k6 não expõe): só http(s)://, rejeita user-info por completo
+ * (não tenta "adivinhar" o host real por trás de user@host — uma URL com
+ * credenciais é recusada mesmo que o host à direita seja local, porque um
+ * parser ingênuo já provou ser a superfície de bypass aqui), resolve
+ * `[::1]` como literal IPv6 e valida a porta.
+ */
+function parseSafeHost(rawUrl) {
+  const schemeMatch = /^([a-zA-Z][a-zA-Z0-9+.-]*):\/\//.exec(rawUrl);
+  if (!schemeMatch) {
+    throw new Error(`BASE_URL inválida (sem esquema http(s)://): "${rawUrl}"`);
+  }
+  const scheme = schemeMatch[1].toLowerCase();
+  if (scheme !== 'http' && scheme !== 'https') {
+    throw new Error(`BASE_URL usa esquema não suportado "${scheme}:" (só http/https são aceitos): "${rawUrl}"`);
+  }
+
+  const rest = rawUrl.slice(schemeMatch[0].length);
+  const authorityEnd = rest.search(/[\/?#]/);
+  const authority = authorityEnd === -1 ? rest : rest.slice(0, authorityEnd);
+  if (!authority) {
+    throw new Error(`BASE_URL inválida (sem host): "${rawUrl}"`);
+  }
+  if (authority.indexOf('@') !== -1) {
+    throw new Error(`BASE_URL não pode conter usuário/senha na URL ("user@host") — destino rejeitado: "${rawUrl}"`);
+  }
+
+  if (authority[0] === '[') {
+    const closeIdx = authority.indexOf(']');
+    if (closeIdx === -1) {
+      throw new Error(`BASE_URL inválida (colchete IPv6 não fechado): "${rawUrl}"`);
+    }
+    const afterBracket = authority.slice(closeIdx + 1);
+    if (afterBracket !== '' && !/^:\d+$/.test(afterBracket)) {
+      throw new Error(`BASE_URL inválida após o literal IPv6: "${rawUrl}"`);
+    }
+    return authority.slice(1, closeIdx).toLowerCase();
+  }
+
+  const portIdx = authority.indexOf(':');
+  const host = portIdx === -1 ? authority : authority.slice(0, portIdx);
+  if (!host || (portIdx !== -1 && !/^\d+$/.test(authority.slice(portIdx + 1)))) {
+    throw new Error(`BASE_URL inválida: "${rawUrl}"`);
+  }
+  return host.toLowerCase();
 }
 
 (function enforceSafeTarget() {
-  const host = extractHost(BASE);
+  const host = parseSafeHost(BASE);
   if (SAFE_HOSTS.indexOf(host) !== -1) {
     return;
   }
@@ -65,9 +110,26 @@ export const options = {
     http_req_failed: ['rate<0.01'],
     checks: ['rate>0.99'],
     http_req_duration: ['p(95)<500'],
+    // Operações principais do cenário medido, sob carga (loop de VUs):
     'http_req_duration{operation:list_books}': ['p(95)<500'],
     'http_req_duration{operation:load_outline}': ['p(95)<500'],
+    'http_req_duration{operation:load_scene}': ['p(95)<500'],
     'http_req_duration{operation:save_scene}': ['p(95)<500'],
+    // Autenticação/setup/teardown: fora do loop medido (rodam 1x ou VUS
+    // vezes, nunca sob a carga em regime), orçamento mais folgado só para
+    // pegar uma chamada realmente travada — e, por terem threshold, o k6
+    // passa a reportar as métricas dessas tags separadas no summary.
+    'http_req_duration{operation:auth_csrf}': ['p(95)<2000'],
+    // auth_login é a primeira requisição de verdade contra um backend recém
+    // subido: bcrypt (deliberadamente lento) + JIT/warmup da JVM no primeiro
+    // uso do caminho de autenticação. Orçamento maior de propósito — não é
+    // parte do cenário medido sob carga.
+    'http_req_duration{operation:auth_login}': ['p(95)<8000'],
+    'http_req_duration{operation:setup_create_book}': ['p(95)<2000'],
+    'http_req_duration{operation:setup_create_section}': ['p(95)<2000'],
+    'http_req_duration{operation:setup_create_chapter}': ['p(95)<2000'],
+    'http_req_duration{operation:setup_create_scene}': ['p(95)<2000'],
+    'http_req_duration{operation:teardown_delete_book}': ['p(95)<2000'],
   },
   summaryTrendStats: ['avg', 'min', 'med', 'p(90)', 'p(95)', 'p(99)', 'max'],
 };
@@ -83,6 +145,24 @@ function uuidv4() {
   });
 }
 
+/**
+ * Mesmo formato que `web/src/features/scenes/editor/tiptap-editor.tsx`
+ * (`plainTextToDocument`) produz para hidratar o Tiptap a partir de texto
+ * puro — reaproveitado aqui para que o `contentJson` do PATCH seja o mesmo
+ * documento ProseMirror que o editor real gera e versiona, não uma estrutura
+ * inventada.
+ */
+function plainTextToDocument(text) {
+  const paragraphs = text.split(/\r?\n/);
+  return {
+    type: 'doc',
+    content: paragraphs.map((paragraph) => ({
+      type: 'paragraph',
+      content: paragraph ? [{ type: 'text', text: paragraph }] : undefined,
+    })),
+  };
+}
+
 function jarCookie(jar, url, name) {
   const values = jar.cookiesForURL(url + '/')[name];
   return values && values[0];
@@ -90,6 +170,29 @@ function jarCookie(jar, url, name) {
 
 function jsonHeaders(authHeaders, extra) {
   return Object.assign({ 'Content-Type': 'application/json' }, authHeaders, extra || {});
+}
+
+/**
+ * Tenta remover o livro sintético órfão antes de relançar a falha original.
+ * Chamado quando seção/capítulo/cena falham depois que o livro já existe:
+ * `teardown()` não roda se `setup()` lança, então sem isso o livro (e o que
+ * já tiver sido criado sob ele) fica para trás.
+ */
+function cleanupOrphanedBook(authHeaders, bookId, marker, originalError) {
+  console.error(`setup() falhou após criar o livro sintético ${marker} (${bookId}): ${originalError.message}`);
+  const cleanupRes = http.del(`${BASE}/api/books/${bookId}`, null, {
+    headers: jsonHeaders(authHeaders),
+    tags: { operation: 'setup_cleanup_book' },
+  });
+  if (cleanupRes.status === 204) {
+    console.error(`Limpeza automática removeu o livro órfão ${marker} (${bookId}).`);
+  } else {
+    console.error(
+      `Limpeza automática NÃO removeu o livro órfão ${marker} (${bookId}) — status ${cleanupRes.status}. ` +
+      `Limpeza manual necessária, veja loadtest/README.md.`
+    );
+  }
+  throw originalError;
 }
 
 /**
@@ -152,53 +255,56 @@ export function setup() {
     { headers: jsonHeaders(authHeaders), tags: { operation: 'setup_create_book' } }
   );
   if (bookRes.status !== 201) {
-    throw new Error(`Criação do livro sintético falhou com status ${bookRes.status}: ${bookRes.body}`);
+    throw new Error(`Criação do livro sintético falhou com status ${bookRes.status}.`);
   }
   const bookId = bookRes.json('id');
 
-  const sectionRes = http.post(
-    `${BASE}/api/books/${bookId}/sections`,
-    JSON.stringify({ title: `${marker}-section`, type: 'PART', sortOrder: 0 }),
-    { headers: jsonHeaders(authHeaders), tags: { operation: 'setup_create_section' } }
-  );
-  if (sectionRes.status !== 201) {
-    throw new Error(`Criação da seção sintética falhou com status ${sectionRes.status}: ${sectionRes.body}`);
-  }
-  const sectionId = sectionRes.json('id');
-
-  const chapterRes = http.post(
-    `${BASE}/api/sections/${sectionId}/chapters`,
-    JSON.stringify({ title: `${marker}-chapter`, sortOrder: 0 }),
-    { headers: jsonHeaders(authHeaders), tags: { operation: 'setup_create_chapter' } }
-  );
-  if (chapterRes.status !== 201) {
-    throw new Error(`Criação do capítulo sintético falhou com status ${chapterRes.status}: ${chapterRes.body}`);
-  }
-  const chapterId = chapterRes.json('id');
-
-  // Uma cena por VU máximo, para que cada VU escreva sempre na própria cena.
-  const sceneIds = [];
-  for (let i = 0; i < VUS; i++) {
-    const sceneRes = http.post(
-      `${BASE}/api/chapters/${chapterId}/scenes`,
-      JSON.stringify({ title: `${marker}-scene-${i + 1}`, sortOrder: i }),
-      { headers: jsonHeaders(authHeaders), tags: { operation: 'setup_create_scene' } }
+  // A partir daqui o livro já existe: qualquer falha abaixo precisa limpar
+  // esse livro órfão antes de reprovar o teste, porque teardown() nunca roda
+  // quando setup() lança.
+  let sceneIds;
+  try {
+    const sectionRes = http.post(
+      `${BASE}/api/books/${bookId}/sections`,
+      JSON.stringify({ title: `${marker}-section`, type: 'PART', sortOrder: 0 }),
+      { headers: jsonHeaders(authHeaders), tags: { operation: 'setup_create_section' } }
     );
-    if (sceneRes.status !== 201) {
-      throw new Error(`Criação da cena sintética ${i + 1}/${VUS} falhou com status ${sceneRes.status}: ${sceneRes.body}`);
+    if (sectionRes.status !== 201) {
+      throw new Error(`Criação da seção sintética falhou com status ${sectionRes.status}.`);
     }
-    sceneIds.push(sceneRes.json('id'));
+    const sectionId = sectionRes.json('id');
+
+    const chapterRes = http.post(
+      `${BASE}/api/sections/${sectionId}/chapters`,
+      JSON.stringify({ title: `${marker}-chapter`, sortOrder: 0 }),
+      { headers: jsonHeaders(authHeaders), tags: { operation: 'setup_create_chapter' } }
+    );
+    if (chapterRes.status !== 201) {
+      throw new Error(`Criação do capítulo sintético falhou com status ${chapterRes.status}.`);
+    }
+    const chapterId = chapterRes.json('id');
+
+    // Uma cena por VU máximo, para que cada VU escreva sempre na própria cena.
+    sceneIds = [];
+    for (let i = 0; i < VUS; i++) {
+      const sceneRes = http.post(
+        `${BASE}/api/chapters/${chapterId}/scenes`,
+        JSON.stringify({ title: `${marker}-scene-${i + 1}`, sortOrder: i }),
+        { headers: jsonHeaders(authHeaders), tags: { operation: 'setup_create_scene' } }
+      );
+      if (sceneRes.status !== 201) {
+        throw new Error(`Criação da cena sintética ${i + 1}/${VUS} falhou com status ${sceneRes.status}.`);
+      }
+      sceneIds.push(sceneRes.json('id'));
+    }
+  } catch (err) {
+    cleanupOrphanedBook(authHeaders, bookId, marker, err);
   }
 
   console.log(`Setup concluído: livro ${marker} (${bookId}) com ${sceneIds.length} cena(s).`);
 
   return { authHeaders, bookId, runId, marker, sceneIds };
 }
-
-// Escopo de módulo = escopo por VU em k6 (cada VU roda sua própria instância
-// do script), então isto guarda a revisão da cena entre iterações do mesmo VU
-// sem precisar de um recurso externo.
-const sceneRevisions = {};
 
 export default function (data) {
   const { authHeaders, bookId, marker, sceneIds } = data;
@@ -217,22 +323,41 @@ export default function (data) {
 
   // Uma cena fixa por VU (índice estável em __VU), nunca compartilhada entre VUs.
   const sceneId = sceneIds[(__VU - 1) % sceneIds.length];
-  const revision = sceneRevisions[sceneId] !== undefined ? sceneRevisions[sceneId] : 0;
 
+  // A revisão vem sempre desta leitura, nunca de um cache local: assim uma
+  // falha ambígua no PATCH anterior (commitou no servidor mas a resposta se
+  // perdeu, por exemplo) nunca produz uma sequência de conflitos de revisão
+  // artificiais — a próxima escrita sempre parte do estado real do servidor.
+  const sceneRes = http.get(`${BASE}/api/scenes/${sceneId}`, {
+    headers: jsonHeaders(authHeaders),
+    tags: { operation: 'load_scene' },
+  });
+  const sceneOk = check(sceneRes, { 'load_scene status 200': (r) => r.status === 200 });
+  if (!sceneOk) {
+    // Sem uma revisão confiável não há PATCH seguro para mandar nesta
+    // iteração: interrompe só esta iteração deste VU, controladamente, em
+    // vez de arriscar um `expectedContentRevision` desatualizado.
+    sleep(THINK_TIME_MIN_S + Math.random() * (THINK_TIME_MAX_S - THINK_TIME_MIN_S));
+    return;
+  }
+  const revision = sceneRes.json('contentRevision');
+
+  const contentText = `${marker} conteúdo sintético VU${__VU} iter${__ITER} ${Date.now()}`;
   const saveRes = http.patch(
     `${BASE}/api/scenes/${sceneId}/content`,
     JSON.stringify({
-      contentText: `${marker} conteúdo sintético VU${__VU} iter${__ITER} ${Date.now()}`,
+      contentText,
+      // Mesmo contrato que o editor real envia (ver scene-editor.tsx /
+      // scene-content-editor.tsx): o backend versiona o par contentJson +
+      // contentText, então medir só contentText subestima o caminho de save.
+      contentJson: JSON.stringify(plainTextToDocument(contentText)),
       source: 'AUTO_SAVE',
       expectedContentRevision: revision,
       operationId: uuidv4(),
     }),
     { headers: jsonHeaders(authHeaders), tags: { operation: 'save_scene' } }
   );
-  const saveOk = check(saveRes, { 'save_scene status 200': (r) => r.status === 200 });
-  if (saveOk) {
-    sceneRevisions[sceneId] = saveRes.json('contentRevision');
-  }
+  check(saveRes, { 'save_scene status 200': (r) => r.status === 200 });
 
   sleep(THINK_TIME_MIN_S + Math.random() * (THINK_TIME_MAX_S - THINK_TIME_MIN_S));
 }
@@ -243,11 +368,49 @@ export function teardown(data) {
     tags: { operation: 'teardown_delete_book' },
   });
   if (res.status !== 204) {
-    console.error(
-      `Teardown NÃO removeu o livro sintético ${data.marker} (${data.bookId}) — status ${res.status}. ` +
-      `Limpeza manual necessária, veja loadtest/README.md.`
+    // Reprova a execução em vez de só registrar: um teardown que falha
+    // silenciosamente deixa o livro LOADTEST- para trás e contamina medições
+    // futuras sem que `http_req_failed`/`checks` acusem nada, já que essa
+    // chamada acontece fora do loop de VUs medido.
+    throw new Error(
+      `Teardown falhou: DELETE /api/books/${data.bookId} retornou ${res.status} (esperado 204). ` +
+      `Livro sintético ${data.marker} não removido — limpeza manual necessária, veja loadtest/README.md.`
     );
-    return;
   }
   console.log(`Teardown concluído: livro ${data.marker} (${data.bookId}) removido.`);
+}
+
+/**
+ * Mantém só o que é seguro versionar/ler no terminal: `setup_data` inclui o
+ * retorno inteiro de setup(), então sem isto o cookie de sessão e o token
+ * CSRF da execução iriam para qualquer summary (stdout ou arquivo), inclusive
+ * quando um threshold falha. Allowlist, não denylist — um campo novo que
+ * alguém adicionar ao retorno de setup() no futuro fica de fora por padrão
+ * em vez de vazar por omissão.
+ */
+function redactSummary(data) {
+  const clone = JSON.parse(JSON.stringify(data));
+  if (clone.setup_data) {
+    clone.setup_data = {
+      runId: clone.setup_data.runId,
+      marker: clone.setup_data.marker,
+      bookId: clone.setup_data.bookId,
+      sceneCount: Array.isArray(clone.setup_data.sceneIds) ? clone.setup_data.sceneIds.length : undefined,
+    };
+  }
+  return clone;
+}
+
+// Substitui `--summary-export` + sanitização manual: definir handleSummary()
+// assume o controle de toda a saída do k6 (inclusive o texto no terminal),
+// então a redação acontece uma vez aqui e vale para qualquer destino.
+export function handleSummary(data) {
+  const redacted = redactSummary(data);
+  const outputs = {
+    stdout: textSummary(redacted, { indent: ' ', enableColors: true }),
+  };
+  if (__ENV.RESULT_PATH) {
+    outputs[__ENV.RESULT_PATH] = JSON.stringify(redacted, null, 2) + '\n';
+  }
+  return outputs;
 }
