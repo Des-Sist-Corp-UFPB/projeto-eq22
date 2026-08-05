@@ -14,6 +14,12 @@ Substitui o teste anterior, que só exercitava `/ping`.
 
 ## 1. O que o teste faz
 
+Cada VU representa uma **sessão independente do mesmo autor editando o seu
+próprio livro** — não N usuários compartilhando um único livro. `setup()`
+cria 1 livro + 1 seção + 1 capítulo + 1 cena **por VU** (ver [§5](#5-dados-sintéticos-e-limpeza));
+cada VU autentica com a sua própria sessão (ver [§3](#3-autenticação)) e só
+lê/escreve o livro/cena no índice correspondente ao seu `__VU`.
+
 Fluxo por VU, uma vez por iteração:
 
 1. `GET /api/books` — tag `operation=list_books`
@@ -24,13 +30,19 @@ Fluxo por VU, uma vez por iteração:
 4. `PATCH /api/scenes/{sceneId}/content` — tag `operation=save_scene`
 5. think time curto (0.3–1s, configurável)
 
-Sem chamadas de IA. Cada VU escreve **somente na própria cena** (uma cena por VU
-máximo, criada no `setup()`). A `expectedContentRevision` do `PATCH` vem sempre
-da leitura do passo 3, **nunca de um cache local** — assim uma falha ambígua no
-`PATCH` anterior (ex.: a escrita foi aplicada no servidor mas a resposta se
-perdeu) nunca produz uma sequência artificial de conflitos de revisão: a
-próxima escrita sempre parte do estado real e atual do servidor. Um novo
-`operationId` é gerado a cada `PATCH`.
+Sem chamadas de IA. Cada VU escreve **somente no próprio livro/cena**, nunca
+um recurso compartilhado com outra VU — evita contenção artificial no lock
+pessimista de linha do livro (`SceneService.updateContent()` →
+`BookAccessService.requireBookEditAccessForUpdate()` →
+`BookRepository.findByIdAndTenantIdForUpdate()`): com um único livro
+compartilhado, todo `save_scene` de todas as VUs serializaria nesse lock,
+medindo contenção do harness em vez da latência real de escritas
+concorrentes de usuários diferentes. A `expectedContentRevision` do `PATCH`
+vem sempre da leitura do passo 3, **nunca de um cache local** — assim uma
+falha ambígua no `PATCH` anterior (ex.: a escrita foi aplicada no servidor
+mas a resposta se perdeu) nunca produz uma sequência artificial de conflitos
+de revisão: a próxima escrita sempre parte do estado real e atual do
+servidor. Um novo `operationId` é gerado a cada `PATCH`.
 
 Os passos 1-3 são **pré-requisitos sequenciais**: um usuário real não abre uma
 cena sem antes navegar até o outline, nem chega no outline sem antes listar os
@@ -52,12 +64,27 @@ produz e versiona (`web/src/features/scenes/editor/tiptap-editor.tsx`,
 script só enviava texto puro, o que subestimava o custo real do caminho de
 save (ver [§9](#9-resultados-obtidos)).
 
-Login acontece **uma única vez em `setup()`**, não por VU nem por iteração: a
-sessão (`JSESSIONID`) e o token CSRF (`XSRF-TOKEN`) são obtidos ali e
-repassados a todas as VUs via `data`. Isso reflete o uso real (uma sessão de
-servidor dura a visita inteira) e evita contaminar o rate limiter de login
-(`IWRITE_LOGIN_RATE_LIMIT_MAX_PER_ACCOUNT`/`_ORIGIN`, padrão 8/20 por janela de
-1 minuto — ver `.env.example`).
+Cada VU autentica **uma única vez, sozinha, na própria primeira iteração** —
+não em `setup()` nem repetido a cada iteração. `setup()` também autentica,
+mas só internamente, para provisionar os dados (ver [§5](#5-dados-sintéticos-e-limpeza));
+essa sessão de `setup()` nunca é repassada às VUs. Cada VU e `teardown()` têm
+o próprio cookie jar isolado do k6 e fazem o próprio handshake CSRF + login,
+guardando a sessão só nesse jar — nunca numa variável, em `data`, ou em
+qualquer estrutura que possa acabar num summary do k6. Isso reflete o uso
+real (uma sessão de servidor dura a visita inteira, uma por autor) e modela
+literalmente o cenário do [§1](#1-o-que-o-teste-faz): sessões independentes
+do mesmo autor.
+
+**Efeito colateral:** com uma sessão por VU (em vez de uma única sessão de
+`setup()` repassada a todas), uma execução com `VUS=N` agora faz até `N+1`
+logins (as `N` VUs + o login interno de `setup()`) contra a mesma conta, e
+esses logins tendem a se concentrar dentro do `WARMUP_DURATION` — o que pode
+estourar o rate limiter de login
+(`IWRITE_LOGIN_RATE_LIMIT_MAX_PER_ACCOUNT`/`_ORIGIN`, padrão 8/20 por janela
+de 1 minuto — ver `.env.example`). Por isso `docker-compose.k6.local.yml`
+(gitignored, só para a stack Docker isolada deste teste) eleva os dois
+limites para este ambiente **local e isolado** — os defaults de produção em
+`application.yml`/`.env.example` não são alterados.
 
 `GET /ping` continua no script, mas só como smoke check **inicial** dentro do
 `setup()`: se o ambiente não responder, o teste aborta antes de criar qualquer
@@ -151,27 +178,37 @@ compartilhado — o nome da variável é feio de propósito.
 
 ## 5. Dados sintéticos e limpeza
 
-`setup()` cria, sob o marcador `LOADTEST-<runId>` (nunca reaproveita livro ou
-cena existente):
+`setup()` cria, sob o marcador `LOADTEST-<runId>-vu<N>` (nunca reaproveita
+livro ou cena existente), **um por VU** — não um único livro compartilhado:
 
-- 1 livro (`LOADTEST-<runId>`)
+- 1 livro (`LOADTEST-<runId>-vu<N>`)
 - 1 seção + 1 capítulo (hierarquia mínima)
-- 1 cena por VU máximo (`VUS`), cada uma escrita só pelo VU correspondente
-  (`sceneIds[(__VU - 1) % sceneIds.length]`)
+- 1 cena
 
-**Se seção, capítulo ou alguma cena falhar depois que o livro já existe**, o
-`setup()` tenta excluir o livro sintético (removendo em cascata o que já
-tiver sido criado sob ele) antes de relançar o erro original e reprovar o
-teste — necessário porque `teardown()` nunca roda quando `setup()` lança. O
-log da tentativa de limpeza contém só `runId`/`bookId`/status HTTP, nunca
-cookies ou o token CSRF.
+`setup()` devolve só uma lista não sensível `[{ bookId, sceneId }, ...]`,
+indexada 1:1 com `__VU` — a VU de índice `__VU` usa exclusivamente
+`data[__VU - 1]`, nunca um recurso de outra VU. Nada de sessão, cookie ou CSRF
+sai de `setup()` (ver [§3](#3-autenticação)).
 
-`teardown()` apaga o livro (cascata apaga seção/capítulo/cenas via
-`CascadeType.ALL` + `orphanRemoval`) e **reprova a execução** (lança e faz o
-`k6 run` sair com código diferente de zero) se o `DELETE` final não retornar
-`204` — um teardown que só loga e segue deixaria o livro `LOADTEST-` para trás
-sem que nenhum threshold acusasse nada, já que essa chamada acontece fora do
-loop de VUs medido.
+Como o loop cria um livro completo por VU em série, o tempo de `setup()`
+cresce com `VUS` — ver `SETUP_TIMEOUT`/`TEARDOWN_TIMEOUT` em [§6](#6-executando).
+
+**Se seção, capítulo ou cena de alguma VU falhar depois que o respectivo
+livro já existe**, o `setup()` remove **todos os livros já criados até
+aquele ponto** (não só o do livro corrente) antes de relançar o erro
+original e reprovar o teste — necessário porque `teardown()` nunca roda
+quando `setup()` lança. O log da tentativa de limpeza lista quais livros
+falharam ao ser removidos (só `bookId`/status HTTP), nunca cookies ou o
+token CSRF.
+
+`teardown()` autentica de novo (sessão própria, não reaproveita a de nenhuma
+VU nem a de `setup()`) e apaga **todos** os livros da execução (cascata apaga
+seção/capítulo/cena via `CascadeType.ALL` + `orphanRemoval`) — **reprova a
+execução** (lança e faz o `k6 run` sair com código diferente de zero) se
+qualquer `DELETE` não retornar `204`, listando quais livros não foram
+removidos — um teardown que só loga e segue deixaria livros `LOADTEST-` para
+trás sem que nenhum threshold acusasse nada, já que essas chamadas acontecem
+fora do loop de VUs medido.
 
 Se o teste for interrompido (Ctrl+C, k6 morto, timeout) antes do `teardown()`
 rodar, limpe manualmente:
@@ -201,6 +238,13 @@ Variáveis de carga (todas opcionais, com padrão realista):
 | `RAMPDOWN_DURATION` | desaquecimento | `30s` |
 | `THINK_TIME_MIN_S` / `THINK_TIME_MAX_S` | think time por iteração | `0.3` / `1` |
 | `RESULT_PATH` | caminho do resumo JSON já sanitizado (opcional) | nenhum — só imprime no terminal |
+| `SETUP_TIMEOUT` | timeout de `setup()` (formato de duração do k6, ex. `10m`, `90s`) — sobe com `VUS` porque `setup()` cria um livro completo por VU em série | `10m` |
+| `TEARDOWN_TIMEOUT` | timeout de `teardown()`, mesmo formato | `10m` |
+
+`SETUP_TIMEOUT`/`TEARDOWN_TIMEOUT` são validados antes de rodar (regex de
+duração do k6: unidades `ms`/`s`/`m`/`h` encadeadas) — um valor malformado
+falha imediatamente com uma mensagem clara, em vez de o k6 rejeitar
+silenciosamente as `options` ou cair no timeout padrão de 60s.
 
 Validação estática antes de rodar:
 
@@ -232,13 +276,25 @@ k6 run -e BASE_URL=http://localhost:8085 -e LOAD_TEST_PASSWORD=$IWRITE_DEMO_AUTO
   loadtest/carga.js
 ```
 
-**Sanitização é automática, não um passo manual.** `carga.js` define
-`handleSummary()`, que assume toda a saída do k6 (terminal e arquivo) e
-remove `setup_data` (onde vive o cookie de sessão e o token CSRF da execução)
-antes de serializar qualquer coisa — inclusive quando um threshold falha ou
-`setup()`/`teardown()` lança. Não existe mais um passo de "rodar e depois
-sanitizar": não há como gerar um resumo com `JSESSIONID`/`XSRF-TOKEN` dentro,
-porque o próprio script nunca os inclui na saída, ponto algum.
+**Segredo nenhum sai de `setup()`, então nenhum caminho de summary consegue
+vazá-lo — nem o nativo do k6.** `setup()` só devolve
+`[{ bookId, sceneId }, ...]` (ver [§5](#5-dados-sintéticos-e-limpeza)); cada
+VU e `teardown()` autenticam sozinhos, guardando a sessão só no próprio
+cookie jar do k6, nunca em `data`. Isso cobre os **três** caminhos de summary
+do k6, não só um:
+
+- `RESULT_PATH` (via `handleSummary()`, que também aplica um allowlist extra
+  em `setup_data` como defesa em profundidade);
+- `--summary-export=<arquivo>`;
+- `K6_SUMMARY_EXPORT=<arquivo>`.
+
+Os dois últimos são nativos do k6 e **ignoram `handleSummary()` por
+completo** — o k6 v2 anexa o resumo legado bruto por conta própria depois do
+callback do usuário. Antes, `setup()` devolvia `authHeaders` com o
+`JSESSIONID`/`XSRF-TOKEN` vivos da execução, então esses dois caminhos
+vazavam a sessão mesmo com `handleSummary()` sanitizando `RESULT_PATH`. Como
+`setup()` agora nunca devolve nada sensível, os três caminhos são seguros por
+construção — testado explicitamente para os três, ver [§10](#10-validado).
 
 O resumo impresso no terminal é minimalista e **gerado localmente** — `carga.js`
 não importa nenhuma biblioteca remota (nem o `jslib` oficial do k6 para o
@@ -305,12 +361,17 @@ rodam 1x ou `VUS` vezes por execução, nunca sob a carga em regime.
 
 ## 9. Resultados obtidos
 
-Execuções reais, ambiente local isolado (ver limitações abaixo).
+Execuções reais, ambiente local isolado (ver limitações abaixo). **Estes
+números são de um cenário diferente do da medição anterior** — 1 livro por
+VU em vez de um único livro compartilhado, e sessão própria por VU em vez de
+uma sessão de `setup()` repassada a todas — então não são comparáveis
+diretamente aos números antigos deste README; a mudança de cenário por si só
+já altera o comportamento medido, especialmente em `save_scene`.
 
-- **`measured_code_commit`**: `be6d59941e9b287b988503c54832f7e7f4c87c0b` — o
+- **`measured_code_commit`**: `16d2ef638701cb939d6ac4e49f51c0325869d3d3` — o
   commit de `loadtest/carga.js` exatamente como executado para gerar os
   números abaixo, com working tree limpo, sem nenhuma mudança de código
-  depois. Reproduzir: `git checkout be6d599 -- loadtest/carga.js`.
+  depois. Reproduzir: `git checkout 16d2ef6 -- loadtest/carga.js`.
 - **`evidence_commit`**: o commit imediatamente seguinte nesta branch, que só
   adiciona/atualiza `resultado.json`, `resultados/*.json` e este README — sem
   nenhuma mudança de comportamento do script. Hash exato na descrição da PR
@@ -327,81 +388,96 @@ operações principais e teardown):
 
 | | VUs | Duração | Requests | RPS global | p50 (ms) | p90 (ms) | p95 (ms) | p99 (ms) | Erros | Checks |
 |---|---|---|---|---|---|---|---|---|---|---|
-| Baseline | 10 | 3m (30s/2m/30s) | 7393 | 39.6 | 20.4 | 73.9 | 122.2 | 417.5 | 0% (0/7393) | 100% (7376/7376) |
-| Carga ampliada | 30 | 3m (30s/2m/30s) | 19829 | 105.3 | 30.0 | 160.3 | 244.1 | 469.9 | 0% (0/19829) | 100% (19792/19792) |
+| Baseline | 10 | 3m (30s/2m/30s) | 7587 | 41.1 | 29.6 | 80.1 | 110.9 | 214.8 | 0% (0/7587) | 100% (7512/7512) |
+| Carga ampliada | 30 | 3m (30s/2m/30s) | 17667 | 96.2 | 64.2 | 208.2 | 302.7 | 507.4 | 0% (0/17667) | 100% (17452/17452) |
 
-Esses percentis **incluem** auth/setup/teardown (em especial o `auth_login`
-de ~5.1-5.3s, que sozinho puxa o `max` e o `p99` para cima) — não são a
-latência do loop principal. Para isso, a tabela abaixo:
+Esses percentis incluem auth/setup/teardown — não são a latência do loop
+principal. Diferente da medição anterior, `auth_login` já não domina o `max`
+global: com uma sessão por VU (`VUS+1` logins por execução, não mais 1),
+só a primeira amostra carrega algum custo de warmup, e o restante já é
+bcrypt contra um backend aquecido — ver tabela de auth/setup/teardown
+abaixo. Para a latência do loop principal isolada, a tabela seguinte:
 
 **Operações principais** (p95/p99 em ms, medidas só dentro do loop de VUs —
 sem misturar com auth/setup/teardown):
 
 | Operação | 10 VUs p95 | 10 VUs p99 | 30 VUs p95 | 30 VUs p99 |
 |---|---|---|---|---|
-| `list_books` | 52.4 | 77.2 | 181.8 | 376.2 |
-| `load_outline` | 45.3 | 66.9 | 149.6 | 343.8 |
-| `load_scene` | 40.0 | 66.7 | 142.3 | 319.4 |
-| `save_scene` | 385.1 | 552.5 | 381.3 | 669.0 |
+| `list_books` | 173.4 | 290.7 | 405.5 | 671.5 |
+| `load_outline` | 49.4 | 91.4 | 242.9 | 425.8 |
+| `load_scene` | 43.5 | 76.1 | 201.8 | 347.2 |
+| `save_scene` | 125.1 | 215.2 | 313.8 | 522.1 |
 
-Todos os thresholds passaram nas duas execuções, inclusive o de `save_scene`
-(`p(95)<500ms`) — mas com margem estreita: o `p99` de `save_scene` já passa
-de 550-670ms nas duas cargas, e uma execução anterior deste mesmo PR (código
-equivalente, ambiente igualmente compartilhado) excedeu 500ms de p95 sob
-condições de contenção de host diferentes. Ler como "está dentro do
-orçamento agora, com pouca margem", não como "nunca vai estourar".
+Todos os thresholds passaram nas duas execuções. `save_scene` — que na
+medição anterior (livro único compartilhado) era a operação mais lenta e a
+única perto do teto — cai para bem abaixo das três leituras em 10 VUs
+(125.1ms vs. 385.1ms antes) e volta a ficar comparável a `list_books`/`load_outline`
+em 30 VUs: o efeito esperado de eliminar a serialização artificial no lock
+pessimista de linha de um único livro (ver "Gargalo" abaixo). Em troca,
+`list_books` se aproxima do teto em 30 VUs (p95 405.5ms, p99 671.5ms) — não
+por contenção de escrita, mas porque o cenário agora cria `VUS` livros no
+tenant do autor de teste, e listar/serializar essa coleção maior cresce com
+`VUS` por construção.
 
-**Auth/setup/teardown** (fora do loop medido — rodam 1x, ou `VUS` vezes no
-caso de `setup_create_scene`):
+**Auth/setup/teardown** (fora do loop medido — `auth_csrf`/`auth_login`
+rodam `VUS+1` vezes; `setup_create_book/section/chapter/scene` e
+`teardown_delete_book` rodam `VUS` vezes, um livro por VU):
 
-| Operação | 10 VUs | 30 VUs |
-|---|---|---|
-| `auth_csrf` | 5.1ms | 8.4ms |
-| `auth_login` | 5107.5ms | 5257.3ms |
-| `setup_create_book` | 61.8ms | 66.0ms |
-| `setup_create_section` | 26.4ms | 23.7ms |
-| `setup_create_chapter` | 32.9ms | 52.5ms |
-| `setup_create_scene` (p95) | 78.5ms | 103.1ms |
-| `teardown_delete_book` | 389.2ms | 1005.1ms |
+| Operação | 10 VUs avg | 10 VUs p95 | 30 VUs avg | 30 VUs p95 |
+|---|---|---|---|---|
+| `auth_csrf` | 20.0ms | 55.0ms | 6.8ms | 10.8ms |
+| `auth_login` | 170.5ms | 263.5ms | 139.3ms | 414.3ms |
+| `setup_create_book` | 84.7ms | 137.7ms | 24.2ms | 42.5ms |
+| `setup_create_section` | 52.5ms | 84.6ms | 11.8ms | 20.8ms |
+| `setup_create_chapter` | 73.2ms | 135.5ms | 12.2ms | 21.3ms |
+| `setup_create_scene` | 94.3ms | 144.6ms | 24.4ms | 41.2ms |
+| `teardown_delete_book` | 48.5ms | 54.7ms | 34.2ms | 60.9ms |
 
-**Gargalo principal:** `PATCH /api/scenes/{id}/content` (`save_scene`) é
-consistentemente a operação mais lenta do loop principal — 7-9× o `load_scene`
-em ambas as cargas — e a única cujo p95 fica perto do teto de 500ms. É a
-única escrita do cenário: passa por auditoria (`@AuditedOperation`),
-versionamento de cena (`contentJson` + `contentText`, agora medido
-corretamente — a versão anterior deste script só enviava `contentText` e
-subestimava esse caminho) e ledger de contagem de palavras. Não foi isolado
-neste PR qual dessas etapas domina o custo.
+**Gargalo principal:** já não é uma única operação dominante nas duas
+cargas. Em 10 VUs, todas as quatro operações principais têm folga confortável
+frente ao teto de 500ms. Em 30 VUs, `list_books` (p95 405.5ms) e `save_scene`
+(p95 313.8ms) são as mais perto do limite, por razões diferentes:
+`save_scene` continua sendo a única escrita do cenário (auditoria via
+`@AuditedOperation`, versionamento de `contentJson`/`contentText`, ledger de
+contagem de palavras — mais trabalho por requisição que uma leitura, mesmo
+sem a contenção do livro compartilhado); `list_books` cresce porque o
+cenário agora mantém `VUS` livros simultâneos no tenant do autor de teste
+(mais os do seed demo), e listar/serializar essa coleção maior é mais caro
+quanto maior `VUS`. Nenhum dos dois foi decomposto neste PR.
 
 **Limitações desta execução:**
 - Rodada em uma stack Docker isolada só para este teste (`docker-compose -p
   iwrite-k6`, portas remapeadas), na mesma máquina de desenvolvimento
-  concorrendo com outros containers (outro worktree do IWrite + um projeto
-  não relacionado) — os números absolutos, e a margem de `save_scene` frente
-  ao threshold de 500ms, variam com a contenção do host no momento da
-  execução.
+  concorrendo com um container não relacionado (`crm-marketing`) — os
+  números absolutos variam com a contenção do host no momento da execução.
 - Backend, Postgres e k6 rodam na mesma máquina (sem separação de rede/CPU
   entre gerador de carga e alvo), então parte da latência medida pode ser
   contenção local, não custo real de rede.
-- `auth_login` (~5.1-5.3s) é bcrypt + cold start da JVM numa única chamada
-  por execução; `teardown_delete_book` (389ms-1s) é uma cascata de DELETE
-  (livro→seção→capítulo→cenas) também numa única chamada. Nenhum dos dois
-  faz parte do loop medido sob carga, por isso têm threshold próprio
-  (`p(95)<8000ms` e `p(95)<2000ms`) em vez do orçamento de 500ms.
+- `list_books` cresce com `VUS` por construção do próprio cenário (1 livro
+  por VU no tenant do autor de teste) — em execuções com `VUS` bem maior que
+  30, esse custo pode se tornar o novo fator dominante antes mesmo de
+  qualquer contenção real de escrita. Não investigado neste PR (paginação?
+  índice? projeção mais enxuta na listagem?).
 - Sem OTel habilitado durante a execução (evita adicionar overhead de
-  instrumentação à medição); a decomposição do custo de `save_scene` entre
-  auditoria/versionamento/ledger de palavras não foi feita neste PR.
+  instrumentação à medição); a decomposição do custo de `save_scene`/`list_books`
+  entre suas etapas internas não foi feita neste PR.
 - `contentJson` sintético é um único parágrafo curto — não representa uma
   cena longa de verdade. `save_scene` sob um payload realisticamente maior
   tende a ser mais lento ainda que o medido aqui.
+- `IWRITE_LOGIN_RATE_LIMIT_MAX_PER_ACCOUNT`/`_ORIGIN` foram elevados só nesta
+  stack local isolada (`docker-compose.k6.local.yml`, gitignored) para
+  acomodar `VUS+1` logins por execução — os defaults de produção em
+  `application.yml`/`.env.example` não foram alterados (ver [§3](#3-autenticação)).
 
-**Próxima ação recomendada:** rodar o teste com OTel habilitado
+**Próxima ação recomendada:** investigar o crescimento de `list_books` com o
+tamanho da coleção de livros do tenant antes de rodar com `VUS` bem maior
+que 30. Rodar o teste com OTel habilitado
 (`docker-compose.observability.yml`) e usar os traces correlacionados de
-`scene_content_save` para decompor o tempo do `PATCH` entre auditoria,
-versionamento e ledger de palavras. Dado que a margem de `save_scene` frente
-ao threshold de 500ms é estreita, também vale rodar em hardware não
-compartilhado para obter um número de referência estável, e medir com um
-`contentJson` de tamanho mais realista (múltiplos parágrafos).
+`scene_content_save` e da consulta de `list_books` para decompor os dois
+custos. Vale também medir `save_scene` com um `contentJson` de tamanho mais
+realista (múltiplos parágrafos) e, dado que ambas as operações têm margem
+estreita em 30 VUs, rodar em hardware não compartilhado para obter um número
+de referência estável.
 
 ---
 
@@ -427,19 +503,32 @@ compartilhado para obter um número de referência estável, e medir com um
       zero ocorrências de `"url"` como chave de tag e zero UUIDs em
       `data.tags` em toda a execução — só `operation` e `name` (rota
       normalizada)
-- [x] Falha de `setup()` após a criação do livro (seção/capítulo/cena)
-      testada com fault injection: limpeza automática do livro órfão
-      confirmada, erro original preservado, `k6 run` sai com código
+- [x] Falha de `setup()` após a criação de um livro (seção/capítulo/cena de
+      uma VU) testada com fault injection: limpeza automática remove **todos**
+      os livros já criados até aquele ponto (não só o da VU corrente),
+      confirmada por VU, erro original preservado, `k6 run` sai com código
       diferente de zero
-- [x] Falha de `teardown()` testada com fault injection (livro já ausente):
-      `k6 run` sai com código diferente de zero em vez de só logar
-- [x] `teardown()` remove o livro sintético nas execuções normais —
+- [x] Falha de `teardown()` testada com fault injection (um dos livros já
+      ausente): `k6 run` sai com código diferente de zero, listando qual
+      `bookId` não foi removido, em vez de só logar
+- [x] `teardown()` remove todos os livros sintéticos nas execuções normais —
       confirmado sem resíduo `LOADTEST-` após todas as execuções (smoke, 10
       VUs, 30 VUs, e os testes de fault injection acima)
 - [x] `loadtest/resultado.json` e `loadtest/resultados/*.json` sem cookies,
-      credenciais ou conteúdo de cena (sanitização automática via
-      `handleSummary()`, não um passo manual) — `bookId`/`runId` em
-      `setup_data` são metadados de correlação do run, não tags de métrica,
-      e não criam cardinalidade
+      credenciais ou conteúdo de cena — `setup()` nunca devolve sessão/CSRF,
+      então não há nada para `handleSummary()` sanitizar além do allowlist de
+      defesa em profundidade em `setup_data` (só `bookId`/`sceneId` por VU,
+      não são tags de métrica e não criam cardinalidade)
+- [x] Os três caminhos de summary do k6 testados explicitamente —
+      `RESULT_PATH`, `--summary-export=<arquivo>` e
+      `K6_SUMMARY_EXPORT=<arquivo>` — com zero ocorrências de `JSESSIONID`,
+      `XSRF-TOKEN`, `authHeaders` ou `Cookie` nos três arquivos gerados
+- [x] Um livro/cena por VU confirmado via `--out json=` temporário (não
+      versionado): `VUS` `bookId`s distintos criados em `setup()`, cada VU
+      lendo/escrevendo exclusivamente o seu (`data[__VU - 1]`), sem
+      colisão/reuso de `bookId` entre VUs
+- [x] `SETUP_TIMEOUT`/`TEARDOWN_TIMEOUT` validados: valor malformado (ex.
+      `10x`) rejeitado antes de rodar, com mensagem clara; valores válidos
+      (`10m`, `90s`) aceitos e refletidos em `k6 inspect`
 - [x] Resultados gerados com working tree limpo, exatamente no commit
       registrado como `measured_code_commit` em `resultado.json`
