@@ -1,0 +1,199 @@
+{
+  "metrics": {
+    "checks": {
+      "passes": 5853,
+      "fails": 0,
+      "thresholds": {
+        "rate>0.99": false
+      },
+      "value": 1
+    },
+    "http_req_waiting": {
+      "min": 0.7117,
+      "med": 24.99725,
+      "p(90)": 89.40719000000001,
+      "p(95)": 121.90020500000003,
+      "p(99)": 232.1888660000001,
+      "max": 5415.466,
+      "avg": 42.07021442930163
+    },
+    "http_req_duration{operation:list_books}": {
+      "avg": 26.013223936442795,
+      "min": 3.7406,
+      "med": 19.8793,
+      "p(90)": 43.676,
+      "p(95)": 61.653549999999996,
+      "p(99)": 130.7783,
+      "max": 286.0893,
+      "thresholds": {
+        "p(95)<500": false
+      }
+    },
+    "http_req_duration{expected_response:true}": {
+      "max": 5416.0446,
+      "avg": 42.51883495741062,
+      "min": 3.7406,
+      "med": 25.3923,
+      "p(90)": 90.27747000000001,
+      "p(95)": 122.60437500000003,
+      "p(99)": 232.36795300000034
+    },
+    "vus_max": {
+      "max": 10,
+      "value": 10,
+      "min": 10
+    },
+    "http_reqs": {
+      "count": 5870,
+      "rate": 31.276623259810908
+    },
+    "http_req_connecting": {
+      "med": 0,
+      "p(90)": 0,
+      "p(95)": 0,
+      "p(99)": 0.561313000000005,
+      "max": 17.9905,
+      "avg": 0.0240493185689949,
+      "min": 0
+    },
+    "iteration_duration": {
+      "avg": 778.7866587391076,
+      "min": 351.1111,
+      "med": 772.4999,
+      "p(90)": 1063.4829,
+      "p(95)": 1109.25685,
+      "p(99)": 1282.14515,
+      "max": 1504.1671
+    },
+    "vus": {
+      "value": 1,
+      "min": 0,
+      "max": 10
+    },
+    "http_req_duration{operation:load_outline}": {
+      "avg": 19.672537262942075,
+      "min": 4.1347,
+      "med": 15.0026,
+      "p(90)": 32.578,
+      "p(95)": 44.2909,
+      "p(99)": 97.99289999999999,
+      "max": 157.9915,
+      "thresholds": {
+        "p(95)<500": false
+      }
+    },
+    "http_req_blocked": {
+      "med": 0,
+      "p(90)": 0,
+      "p(95)": 0,
+      "p(99)": 1.048831,
+      "max": 25.7574,
+      "avg": 0.0443127086882453,
+      "min": 0
+    },
+    "http_req_tls_handshaking": {
+      "avg": 0,
+      "min": 0,
+      "med": 0,
+      "p(90)": 0,
+      "p(95)": 0,
+      "p(99)": 0,
+      "max": 0
+    },
+    "http_req_duration{operation:save_scene}": {
+      "avg": 78.54112901076374,
+      "min": 9.2062,
+      "med": 61.5955,
+      "p(90)": 135.7011,
+      "p(95)": 189.95440000000002,
+      "p(99)": 320.17575,
+      "max": 484.8767,
+      "thresholds": {
+        "p(95)<500": false
+      }
+    },
+    "data_received": {
+      "count": 10262522,
+      "rate": 54680.92577334262
+    },
+    "iterations": {
+      "count": 1951,
+      "rate": 10.3953478671024
+    },
+    "data_sent": {
+      "count": 2149210,
+      "rate": 11451.453403103613
+    },
+    "http_req_duration": {
+      "avg": 42.51883495741062,
+      "min": 3.7406,
+      "med": 25.3923,
+      "p(90)": 90.27747000000001,
+      "p(95)": 122.60437500000003,
+      "p(99)": 232.36795300000034,
+      "max": 5416.0446,
+      "thresholds": {
+        "p(95)<500": false
+      }
+    },
+    "http_req_receiving": {
+      "min": 0,
+      "med": 0,
+      "p(90)": 0.7565,
+      "p(95)": 1.1817300000000013,
+      "p(99)": 4.484413000000013,
+      "max": 18.9377,
+      "avg": 0.3876427257240201
+    },
+    "http_req_failed": {
+      "passes": 0,
+      "fails": 5870,
+      "thresholds": {
+        "rate<0.01": false
+      },
+      "value": 0
+    },
+    "http_req_sending": {
+      "avg": 0.060977802385008495,
+      "min": 0,
+      "med": 0,
+      "p(90)": 0,
+      "p(95)": 0.5565100000000001,
+      "p(99)": 0.9988860000000003,
+      "max": 8.5382
+    }
+  },
+  "setup_data": {
+    "runId": "msfj0n8zhwpd",
+    "sceneCount": 10
+  },
+  "root_group": {
+    "path": "",
+    "id": "d41d8cd98f00b204e9800998ecf8427e",
+    "groups": {},
+    "checks": {
+      "list_books status 200": {
+        "name": "list_books status 200",
+        "path": "::list_books status 200",
+        "id": "ca0a6530ef9d6f6b4bb485d769e42ef6",
+        "passes": 1951,
+        "fails": 0
+      },
+      "load_outline status 200": {
+        "passes": 1951,
+        "fails": 0,
+        "name": "load_outline status 200",
+        "path": "::load_outline status 200",
+        "id": "8f148692b2c7b87007d258b2389a251b"
+      },
+      "save_scene status 200": {
+        "fails": 0,
+        "name": "save_scene status 200",
+        "path": "::save_scene status 200",
+        "id": "6fe5186dbef0326b5fcca7692e245f95",
+        "passes": 1951
+      }
+    },
+    "name": ""
+  }
+}
