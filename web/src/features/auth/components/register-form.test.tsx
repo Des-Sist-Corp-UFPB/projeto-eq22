@@ -161,6 +161,133 @@ describe("RegisterForm", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
+  // Codex P3 (round 5): password.length counts UTF-16 code units, so a supplementary-plane
+  // character inflates the apparent length by one. Same examples as PasswordPolicyTest on the
+  // backend — both sides must agree on exactly the same accept/reject boundary.
+  test("recusa senha com 9 code points mesmo tendo 10 unidades UTF-16 via dígito suplementar", async () => {
+    // 8 BMP letters + 1 supplementary digit = 9 code points, but .length === 10.
+    const password = "abcdefgh𝟎";
+    expect(password.length).toBe(10);
+    expect([...password].length).toBe(9);
+    renderWithClient(<RegisterForm />);
+    fillForm({ password, passwordConfirmation: password });
+
+    submit();
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "A senha deve ter ao menos 10 caracteres, incluindo letras e números.",
+    );
+    expect(authApi.register).not.toHaveBeenCalled();
+  });
+
+  test("aceita senha com 10 code points via dígito suplementar", async () => {
+    // 9 BMP letters + 1 supplementary digit = 10 code points (.length === 11).
+    const password = "abcdefghi𝟎";
+    expect([...password].length).toBe(10);
+    renderWithClient(<RegisterForm />);
+    fillForm({ password, passwordConfirmation: password });
+
+    submit();
+
+    await waitFor(() => expect(authApi.register).toHaveBeenCalled());
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  test("recusa senha com 9 code points incluindo letra suplementar e dígito BMP", async () => {
+    // 8 BMP digits + 1 supplementary letter = 9 code points, but .length === 10.
+    const password = "12345678𐐀";
+    expect(password.length).toBe(10);
+    expect([...password].length).toBe(9);
+    renderWithClient(<RegisterForm />);
+    fillForm({ password, passwordConfirmation: password });
+
+    submit();
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "A senha deve ter ao menos 10 caracteres, incluindo letras e números.",
+    );
+    expect(authApi.register).not.toHaveBeenCalled();
+  });
+
+  // Codex P3 (round 5): mirrors RegistrationService's containsControlCharacter — an embedded
+  // control character (NUL, TAB, newline, DEL) is not stripped by trim() and must be rejected on
+  // the client with the same message the backend returns, before the request is ever sent. Control
+  // characters are built via String.fromCharCode rather than string literals, so the raw byte never
+  // has to round-trip through source-level escaping.
+  test("recusa nome de exibição com NUL embutido no cliente", async () => {
+    renderWithClient(<RegisterForm />);
+    fillForm({ displayName: "Ana" + String.fromCharCode(0x0000) + "Silva" });
+
+    submit();
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Informe um nome de exibição válido.");
+    expect(authApi.register).not.toHaveBeenCalled();
+  });
+
+  test("recusa nome de exibição com tab ou newline internos no cliente", async () => {
+    renderWithClient(<RegisterForm />);
+    fillForm({ displayName: "Ana" + String.fromCharCode(0x0009) + "Silva" + String.fromCharCode(0x000a) + "Costa" });
+
+    submit();
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Informe um nome de exibição válido.");
+    expect(authApi.register).not.toHaveBeenCalled();
+  });
+
+  test("recusa nome de exibição com DEL embutido no cliente", async () => {
+    renderWithClient(<RegisterForm />);
+    fillForm({ displayName: "Ana" + String.fromCharCode(0x007f) + "Silva" });
+
+    submit();
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Informe um nome de exibição válido.");
+    expect(authApi.register).not.toHaveBeenCalled();
+  });
+
+  test("aceita nome de exibição com acentos e emoji, sem recusar no cliente", async () => {
+    const displayName = "José da Conceição 😀";
+    renderWithClient(<RegisterForm />);
+    fillForm({ displayName });
+
+    submit();
+
+    await waitFor(() => expect(authApi.register).toHaveBeenCalledWith(expect.objectContaining({ displayName })));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  // Same mirroring as displayName, applied to email: containsControlCharacter must catch it before
+  // the "@" check, on the client, with the same message the backend returns for an invalid email.
+  test("recusa email com NUL embutido no cliente", async () => {
+    renderWithClient(<RegisterForm />);
+    fillForm({ email: "a" + String.fromCharCode(0x0000) + "@iwrite.local" });
+
+    submit();
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Informe um email válido.");
+    expect(authApi.register).not.toHaveBeenCalled();
+  });
+
+  test("recusa email com controle C1 embutido no cliente", async () => {
+    renderWithClient(<RegisterForm />);
+    fillForm({ email: "a" + String.fromCharCode(0x0080) + "@iwrite.local" });
+
+    submit();
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Informe um email válido.");
+    expect(authApi.register).not.toHaveBeenCalled();
+  });
+
+  test("aceita email com letra acentuada, sem recusar no cliente", async () => {
+    const email = "usuária@iwrite.local";
+    renderWithClient(<RegisterForm />);
+    fillForm({ email });
+
+    submit();
+
+    await waitFor(() => expect(authApi.register).toHaveBeenCalledWith(expect.objectContaining({ email })));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
   test("recusa nome de exibição com mais de 255 caracteres no cliente", async () => {
     renderWithClient(<RegisterForm />);
     fillForm({ displayName: "A".repeat(256) });

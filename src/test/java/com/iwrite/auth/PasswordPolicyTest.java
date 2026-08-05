@@ -68,4 +68,37 @@ class PasswordPolicyTest {
         String password = "aaaaaaaaa" + SUPPLEMENTARY_LETTER;
         assertThat(PasswordPolicy.isValid(password)).isFalse();
     }
+
+    // Codex P3 (round 5): password.length() counts UTF-16 units, so a supplementary-plane character
+    // (a surrogate pair) inflates the apparent length by one. These pin the minimum to code points,
+    // not code units — mirrored in register-form.test.tsx with [...password].length.
+
+    @Test
+    void rejeitaSenhaComNoveCodePointsMesmoTendoDezUnidadesUtf16ViaDigitoSuplementar() {
+        // 8 BMP letters + 1 supplementary digit = 9 code points, but length() == 10 (8 + 2 UTF-16
+        // units for the surrogate pair) — the old length()-based check wrongly accepted this.
+        String password = "abcdefgh" + SUPPLEMENTARY_DIGIT;
+        assertThat(password.length()).isEqualTo(10);
+        assertThat(password.codePointCount(0, password.length())).isEqualTo(9);
+        assertThat(PasswordPolicy.isValid(password)).isFalse();
+    }
+
+    @Test
+    void aceitaSenhaComDezCodePointsViaDigitoSuplementar() {
+        // 9 BMP letters + 1 supplementary digit = 10 code points (length() == 11) — at the minimum
+        // once counted correctly, must be accepted.
+        String password = "abcdefghi" + SUPPLEMENTARY_DIGIT;
+        assertThat(password.codePointCount(0, password.length())).isEqualTo(10);
+        assertThat(PasswordPolicy.isValid(password)).isTrue();
+    }
+
+    @Test
+    void rejeitaSenhaComNoveCodePointsIncluindoLetraSuplementarEDigitoBmp() {
+        // 8 BMP digits + 1 supplementary letter = 9 code points (length() == 10) — same undercount,
+        // this time on the letter side.
+        String password = "12345678" + SUPPLEMENTARY_LETTER;
+        assertThat(password.length()).isEqualTo(10);
+        assertThat(password.codePointCount(0, password.length())).isEqualTo(9);
+        assertThat(PasswordPolicy.isValid(password)).isFalse();
+    }
 }

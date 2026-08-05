@@ -307,6 +307,168 @@ class RegistrationServiceTest {
         verifyNoInteractions(userRepository, credentialRepository, tenantRepository, membershipRepository, personaRepository, timeZoneValidator);
     }
 
+    // Codex P3 (round 5): NUL and other control code points are not \s, so EMAIL_PATTERN alone lets
+    // them through; the later users.email insert (Postgres varchar) rejects NUL outright, which
+    // without this check would surface as a generic 500 rather than a validation 400. Control
+    // characters are built via (char) casts rather than string literals, so the raw byte never has
+    // to round-trip through source-level escaping.
+
+    @Test
+    void emailComNulEmbutidoRetorna400SemGravarNada() {
+        String email = "a" + (char) 0x0000 + "@iwrite.local";
+        RegisterRequest request = new RegisterRequest("Nova Autora", email, RAW_PASSWORD, RAW_PASSWORD, "writer", "America/Sao_Paulo");
+
+        assertThatThrownBy(() -> service.register(request))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessage(RegistrationMessages.INVALID_EMAIL);
+
+        verifyNoInteractions(userRepository, credentialRepository, tenantRepository, membershipRepository, personaRepository, timeZoneValidator);
+    }
+
+    @Test
+    void emailComSohEmbutidoRetorna400SemGravarNada() {
+        String email = "a" + (char) 0x0001 + "@iwrite.local";
+        RegisterRequest request = new RegisterRequest("Nova Autora", email, RAW_PASSWORD, RAW_PASSWORD, "writer", "America/Sao_Paulo");
+
+        assertThatThrownBy(() -> service.register(request))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessage(RegistrationMessages.INVALID_EMAIL);
+
+        verifyNoInteractions(userRepository, credentialRepository, tenantRepository, membershipRepository, personaRepository, timeZoneValidator);
+    }
+
+    @Test
+    void emailComControleC1EmbutidoRetorna400SemGravarNada() {
+        // U+0080 <control> — a C1 control character, not matched by \s or by ASCII-range checks.
+        String email = "a" + (char) 0x0080 + "@iwrite.local";
+        RegisterRequest request = new RegisterRequest("Nova Autora", email, RAW_PASSWORD, RAW_PASSWORD, "writer", "America/Sao_Paulo");
+
+        assertThatThrownBy(() -> service.register(request))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessage(RegistrationMessages.INVALID_EMAIL);
+
+        verifyNoInteractions(userRepository, credentialRepository, tenantRepository, membershipRepository, personaRepository, timeZoneValidator);
+    }
+
+    // NUL sitting at either edge of the raw email is stripped by EmailNormalizer's trim() before
+    // this check ever runs — real coverage of the finding needs the control character embedded in
+    // the middle, as above; this pins that the pre-existing whitespace exclusion (\s) still works.
+    @Test
+    void emailComTabInternoRetorna400SemGravarNada() {
+        String email = "a" + (char) 0x0009 + "b@iwrite.local";
+        RegisterRequest request = new RegisterRequest("Nova Autora", email, RAW_PASSWORD, RAW_PASSWORD, "writer", "America/Sao_Paulo");
+
+        assertThatThrownBy(() -> service.register(request))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessage(RegistrationMessages.INVALID_EMAIL);
+
+        verifyNoInteractions(userRepository, credentialRepository, tenantRepository, membershipRepository, personaRepository, timeZoneValidator);
+    }
+
+    // Round 5 follow-up: the finding covers "any code point Character.isISOControl agrees on",
+    // not just the local part — containsControlCharacter scans the whole normalized email, so a
+    // control character sitting after the '@' must be caught the same way.
+    @Test
+    void emailComControleNaParteDeDominioRetorna400SemGravarNada() {
+        String email = "a@iwrite" + (char) 0x0000 + ".local";
+        RegisterRequest request = new RegisterRequest("Nova Autora", email, RAW_PASSWORD, RAW_PASSWORD, "writer", "America/Sao_Paulo");
+
+        assertThatThrownBy(() -> service.register(request))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessage(RegistrationMessages.INVALID_EMAIL);
+
+        verifyNoInteractions(userRepository, credentialRepository, tenantRepository, membershipRepository, personaRepository, timeZoneValidator);
+    }
+
+    // The control-character check must reject exactly Cc, never a plain accented email that the
+    // policy already accepts today — same intent as displayNameComEmojiEZwjContinuaAceito below,
+    // applied to the email field instead.
+    @Test
+    void emailUnicodeSemCaracteresDeControleContinuaAceito() {
+        stubHappyPathCollaborators();
+        String email = "usuária@iwrite.local";
+        RegisterRequest request = new RegisterRequest("Nova Autora", email, RAW_PASSWORD, RAW_PASSWORD, "writer", "America/Sao_Paulo");
+
+        service.register(request);
+
+        ArgumentCaptor<User> userCaptor = ArgumentCaptor.forClass(User.class);
+        verify(userRepository).saveAndFlush(userCaptor.capture());
+        assertThat(userCaptor.getValue().getEmail()).isEqualTo(email);
+    }
+
+    // Codex P3 (round 5): same reasoning, applied to displayName ahead of the users.display_name
+    // insert. The finding's own example (trailing NUL) is actually stripped by
+    // RegistrationService#register's displayName.trim() before validateDisplayName ever sees it —
+    // these use an embedded control character instead, which trim() cannot remove, to exercise the
+    // real defect.
+
+    @Test
+    void displayNameComNulEmbutidoRetorna400SemGravarNada() {
+        String displayName = "An" + (char) 0x0000 + "a";
+        RegisterRequest request = new RegisterRequest(displayName, "nova@iwrite.local", RAW_PASSWORD, RAW_PASSWORD, "writer", "America/Sao_Paulo");
+        lenient().when(timeZoneValidator.validate("America/Sao_Paulo")).thenReturn(ZoneId.of("America/Sao_Paulo"));
+
+        assertThatThrownBy(() -> service.register(request))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessage(RegistrationMessages.INVALID_DISPLAY_NAME);
+
+        verifyNoInteractions(userRepository, credentialRepository, tenantRepository, membershipRepository, personaRepository);
+    }
+
+    @Test
+    void displayNameComControleSohEmbutidoRetorna400SemGravarNada() {
+        String displayName = "An" + (char) 0x0001 + "a";
+        RegisterRequest request = new RegisterRequest(displayName, "nova@iwrite.local", RAW_PASSWORD, RAW_PASSWORD, "writer", "America/Sao_Paulo");
+        lenient().when(timeZoneValidator.validate("America/Sao_Paulo")).thenReturn(ZoneId.of("America/Sao_Paulo"));
+
+        assertThatThrownBy(() -> service.register(request))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessage(RegistrationMessages.INVALID_DISPLAY_NAME);
+
+        verifyNoInteractions(userRepository, credentialRepository, tenantRepository, membershipRepository, personaRepository);
+    }
+
+    @Test
+    void displayNameComNewlineInternoRetorna400SemGravarNada() {
+        String displayName = "An" + (char) 0x000A + "a";
+        RegisterRequest request = new RegisterRequest(displayName, "nova@iwrite.local", RAW_PASSWORD, RAW_PASSWORD, "writer", "America/Sao_Paulo");
+        lenient().when(timeZoneValidator.validate("America/Sao_Paulo")).thenReturn(ZoneId.of("America/Sao_Paulo"));
+
+        assertThatThrownBy(() -> service.register(request))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessage(RegistrationMessages.INVALID_DISPLAY_NAME);
+
+        verifyNoInteractions(userRepository, credentialRepository, tenantRepository, membershipRepository, personaRepository);
+    }
+
+    @Test
+    void displayNameComTabInternoRetorna400SemGravarNada() {
+        String displayName = "An" + (char) 0x0009 + "a";
+        RegisterRequest request = new RegisterRequest(displayName, "nova@iwrite.local", RAW_PASSWORD, RAW_PASSWORD, "writer", "America/Sao_Paulo");
+        lenient().when(timeZoneValidator.validate("America/Sao_Paulo")).thenReturn(ZoneId.of("America/Sao_Paulo"));
+
+        assertThatThrownBy(() -> service.register(request))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessage(RegistrationMessages.INVALID_DISPLAY_NAME);
+
+        verifyNoInteractions(userRepository, credentialRepository, tenantRepository, membershipRepository, personaRepository);
+    }
+
+    @Test
+    void displayNameComEmojiEZwjContinuaAceito() {
+        // Category Cf (ZERO WIDTH JOINER, U+200D) is not Cc/isISOControl — legitimate emoji
+        // sequences like family emoji must keep working.
+        stubHappyPathCollaborators();
+        String displayName = "👩‍👩‍👧‍👦";
+        RegisterRequest request = new RegisterRequest(displayName, " Nova@IWrite.local ", RAW_PASSWORD, RAW_PASSWORD, "writer", "America/Sao_Paulo");
+
+        service.register(request);
+
+        ArgumentCaptor<User> userCaptor = ArgumentCaptor.forClass(User.class);
+        verify(userRepository).saveAndFlush(userCaptor.capture());
+        assertThat(userCaptor.getValue().getDisplayName()).isEqualTo(displayName);
+    }
+
     @Test
     void violacaoDeIntegridadeNaoRelacionadaAUkUsersEmailNaoViraConflito() {
         lenient().when(timeZoneValidator.validate("America/Sao_Paulo")).thenReturn(ZoneId.of("America/Sao_Paulo"));

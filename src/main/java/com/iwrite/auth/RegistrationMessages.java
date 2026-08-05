@@ -13,6 +13,8 @@ public final class RegistrationMessages {
 
     public static final String DISPLAY_NAME_TOO_LONG = "O nome de exibição deve ter no máximo 255 caracteres.";
 
+    public static final String INVALID_DISPLAY_NAME = "Informe um nome de exibição válido.";
+
     public static final String EMAIL_ALREADY_IN_USE = "Este email já está cadastrado.";
 
     public static final String PASSWORD_CONFIRMATION_MISMATCH = "A confirmação de senha não confere.";

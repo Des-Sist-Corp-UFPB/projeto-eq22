@@ -14,7 +14,7 @@ public final class PasswordPolicy {
     }
 
     public static boolean isValid(String password) {
-        if (password == null || password.length() < MIN_LENGTH) {
+        if (password == null || password.codePointCount(0, password.length()) < MIN_LENGTH) {
             return false;
         }
         // codePoints(), not charAt()/Character.isLetter(char): a supplementary-plane letter or digit

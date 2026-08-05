@@ -183,10 +183,23 @@ export function RegisterForm() {
 const PASSWORD_HAS_LETTER = /\p{L}/u;
 const PASSWORD_HAS_DIGIT = /\p{Nd}/u;
 
+// Mirrors the backend's containsControlCharacter (RegistrationService#validateEmailFormat /
+// #validateDisplayName): category Cc only, never Cf (e.g. ZWJ), so legitimate emoji sequences and
+// scripts that lean on format characters keep working.
+const CONTROL_CHARACTER = /\p{Cc}/u;
+function containsControlCharacter(value: string) {
+  return [...value].some((character) => CONTROL_CHARACTER.test(character));
+}
+
 function validate(displayName: string, email: string, password: string, passwordConfirmation: string) {
   const trimmedDisplayName = displayName.trim();
   if (!trimmedDisplayName) {
     return "Informe seu nome de exibição.";
+  }
+  // An embedded control character (e.g. a pasted NUL) is not stripped by trim() and must be
+  // rejected before the length check, same order as the backend.
+  if (containsControlCharacter(trimmedDisplayName)) {
+    return "Informe um nome de exibição válido.";
   }
   if ([...trimmedDisplayName].length > MAX_DISPLAY_NAME_LENGTH) {
     return "O nome de exibição deve ter no máximo 255 caracteres.";
@@ -194,13 +207,16 @@ function validate(displayName: string, email: string, password: string, password
   if (!email.trim()) {
     return "Informe seu email.";
   }
+  if (containsControlCharacter(email)) {
+    return "Informe um email válido.";
+  }
   if (!email.includes("@")) {
     return "Informe um email válido.";
   }
   if (!password) {
     return "Informe uma senha.";
   }
-  if (password.length < 10 || !PASSWORD_HAS_LETTER.test(password) || !PASSWORD_HAS_DIGIT.test(password)) {
+  if ([...password].length < 10 || !PASSWORD_HAS_LETTER.test(password) || !PASSWORD_HAS_DIGIT.test(password)) {
     return "A senha deve ter ao menos 10 caracteres, incluindo letras e números.";
   }
   if (password !== passwordConfirmation) {

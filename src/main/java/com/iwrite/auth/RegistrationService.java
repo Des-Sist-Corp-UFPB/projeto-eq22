@@ -131,6 +131,15 @@ public class RegistrationService {
     }
 
     private void validateEmailFormat(String email) {
+        // \s in EMAIL_PATTERN excludes whitespace, not control characters generally: NUL and other
+        // C0/C1 controls are neither \s nor caught by the regex, and users.email is a Postgres
+        // varchar, which rejects NUL outright — without this check that insert throws a generic
+        // DataIntegrityViolationException that is not the email-uniqueness violation below, and
+        // surfaces as a 500 instead of a 400. Checked ahead of the regex too, so a control character
+        // never gets a chance to slip through as "not \s".
+        if (containsControlCharacter(email)) {
+            throw new BadRequestException(RegistrationMessages.INVALID_EMAIL);
+        }
         if (!EMAIL_PATTERN.matcher(email).matches()) {
             throw new BadRequestException(RegistrationMessages.INVALID_EMAIL);
         }
@@ -142,9 +151,22 @@ public class RegistrationService {
     }
 
     private void validateDisplayName(String displayName) {
+        // Same reasoning as validateEmailFormat: an embedded NUL (or other control character) is not
+        // stripped by String.trim() unless it sits at the very start/end of the raw input, and
+        // users.display_name is a Postgres varchar that rejects NUL outright.
+        if (containsControlCharacter(displayName)) {
+            throw new BadRequestException(RegistrationMessages.INVALID_DISPLAY_NAME);
+        }
         if (displayName.codePointCount(0, displayName.length()) > MAX_NAME_LENGTH) {
             throw new BadRequestException(RegistrationMessages.DISPLAY_NAME_TOO_LONG);
         }
+    }
+
+    // Character.isISOControl(int), not a Unicode category regex: this must catch exactly Cc
+    // (control) code points, never Cf (format) ones like ZWJ that legitimate emoji sequences and
+    // some scripts depend on.
+    private static boolean containsControlCharacter(String value) {
+        return value.codePoints().anyMatch(Character::isISOControl);
     }
 
     /**

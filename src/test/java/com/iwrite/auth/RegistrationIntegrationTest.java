@@ -439,6 +439,43 @@ class RegistrationIntegrationTest {
         assertThat(userRepository.findByEmail(EmailNormalizer.normalize(email))).isEmpty();
     }
 
+    // Codex P3 (round 5): an embedded NUL is neither \s nor stripped by trim(), so without a
+    // control-character check it reaches the users insert, which Postgres rejects as an invalid
+    // varchar value — the finding was that this surfaced as a generic 500, not the 400 a bad
+    // request should produce. Built via (char) rather than a source-level escape.
+
+    @Test
+    void emailComNulEmbutidoRetorna400NuncaConflitoOuErroInternoSemCriarNada() throws Exception {
+        String email = "a" + (char) 0x0000 + uniqueEmail();
+        long usersBefore = userRepository.count();
+        Map<String, Object> body = registerBody(email, "Alguém", VALID_PASSWORD, VALID_PASSWORD, "WRITER", "America/Sao_Paulo");
+
+        String responseBody = mockMvc.perform(withCsrf(post("/api/auth/register"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(body)))
+                .andExpect(status().isBadRequest())
+                .andReturn().getResponse().getContentAsString();
+
+        assertThat(responseBody).contains(RegistrationMessages.INVALID_EMAIL);
+        assertThat(userRepository.count()).isEqualTo(usersBefore);
+    }
+
+    @Test
+    void displayNameComNulEmbutidoRetorna400NuncaErroInternoSemCriarNada() throws Exception {
+        String email = uniqueEmail();
+        String displayName = "An" + (char) 0x0000 + "a";
+        Map<String, Object> body = registerBody(email, displayName, VALID_PASSWORD, VALID_PASSWORD, "WRITER", "America/Sao_Paulo");
+
+        String responseBody = mockMvc.perform(withCsrf(post("/api/auth/register"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(body)))
+                .andExpect(status().isBadRequest())
+                .andReturn().getResponse().getContentAsString();
+
+        assertThat(responseBody).contains(RegistrationMessages.INVALID_DISPLAY_NAME);
+        assertThat(userRepository.findByEmail(email)).isEmpty();
+    }
+
     @Test
     void usuarioLegadoEPersonaDeBackfillPermanecemIntactos() {
         Optional<User> legacyUser = userRepository.findByEmail("carlos.legacy@iwrite.local");
