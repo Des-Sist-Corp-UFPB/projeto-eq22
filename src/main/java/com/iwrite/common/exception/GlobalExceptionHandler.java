@@ -70,13 +70,21 @@ public class GlobalExceptionHandler {
      * {@code /api/auth/me}. Otherwise a session revoked on a tenant-scoped endpoint like
      * {@code /api/books} would keep answering 401 without ever being destroyed, and recreating the
      * same membership would silently re-authorize the old cookie without a new login.
+     *
+     * <p>{@code invalidate} can race {@code AuthController#discardPartialSession}, which invalidates
+     * the same session on a rolled-back registration before this handler ever runs — the second
+     * caller finds it already gone, which is fine, not a state to fail on.
      */
     @ExceptionHandler(SessionAuthenticationException.class)
     public ResponseEntity<ApiErrorResponse> handleInvalidSession(
             SessionAuthenticationException exception, HttpServletRequest request) {
         HttpSession session = request.getSession(false);
         if (session != null) {
-            session.invalidate();
+            try {
+                session.invalidate();
+            } catch (IllegalStateException alreadyInvalidated) {
+                // Already invalidated by the other cleanup path; nothing left to do.
+            }
         }
         SecurityContextHolder.clearContext();
         return buildResponse(HttpStatus.UNAUTHORIZED, List.of(AuthMessages.SESSION_EXPIRED));

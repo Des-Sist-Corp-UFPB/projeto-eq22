@@ -5,6 +5,7 @@ import com.iwrite.auth.dto.LoginRequest;
 import com.iwrite.auth.dto.RegisterRequest;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import jakarta.servlet.http.HttpSession;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.authentication.AuthenticationManager;
@@ -19,6 +20,9 @@ import org.springframework.security.web.authentication.session.SessionAuthentica
 import org.springframework.security.web.authentication.session.SessionAuthenticationStrategy;
 import org.springframework.security.web.context.SecurityContextRepository;
 import org.springframework.security.web.csrf.CsrfToken;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -107,19 +111,39 @@ public class AuthController {
     }
 
     /**
-     * Creates the personal workspace transactionally ({@link RegistrationService}), then
-     * authenticates through the exact same {@link AuthenticationManager} path {@link #login} uses,
-     * against the credential it just persisted — this is what guarantees the returned session has
-     * the identical contract as one produced by {@code /api/auth/login}, rather than a hand-built
-     * copy that could drift from it.
+     * Creates the personal workspace ({@link RegistrationService}), re-authenticates through the
+     * exact same {@link AuthenticationManager} path {@link #login} uses against the credential just
+     * persisted, and establishes the session — all inside one {@code REQUIRED} transaction (issue
+     * #143), so a failure anywhere in that sequence leaves none of the five registration entities
+     * behind. Re-authenticating rather than hand-building the response is also what guarantees the
+     * session has the identical contract as one produced by {@code /api/auth/login}.
+     *
+     * <p>A transaction rollback only undoes the database side; it does not by itself undo a session
+     * id already rotated by {@link #establishSession} or a {@link SecurityContext} already installed
+     * on this thread. The {@link TransactionSynchronization} below is what erases both whenever the
+     * transaction does not end up committed — including the case where {@code authenticate} or
+     * {@code establishSession} throws, and the narrower case where everything up to here succeeded
+     * but the commit itself still fails, which must never leave a live session pointing at a user
+     * that was never actually persisted.
      */
     @PostMapping("/register")
+    @Transactional
     public AuthenticatedUserResponse register(
             @Valid @RequestBody RegisterRequest request,
             HttpServletRequest httpRequest,
             HttpServletResponse httpResponse
     ) {
         registrationRateLimiter.checkOrigin(clientAddressResolver.resolve(httpRequest));
+
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCompletion(int status) {
+                if (status != TransactionSynchronization.STATUS_COMMITTED) {
+                    discardPartialSession(httpRequest);
+                }
+            }
+        });
+
         registrationService.register(request);
 
         String email = EmailNormalizer.normalize(request.email());
@@ -127,6 +151,24 @@ public class AuthController {
                 UsernamePasswordAuthenticationToken.unauthenticated(email, request.password()));
 
         return establishSession(authentication, httpRequest, httpResponse);
+    }
+
+    /** Invalidates whatever HTTP session {@link #establishSession} may have started and clears the
+     *  security context this thread just installed — the non-database half of rolling registration
+     *  back. A no-op when nothing got that far yet (e.g. {@code authenticate} failed first).
+     *  {@code invalidate} can race {@link GlobalExceptionHandler#handleInvalidSession}, which also
+     *  invalidates the same session for a {@code SessionAuthenticationException} thrown here — the
+     *  second caller finds it already gone, which is fine, not a state to fail on. */
+    private void discardPartialSession(HttpServletRequest httpRequest) {
+        HttpSession session = httpRequest.getSession(false);
+        if (session != null) {
+            try {
+                session.invalidate();
+            } catch (IllegalStateException alreadyInvalidated) {
+                // Already invalidated by the other cleanup path; nothing left to do.
+            }
+        }
+        SecurityContextHolder.clearContext();
     }
 
     /**
