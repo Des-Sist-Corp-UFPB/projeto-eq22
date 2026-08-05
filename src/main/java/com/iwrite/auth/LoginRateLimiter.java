@@ -8,6 +8,7 @@ import java.time.Clock;
 import java.time.Duration;
 import java.util.Locale;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Bounded, in-memory login throttling on two independent dimensions — the calling origin and the
@@ -18,12 +19,13 @@ import java.util.concurrent.ConcurrentHashMap;
  * <p>The two dimensions count differently, on purpose. The origin budget ({@link #checkOrigin})
  * counts every call, success or failure, and is spent before any password is checked: its job is
  * to bound how much bcrypt one source can trigger, including from an attacker who never sends a
- * real account. The account budget only counts failures ({@link #recordFailedAttempt}, called
- * only from a catch block): a real owner logging in from several tabs or devices must never be
- * throttled out of their own account by their own successful logins. What the account dimension
- * still does before authenticating ({@link #checkAccountBudget}) is refuse an already-exhausted
- * account outright, so a distributed attack that already tripped the account limit through other
- * origins cannot keep spending bcrypt on this one either.
+ * real account. The account dimension reserves a unit ({@link #reserveAccountAttempt}) *before*
+ * bcrypt runs, and a successful login refunds that same unit right away
+ * ({@link AccountAttemptReservation#refund()}): sequential valid logins from several tabs or
+ * devices never accumulate against the account's own budget. A burst of concurrently valid logins
+ * larger than the per-account limit can still see some of its members get a temporary 429 while
+ * their reservations are in flight — that is the point, it is what keeps concurrent bcrypt calls
+ * for one account bounded, and the window reopens on its own moments later.
  *
  * <p>Refusing never says which dimension tripped, and {@link AuthMessages#TOO_MANY_LOGIN_ATTEMPTS}
  * is as silent about account existence as a wrong password. It is a fixed window, not a lockout: it
@@ -101,21 +103,33 @@ public class LoginRateLimiter {
     }
 
     /**
-     * Refuses an account that already spent its failure budget, without spending anything itself —
-     * a login that turns out to be valid must never count against the account it just authenticated.
+     * Reserves one unit of the targeted account's budget before any password is checked, so a
+     * concurrent burst against one account cannot all pass a read-then-later-increment race and
+     * reach bcrypt together. Throws {@link LoginRateLimitExceededException} instead of returning
+     * when the account has no room left — the caller must never reach
+     * {@code AuthenticationManager.authenticate} in that case.
+     *
+     * <p>The returned token is opaque and carries no email: it pins the specific {@link Window}
+     * instance and the generation it was reserved against, which is exactly what
+     * {@link AccountAttemptReservation#refund()} needs to give the unit back safely later, without
+     * this class ever exposing which account a token belongs to.
+     *
+     * <p>A null or blank email — already rejected by request validation before authentication would
+     * even run — gets a no-op reservation: the origin dimension already bounds that traffic.
      */
-    public void checkAccountBudget(String email) {
+    public AccountAttemptReservation reserveAccountAttempt(String email) {
         String account = normalizedAccount(email);
-        if (account != null && !hasRemainingBudget(byAccount, accountAdmissionLock, account, maxAttemptsPerAccount)) {
-            throw new LoginRateLimitExceededException();
+        if (account == null) {
+            return AccountAttemptReservation.noop();
         }
-    }
-
-    /** Spends one unit of the targeted account's budget. Call only after authentication failed. */
-    public void recordFailedAttempt(String email) {
-        String account = normalizedAccount(email);
-        if (account != null) {
-            increment(byAccount, accountAdmissionLock, account);
+        Window state = statesGet(byAccount, accountAdmissionLock, account);
+        synchronized (state) {
+            resetIfExpired(state);
+            if (state.count >= maxAttemptsPerAccount) {
+                throw new LoginRateLimitExceededException();
+            }
+            state.count++;
+            return new AccountAttemptReservation(state, state.generation);
         }
     }
 
@@ -128,32 +142,6 @@ public class LoginRateLimiter {
             }
             state.count++;
             return true;
-        }
-    }
-
-    private boolean hasRemainingBudget(ConcurrentHashMap<String, Window> states, Object admissionLock, String key, int maxAttempts) {
-        Window state = statesGet(states, admissionLock, key);
-        synchronized (state) {
-            resetIfExpired(state);
-            return state.count < maxAttempts;
-        }
-    }
-
-    private void increment(ConcurrentHashMap<String, Window> states, Object admissionLock, String key) {
-        Window state;
-        try {
-            state = statesGet(states, admissionLock, key);
-        } catch (LoginRateLimitExceededException e) {
-            // Recording is best-effort bookkeeping after a failed attempt already happened, from a
-            // catch block whose job is to re-throw the real authentication failure — not to gate
-            // anything itself. If the account dimension has no room left to start tracking a brand
-            // new account, silently skipping the record is safer than turning an unrelated 401 into
-            // a 429 here; the caller's own throw carries the actual outcome.
-            return;
-        }
-        synchronized (state) {
-            resetIfExpired(state);
-            state.count++;
         }
     }
 
@@ -207,6 +195,7 @@ public class LoginRateLimiter {
         if (now - state.startMillis >= window.toMillis()) {
             state.startMillis = now;
             state.count = 0;
+            state.generation++;
         }
     }
 
@@ -221,5 +210,51 @@ public class LoginRateLimiter {
     private static final class Window {
         private long startMillis;
         private int count;
+        // Bumped every time resetIfExpired renews this window. A reservation taken against a since-
+        // renewed window must never refund into the new one — the generation it captured is the
+        // only way to tell the two apart, since the Window instance itself is reused in place.
+        private long generation;
+    }
+
+    /**
+     * Opaque token for one reserved unit of an account's login budget. Deliberately carries no
+     * email — only the {@link Window} it was reserved against and the generation at that time —
+     * so nothing about which account it belongs to can leak through the token itself.
+     */
+    public static final class AccountAttemptReservation {
+
+        private static final AccountAttemptReservation NOOP = new AccountAttemptReservation(null, 0);
+
+        private final Window window;
+        private final long generation;
+        private final AtomicBoolean refunded = new AtomicBoolean(false);
+
+        private AccountAttemptReservation(Window window, long generation) {
+            this.window = window;
+            this.generation = generation;
+        }
+
+        private static AccountAttemptReservation noop() {
+            return NOOP;
+        }
+
+        /**
+         * Gives the reserved unit back. Idempotent — calling it more than once never decrements
+         * twice — and a no-op if the window was renewed (expired and reset) while this reservation
+         * was outstanding, so a refund can never land in a window it was never actually spent from.
+         */
+        public void refund() {
+            if (window == null) {
+                return;
+            }
+            if (!refunded.compareAndSet(false, true)) {
+                return;
+            }
+            synchronized (window) {
+                if (window.generation == generation && window.count > 0) {
+                    window.count--;
+                }
+            }
+        }
     }
 }

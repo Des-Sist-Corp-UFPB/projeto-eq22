@@ -24,11 +24,20 @@ class LoginRateLimiterTest {
 
     private final MutableClock clock = new MutableClock();
 
-    /** One full failed login, in the order AuthController drives the limiter for a real request. */
+    /**
+     * One full failed login, in the order AuthController drives the limiter for a real request:
+     * the reservation is taken before the (simulated) authenticate() call and never refunded,
+     * exactly as a real {@link org.springframework.security.core.AuthenticationException} leaves it.
+     */
     private static void attemptAndFail(LoginRateLimiter limiter, String origin, String email) {
         limiter.checkOrigin(origin);
-        limiter.checkAccountBudget(email);
-        limiter.recordFailedAttempt(email);
+        limiter.reserveAccountAttempt(email);
+    }
+
+    /** One full successful login: the reservation is taken, then refunded right away. */
+    private static void attemptAndSucceed(LoginRateLimiter limiter, String origin, String email) {
+        limiter.checkOrigin(origin);
+        limiter.reserveAccountAttempt(email).refund();
     }
 
     @Test
@@ -38,7 +47,7 @@ class LoginRateLimiterTest {
         assertThatCode(() -> attemptAndFail(limiter, "1.2.3.4", "victim@iwrite.local")).doesNotThrowAnyException();
         assertThatCode(() -> attemptAndFail(limiter, "1.2.3.4", "victim@iwrite.local")).doesNotThrowAnyException();
 
-        assertThatThrownBy(() -> limiter.checkAccountBudget("victim@iwrite.local"))
+        assertThatThrownBy(() -> limiter.reserveAccountAttempt("victim@iwrite.local"))
                 .isInstanceOf(LoginRateLimitExceededException.class);
     }
 
@@ -51,7 +60,7 @@ class LoginRateLimiterTest {
 
         // A third origin, same targeted account: the account budget is what is spent, not the origin's.
         limiter.checkOrigin("3.3.3.3");
-        assertThatThrownBy(() -> limiter.checkAccountBudget("victim@iwrite.local"))
+        assertThatThrownBy(() -> limiter.reserveAccountAttempt("victim@iwrite.local"))
                 .isInstanceOf(LoginRateLimitExceededException.class);
     }
 
@@ -72,7 +81,7 @@ class LoginRateLimiterTest {
 
         attemptAndFail(limiter, "1.2.3.4", " Victim@IWrite.local ");
 
-        assertThatThrownBy(() -> limiter.checkAccountBudget("victim@iwrite.local"))
+        assertThatThrownBy(() -> limiter.reserveAccountAttempt("victim@iwrite.local"))
                 .isInstanceOf(LoginRateLimitExceededException.class);
     }
 
@@ -81,7 +90,7 @@ class LoginRateLimiterTest {
         LoginRateLimiter limiter = new LoginRateLimiter(100, 1, 10_000, Duration.ofMinutes(1), clock);
 
         attemptAndFail(limiter, "1.2.3.4", "victim@iwrite.local");
-        assertThatThrownBy(() -> limiter.checkAccountBudget("victim@iwrite.local"))
+        assertThatThrownBy(() -> limiter.reserveAccountAttempt("victim@iwrite.local"))
                 .isInstanceOf(LoginRateLimitExceededException.class);
 
         clock.advance(Duration.ofSeconds(61));
@@ -107,16 +116,16 @@ class LoginRateLimiterTest {
 
         // Victim is the oldest tracked account and has already spent its one-attempt budget.
         attemptAndFail(limiter, origin, "victim@iwrite.local");
-        assertThatThrownBy(() -> limiter.checkAccountBudget("victim@iwrite.local"))
+        assertThatThrownBy(() -> limiter.reserveAccountAttempt("victim@iwrite.local"))
                 .isInstanceOf(LoginRateLimitExceededException.class);
 
         // A second, distinct account fills the account dimension to its max-tracked-keys capacity.
         limiter.checkOrigin(origin);
-        assertThatCode(() -> limiter.checkAccountBudget("second@iwrite.local")).doesNotThrowAnyException();
+        assertThatCode(() -> limiter.reserveAccountAttempt("second@iwrite.local")).doesNotThrowAnyException();
 
         // The map is now full of two live windows. Querying the victim again must still be a 429,
         // from its own preserved window — never a freshly created, empty one that would readmit it.
-        assertThatThrownBy(() -> limiter.checkAccountBudget("victim@iwrite.local"))
+        assertThatThrownBy(() -> limiter.reserveAccountAttempt("victim@iwrite.local"))
                 .isInstanceOf(LoginRateLimitExceededException.class);
     }
 
@@ -126,7 +135,7 @@ class LoginRateLimiterTest {
         String origin = "1.2.3.4";
 
         attemptAndFail(limiter, origin, "victim@iwrite.local");
-        assertThatThrownBy(() -> limiter.checkAccountBudget("victim@iwrite.local"))
+        assertThatThrownBy(() -> limiter.reserveAccountAttempt("victim@iwrite.local"))
                 .isInstanceOf(LoginRateLimitExceededException.class);
 
         // A distributed attack floods the account dimension with many disposable emails, well past
@@ -134,14 +143,14 @@ class LoginRateLimiterTest {
         for (int i = 0; i < 50; i++) {
             limiter.checkOrigin(origin);
             try {
-                limiter.checkAccountBudget("disposable-" + i + "@iwrite.local");
+                limiter.reserveAccountAttempt("disposable-" + i + "@iwrite.local");
             } catch (LoginRateLimitExceededException expected) {
                 // Fail-closed once capacity is spent — exactly the protection under test.
             }
         }
 
         // The victim's window survived every one of those admission attempts.
-        assertThatThrownBy(() -> limiter.checkAccountBudget("victim@iwrite.local"))
+        assertThatThrownBy(() -> limiter.reserveAccountAttempt("victim@iwrite.local"))
                 .isInstanceOf(LoginRateLimitExceededException.class);
     }
 
@@ -151,18 +160,18 @@ class LoginRateLimiterTest {
         String origin = "1.2.3.4";
 
         limiter.checkOrigin(origin);
-        assertThatCode(() -> limiter.checkAccountBudget("a@iwrite.local")).doesNotThrowAnyException();
+        assertThatCode(() -> limiter.reserveAccountAttempt("a@iwrite.local")).doesNotThrowAnyException();
         limiter.checkOrigin(origin);
-        assertThatCode(() -> limiter.checkAccountBudget("b@iwrite.local")).doesNotThrowAnyException();
+        assertThatCode(() -> limiter.reserveAccountAttempt("b@iwrite.local")).doesNotThrowAnyException();
 
         // The map is at max-tracked-keys capacity (2), both entries active: a third, unseen key
         // fails closed rather than growing the map or evicting either existing entry.
-        assertThatThrownBy(() -> limiter.checkAccountBudget("c@iwrite.local"))
+        assertThatThrownBy(() -> limiter.reserveAccountAttempt("c@iwrite.local"))
                 .isInstanceOf(LoginRateLimitExceededException.class);
 
         // Neither existing entry was evicted to make room for the attempt above.
-        assertThatCode(() -> limiter.checkAccountBudget("a@iwrite.local")).doesNotThrowAnyException();
-        assertThatCode(() -> limiter.checkAccountBudget("b@iwrite.local")).doesNotThrowAnyException();
+        assertThatCode(() -> limiter.reserveAccountAttempt("a@iwrite.local")).doesNotThrowAnyException();
+        assertThatCode(() -> limiter.reserveAccountAttempt("b@iwrite.local")).doesNotThrowAnyException();
     }
 
     @Test
@@ -171,17 +180,17 @@ class LoginRateLimiterTest {
         String origin = "1.2.3.4";
 
         limiter.checkOrigin(origin);
-        assertThatCode(() -> limiter.checkAccountBudget("a@iwrite.local")).doesNotThrowAnyException();
+        assertThatCode(() -> limiter.reserveAccountAttempt("a@iwrite.local")).doesNotThrowAnyException();
 
         // At capacity (max-tracked-keys=1): a second, distinct account is refused while "a"'s window
         // is still active.
-        assertThatThrownBy(() -> limiter.checkAccountBudget("b@iwrite.local"))
+        assertThatThrownBy(() -> limiter.reserveAccountAttempt("b@iwrite.local"))
                 .isInstanceOf(LoginRateLimitExceededException.class);
 
         clock.advance(Duration.ofSeconds(61)); // "a"'s window expires; it is never revisited.
 
         // Admitting "b" reclaims the now-expired slot instead of refusing.
-        assertThatCode(() -> limiter.checkAccountBudget("b@iwrite.local")).doesNotThrowAnyException();
+        assertThatCode(() -> limiter.reserveAccountAttempt("b@iwrite.local")).doesNotThrowAnyException();
     }
 
     @Test
@@ -189,16 +198,19 @@ class LoginRateLimiterTest {
         LoginRateLimiter limiter = new LoginRateLimiter(1000, 3, 1, Duration.ofMinutes(1), clock);
         String origin = "1.2.3.4";
 
-        // One failure recorded, budget is 3: still has room, and the map (max-tracked-keys=1) is
-        // already completely full with only this account tracked.
+        // One failure recorded (1/3), budget is 3: still has room, and the map (max-tracked-keys=1)
+        // is already completely full with only this account tracked.
         attemptAndFail(limiter, origin, "a@iwrite.local");
-        assertThatCode(() -> limiter.checkAccountBudget("a@iwrite.local")).doesNotThrowAnyException();
+        limiter.checkOrigin(origin);
+        // A successful login in between: reserved then refunded right away, so it never accumulates
+        // against the budget — the count is still 1/3 afterwards, not 2/3.
+        assertThatCode(() -> limiter.reserveAccountAttempt("a@iwrite.local").refund())
+                .doesNotThrowAnyException();
 
         // Re-checking and re-spending the same, already-tracked key is never treated as a "new key"
-        // admission — its own count keeps accumulating rather than being reset or evicted.
+        // admission — its own count keeps accumulating (now 2/3) rather than being reset or evicted.
         limiter.checkOrigin(origin);
-        limiter.recordFailedAttempt("a@iwrite.local"); // 2/3
-        assertThatCode(() -> limiter.checkAccountBudget("a@iwrite.local")).doesNotThrowAnyException();
+        assertThatCode(() -> limiter.reserveAccountAttempt("a@iwrite.local")).doesNotThrowAnyException();
     }
 
     @Test
@@ -228,7 +240,7 @@ class LoginRateLimiterTest {
         // A protected, already-exhausted victim — the one entry that must survive every concurrent
         // admission attempt below, no matter how the race between threads resolves.
         attemptAndFail(limiter, origin, "victim@iwrite.local");
-        assertThatThrownBy(() -> limiter.checkAccountBudget("victim@iwrite.local"))
+        assertThatThrownBy(() -> limiter.reserveAccountAttempt("victim@iwrite.local"))
                 .isInstanceOf(LoginRateLimitExceededException.class);
 
         int threadCount = 50;
@@ -254,7 +266,7 @@ class LoginRateLimiterTest {
                         return;
                     }
                     try {
-                        limiter.checkAccountBudget("attacker-" + index + "@iwrite.local");
+                        limiter.reserveAccountAttempt("attacker-" + index + "@iwrite.local");
                         admitted.incrementAndGet();
                     } catch (LoginRateLimitExceededException expected) {
                         // Fail-closed once capacity is spent — the expected outcome for most threads.
@@ -278,7 +290,113 @@ class LoginRateLimiterTest {
         assertThat(admitted.get()).isLessThanOrEqualTo(capacity - 1);
 
         // The victim's own window is exactly as it was — still refused, never silently recreated.
-        assertThatThrownBy(() -> limiter.checkAccountBudget("victim@iwrite.local"))
+        assertThatThrownBy(() -> limiter.reserveAccountAttempt("victim@iwrite.local"))
+                .isInstanceOf(LoginRateLimitExceededException.class);
+    }
+
+    /**
+     * The concurrency guarantee the reservation contract exists for: N simultaneous requests against
+     * the *same* account, from different origins, with the wrong password. At most
+     * maxAttemptsPerAccount of them may ever reach the point that would call
+     * {@code AuthenticationManager.authenticate} (simulated here by a successful
+     * {@link LoginRateLimiter#reserveAccountAttempt}); every other request must be refused before
+     * that point, exactly as {@link com.iwrite.auth.AuthController} refuses it before bcrypt runs.
+     */
+    @Test
+    void reservaConcorrenteNuncaDeixaMaisQueOLimiteChegarAAutenticar() throws Exception {
+        int maxAttemptsPerAccount = 4;
+        LoginRateLimiter limiter = new LoginRateLimiter(1000, maxAttemptsPerAccount, 10_000, Duration.ofMinutes(1), clock);
+        int threadCount = 20;
+
+        ExecutorService pool = Executors.newFixedThreadPool(threadCount);
+        CountDownLatch ready = new CountDownLatch(threadCount);
+        CountDownLatch go = new CountDownLatch(1);
+        AtomicInteger reachedAuthenticate = new AtomicInteger();
+        List<Future<?>> futures = new ArrayList<>();
+
+        try {
+            for (int i = 0; i < threadCount; i++) {
+                // Each thread is its own origin, so only the account dimension is under test here.
+                String origin = "10.0.0." + i;
+                futures.add(pool.submit(() -> {
+                    ready.countDown();
+                    try {
+                        go.await();
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        return;
+                    }
+                    limiter.checkOrigin(origin);
+                    try {
+                        limiter.reserveAccountAttempt("victim@iwrite.local");
+                        // Reservation granted: this is where AuthController would call
+                        // AuthenticationManager.authenticate() and bcrypt would run.
+                        reachedAuthenticate.incrementAndGet();
+                    } catch (LoginRateLimitExceededException expected) {
+                        // 429 before bcrypt — the expected outcome once the budget is spent.
+                    }
+                }));
+            }
+
+            assertThat(ready.await(10, TimeUnit.SECONDS)).isTrue();
+            go.countDown();
+            for (Future<?> future : futures) {
+                future.get(10, TimeUnit.SECONDS);
+            }
+        } finally {
+            pool.shutdown();
+        }
+
+        assertThat(reachedAuthenticate.get()).isEqualTo(maxAttemptsPerAccount);
+    }
+
+    @Test
+    void reservaNaoDevolvidaAposFalhaContinuaConsumida() {
+        LoginRateLimiter limiter = new LoginRateLimiter(100, 2, 10_000, Duration.ofMinutes(1), clock);
+
+        attemptAndFail(limiter, "1.2.3.4", "victim@iwrite.local"); // 1/2, never refunded
+        attemptAndFail(limiter, "5.6.7.8", "victim@iwrite.local"); // 2/2, never refunded
+
+        // Budget fully spent by the two failures alone: a third reservation is refused before
+        // authenticate() would ever run again.
+        assertThatThrownBy(() -> limiter.reserveAccountAttempt("victim@iwrite.local"))
+                .isInstanceOf(LoginRateLimitExceededException.class);
+    }
+
+    @Test
+    void refundChamadoDuasVezesNaoDescontaDuasVezes() {
+        LoginRateLimiter limiter = new LoginRateLimiter(100, 1, 10_000, Duration.ofMinutes(1), clock);
+
+        LoginRateLimiter.AccountAttemptReservation reservation =
+                limiter.reserveAccountAttempt("owner@iwrite.local"); // 1/1
+        reservation.refund(); // back to 0/1
+        reservation.refund(); // idempotent: must not push the counter negative
+
+        // If the second refund had (incorrectly) decremented again, the account would still accept
+        // a reservation here regardless — so prove the counter is exactly 0/1, not -1/1, by spending
+        // the single unit twice in a row and seeing the third one refused.
+        assertThatCode(() -> limiter.reserveAccountAttempt("owner@iwrite.local")).doesNotThrowAnyException(); // 1/1
+        assertThatThrownBy(() -> limiter.reserveAccountAttempt("owner@iwrite.local"))
+                .isInstanceOf(LoginRateLimitExceededException.class);
+    }
+
+    @Test
+    void refundAposJanelaRenovarNaoAfetaJanelaNova() {
+        LoginRateLimiter limiter = new LoginRateLimiter(100, 1, 10_000, Duration.ofMinutes(1), clock);
+
+        // Reserved against the original window, then never refunded before it expires — as if the
+        // request handling it hung long enough for the window to roll over underneath it.
+        LoginRateLimiter.AccountAttemptReservation stale = limiter.reserveAccountAttempt("owner@iwrite.local");
+
+        clock.advance(Duration.ofSeconds(61)); // the window expires
+
+        // A new request reserves against the freshly-reset window.
+        limiter.reserveAccountAttempt("owner@iwrite.local"); // 1/1 in the new window
+
+        stale.refund(); // must be a no-op: it belongs to the old, since-renewed window
+
+        // The new window's unit is still spent — the stale refund never touched it.
+        assertThatThrownBy(() -> limiter.reserveAccountAttempt("owner@iwrite.local"))
                 .isInstanceOf(LoginRateLimitExceededException.class);
     }
 
@@ -300,11 +418,11 @@ class LoginRateLimiterTest {
     void loginsValidosRepetidosNaoBloqueiamAConta() {
         LoginRateLimiter limiter = new LoginRateLimiter(100, 2, 10_000, Duration.ofMinutes(1), clock);
 
-        // A real owner logging in successfully, several times: checkAccountBudget alone (never
-        // followed by recordFailedAttempt) must never spend the account's budget.
+        // A real owner logging in successfully, several times: each reservation is refunded right
+        // after the (simulated) successful authenticate(), so it never accumulates against the
+        // account's budget no matter how many sequential logins happen.
         for (int i = 0; i < 10; i++) {
-            limiter.checkOrigin("1.2.3.4");
-            assertThatCode(() -> limiter.checkAccountBudget("owner@iwrite.local")).doesNotThrowAnyException();
+            attemptAndSucceed(limiter, "1.2.3.4", "owner@iwrite.local");
         }
     }
 
@@ -315,8 +433,8 @@ class LoginRateLimiterTest {
         attemptAndFail(limiter, "1.2.3.4", "victim@iwrite.local");
 
         // A distributed attack that already spent the account's budget through other origins must
-        // be refused before bcrypt runs again for this one — recordFailedAttempt is never reached.
-        assertThatThrownBy(() -> limiter.checkAccountBudget("victim@iwrite.local"))
+        // be refused before bcrypt runs again for this one — authenticate() is never reached.
+        assertThatThrownBy(() -> limiter.reserveAccountAttempt("victim@iwrite.local"))
                 .isInstanceOf(LoginRateLimitExceededException.class);
     }
 

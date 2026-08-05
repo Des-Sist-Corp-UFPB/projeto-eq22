@@ -71,7 +71,10 @@ public class AuthController {
             HttpServletResponse httpResponse
     ) {
         loginRateLimiter.checkOrigin(clientAddressResolver.resolve(httpRequest));
-        loginRateLimiter.checkAccountBudget(request.email());
+        // Reserved before bcrypt runs, not just checked: a concurrent burst against one account
+        // must not all pass a read-then-later-increment race and reach authenticate() together.
+        LoginRateLimiter.AccountAttemptReservation reservation =
+                loginRateLimiter.reserveAccountAttempt(request.email());
 
         Authentication authentication;
         try {
@@ -81,12 +84,15 @@ public class AuthController {
             authentication = authenticationManager.authenticate(
                     UsernamePasswordAuthenticationToken.unauthenticated(request.email(), request.password()));
         } catch (AuthenticationException e) {
-            // Only a failure spends the account's budget: a real owner logging in from several
-            // tabs or devices must never be throttled out of their own account by their own
-            // successful logins.
-            loginRateLimiter.recordFailedAttempt(request.email());
+            // The reservation stays spent: a real failure must keep counting against the account's
+            // budget, and refunding here would let the same unit be spent twice concurrently.
             throw e;
         }
+
+        // Refunded immediately, before the session is created: a real owner logging in from
+        // several tabs or devices must never be throttled out of their own account by their own
+        // successful logins.
+        reservation.refund();
 
         sessionAuthenticationStrategy.onAuthentication(authentication, httpRequest, httpResponse);
 
