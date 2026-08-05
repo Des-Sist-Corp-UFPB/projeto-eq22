@@ -83,9 +83,19 @@ if [ "$check_mode" = "--print-java-args" ]; then
   exit 0
 fi
 
+# Nesta imagem o único salto entre o navegador e o backend é o frontend do mesmo container, em
+# 127.0.0.1 — só esse peer é confiável para informar o endereço real do cliente. Nunca a faixa
+# privada inteira: qualquer outro caminho até o backend voltaria a poder forjar a origem. Sem os
+# dois pontos no `=`, um valor explícito em runtime substitui este default (o Compose separado
+# define o serviço `frontend`), e um valor explicitamente vazio desliga a confiança por completo.
+: "${IWRITE_AUTH_TRUSTED_PROXIES=127.0.0.1}"
+export IWRITE_AUTH_TRUSTED_PROXIES
+
 SERVER_PORT=8085 java "$@" &
 backend_pid=$!
-/app/frontend/node_modules/.bin/next start /app/frontend -p 8080 -H 0.0.0.0 &
+# web/server.mjs, não `next start`: descarta Forwarded/X-Forwarded-For vindos do cliente e injeta
+# um X-Forwarded-For canônico a partir do socket, que é o que a linha acima passa a confiar.
+PORT=8080 node /app/frontend/server.mjs &
 frontend_pid=$!
 trap 'kill "$backend_pid" "$frontend_pid" 2>/dev/null || true' INT TERM EXIT
 while kill -0 "$backend_pid" 2>/dev/null && kill -0 "$frontend_pid" 2>/dev/null; do

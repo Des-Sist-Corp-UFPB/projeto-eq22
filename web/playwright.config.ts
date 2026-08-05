@@ -1,4 +1,5 @@
 import { defineConfig, devices } from "@playwright/test";
+import { STORAGE_STATE } from "./e2e/storage-state";
 
 export default defineConfig({
   testDir: "./e2e",
@@ -14,9 +15,12 @@ export default defineConfig({
     video: "retain-on-failure",
   },
   projects: [
+    // Everything is behind a session now, so logging in is a dependency of every spec.
+    { name: "setup", testMatch: /auth\.setup\.ts/ },
     {
       name: "chromium",
-      use: { ...devices["Desktop Chrome"] },
+      use: { ...devices["Desktop Chrome"], storageState: STORAGE_STATE },
+      dependencies: ["setup"],
     },
   ],
 });

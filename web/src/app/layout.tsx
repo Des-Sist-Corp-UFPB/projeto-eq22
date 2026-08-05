@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import { QueryProvider } from "@/components/providers/query-provider";
+import { SessionGuard } from "@/features/auth/components/session-guard";
 import { UmamiAnalytics } from "@/lib/analytics/umami-analytics";
 
 export const metadata: Metadata = {
@@ -17,7 +18,9 @@ export default function RootLayout({
     <html lang="pt-BR">
       <body>
         <UmamiAnalytics />
-        <QueryProvider>{children}</QueryProvider>
+        <QueryProvider>
+          <SessionGuard>{children}</SessionGuard>
+        </QueryProvider>
       </body>
     </html>
   );

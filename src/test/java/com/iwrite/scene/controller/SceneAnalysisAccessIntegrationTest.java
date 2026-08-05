@@ -62,7 +62,8 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-@AutoConfigureMockMvc
+// Pre-auth domain test: exercises tenant authorization via CurrentUserProvider, not the session.
+@AutoConfigureMockMvc(addFilters = false)
 @Import(SceneAnalysisAccessIntegrationTest.CurrentUserTestConfiguration.class)
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class SceneAnalysisAccessIntegrationTest extends PostgresIntegrationTest {

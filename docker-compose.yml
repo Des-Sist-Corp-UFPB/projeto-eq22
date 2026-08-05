@@ -27,7 +27,20 @@ services:
       DB_USERNAME: postgres
       DB_PASSWORD: postgres
       SERVER_PORT: 8085
-      IWRITE_DEVELOPMENT_CURRENT_USER_ENABLED: "true"
+      # Off, so identity comes from the session and each user resolves to their own tenant.
+      # Leaving it on would register the fixed development identity instead, and every logged-in
+      # user would land in the same workspace. Accounts to log in with come from the demo overlay
+      # (docker-compose.demo.yml); this file alone starts an environment with no accounts.
+      IWRITE_DEVELOPMENT_CURRENT_USER_ENABLED: "false"
+      # Explícito porque o proxy do Next repassa o header Origin do navegador: mesmo com chamadas
+      # de mesma origem, o backend continua aplicando CORS e responde 403 se a origem real do
+      # frontend não estiver aqui.
+      APP_CORS_ALLOWED_ORIGINS: http://localhost:3000
+      # The only hop between the browser and this backend is the frontend container: trust it,
+      # by its compose service name, to supply the real client address for login rate limiting.
+      # Port 8085 is also published straight to the host; a request landing here directly arrives
+      # from the network's own gateway address, never from "frontend", so it cannot spoof this.
+      IWRITE_AUTH_TRUSTED_PROXIES: frontend
     ports:
       - "8085:8085"
     depends_on:
@@ -39,10 +52,14 @@ services:
       context: ./web
       dockerfile: Dockerfile
       args:
-        NEXT_PUBLIC_API_URL: http://localhost:8085
+        # Needed at build time: next build bakes the rewrite destination into the routes manifest.
+        BACKEND_ORIGIN: http://backend:8085
     container_name: iwrite-frontend
     environment:
-      NEXT_PUBLIC_API_URL: http://localhost:8085
+      # The browser talks only to the frontend origin; Next rewrites /api to the backend over the
+      # compose network, so the session cookie stays same-site. Kept at runtime as well, which is
+      # what `next dev` reads.
+      BACKEND_ORIGIN: http://backend:8085
     ports:
       - "3000:3000"
     depends_on:

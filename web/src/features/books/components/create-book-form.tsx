@@ -73,7 +73,7 @@ export function CreateBookForm() {
 
       {mutation.isError ? (
         <FeedbackMessage variant="error">
-          Não foi possível criar o livro agora. Verifique se o backend está rodando em localhost:8085.
+          Não foi possível criar o livro agora. Tente novamente em instantes.
         </FeedbackMessage>
       ) : null}
     </form>

@@ -1,0 +1,106 @@
+package com.iwrite.auth;
+
+import jakarta.servlet.http.HttpServletResponse;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.ProviderManager;
+import org.springframework.security.authentication.dao.DaoAuthenticationProvider;
+import org.springframework.security.config.Customizer;
+import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
+import org.springframework.security.core.userdetails.UserDetailsService;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.session.ChangeSessionIdAuthenticationStrategy;
+import org.springframework.security.web.authentication.session.SessionAuthenticationStrategy;
+import org.springframework.security.web.context.HttpSessionSecurityContextRepository;
+import org.springframework.security.web.context.SecurityContextRepository;
+import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
+import org.springframework.security.web.csrf.CsrfTokenRequestAttributeHandler;
+
+@Configuration
+public class SecurityConfig {
+
+    /**
+     * Spring AI's MCP transport (SSE + message channel). Not a browser surface: an MCP client
+     * carries no session and cannot perform a CSRF double-submit.
+     */
+    private static final String[] MCP_TRANSPORT_PATHS = { "/sse", "/mcp/message" };
+
+    @Bean
+    SecurityFilterChain securityFilterChain(
+            HttpSecurity http,
+            RestAuthenticationEntryPoint authenticationEntryPoint,
+            @Value("${spring.ai.mcp.server.enabled:false}") boolean mcpServerEnabled
+    ) throws Exception {
+        // Spring Security 6 defaults to the BREACH-protecting handler, which defers token
+        // resolution and breaks the plain double-submit contract the SPA relies on. Clearing the
+        // request attribute name restores eager resolution so the XSRF-TOKEN cookie is emitted.
+        CsrfTokenRequestAttributeHandler csrfTokenRequestHandler = new CsrfTokenRequestAttributeHandler();
+        csrfTokenRequestHandler.setCsrfRequestAttributeName(null);
+
+        return http
+                // Reuses the CORS mapping already declared in WebConfig via the MVC introspector,
+                // so the cross-origin setup keeps working until the same-origin proxy is proven.
+                .cors(Customizer.withDefaults())
+                .csrf(csrf -> {
+                    csrf.csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
+                            .csrfTokenRequestHandler(csrfTokenRequestHandler);
+                    if (mcpServerEnabled) {
+                        // No MCP client performs the double-submit handshake, so CSRF can only ever be
+                        // ignored here, never satisfied. Safe only because these two paths are the same
+                        // ones McpLoopbackGuard has already gated on loopback + the development
+                        // identity below — never widened to any other path, never on by default.
+                        csrf.ignoringRequestMatchers(MCP_TRANSPORT_PATHS);
+                    }
+                })
+                .authorizeHttpRequests(authorize -> {
+                    authorize.requestMatchers("/ping", "/api/auth/login", "/api/auth/csrf").permitAll();
+                    if (mcpServerEnabled) {
+                        // Deliberately conditional: when MCP is disabled — the default, and the
+                        // posture for the demo and for production — these paths are not mapped and
+                        // no exemption exists. When it is enabled, McpLoopbackGuard has already
+                        // refused startup unless the process is bound to loopback with the
+                        // development identity, so this cannot widen a remote surface.
+                        authorize.requestMatchers(MCP_TRANSPORT_PATHS).permitAll();
+                    }
+                    authorize.anyRequest().authenticated();
+                })
+                .exceptionHandling(exceptions -> exceptions.authenticationEntryPoint(authenticationEntryPoint))
+                .logout(logout -> logout
+                        .logoutUrl("/api/auth/logout")
+                        .invalidateHttpSession(true)
+                        .clearAuthentication(true)
+                        .deleteCookies("JSESSIONID")
+                        .logoutSuccessHandler((request, response, authentication) ->
+                                response.setStatus(HttpServletResponse.SC_NO_CONTENT)))
+                // The browser authenticates through /api/auth/login only; no basic auth, no form page.
+                .httpBasic(AbstractHttpConfigurer::disable)
+                .formLogin(AbstractHttpConfigurer::disable)
+                .build();
+    }
+
+    @Bean
+    AuthenticationManager authenticationManager(UserDetailsService userDetailsService, PasswordEncoder passwordEncoder) {
+        DaoAuthenticationProvider provider = new DaoAuthenticationProvider();
+        provider.setUserDetailsService(userDetailsService);
+        provider.setPasswordEncoder(passwordEncoder);
+        // Explicit even though it is the default: a missing account must be indistinguishable from
+        // a wrong password, and the provider's dummy hash keeps the timing indistinguishable too.
+        provider.setHideUserNotFoundExceptions(true);
+        return new ProviderManager(provider);
+    }
+
+    /** Rotates the session id on login, so a pre-authentication session cannot be replayed. */
+    @Bean
+    SessionAuthenticationStrategy sessionAuthenticationStrategy() {
+        return new ChangeSessionIdAuthenticationStrategy();
+    }
+
+    @Bean
+    SecurityContextRepository securityContextRepository() {
+        return new HttpSessionSecurityContextRepository();
+    }
+}

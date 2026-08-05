@@ -53,6 +53,17 @@ spring:
 
 server:
   port: ${SERVER_PORT:8085}
+  servlet:
+    session:
+      timeout: ${IWRITE_SESSION_TIMEOUT:30m}
+      cookie:
+        http-only: true
+        # Lax is correct for the current topology: the browser origin and the API differ only by
+        # port, and ports are not part of a "site", so the cookie is still sent. Set to none only
+        # if the API ever moves to a different registrable domain — and that requires secure=true.
+        same-site: lax
+        # Must be true wherever the app is served over HTTPS.
+        secure: ${IWRITE_COOKIE_SECURE:false}
 
 logging:
   level:
@@ -84,6 +95,35 @@ iwrite:
           max-tokens: ${OPENAI_MAX_TOKENS:}
           max-completion-tokens: ${OPENAI_MAX_COMPLETION_TOKENS:}
           reasoning-effort: ${OPENAI_REASONING_EFFORT:}
+  demo:
+    # Read only when the `demo` profile is active as well. Both passwords are required once the
+    # seed is enabled and deliberately have no defaults: a default password in a repository is a
+    # published password.
+    seed:
+      enabled: ${IWRITE_DEMO_SEED_ENABLED:false}
+      autor-a-password: ${IWRITE_DEMO_AUTOR_A_PASSWORD:}
+      autor-b-password: ${IWRITE_DEMO_AUTOR_B_PASSWORD:}
+  auth:
+    # Off by default. Sets the login credential for one existing user (never creates one); used to
+    # unlock the documented development workflow and to roll an existing installation forward past
+    # V30. No default email or password: unset all three again once the credential is provisioned.
+    credential-provisioning:
+      enabled: ${IWRITE_CREDENTIAL_PROVISIONING_ENABLED:false}
+      email: ${IWRITE_CREDENTIAL_PROVISIONING_EMAIL:}
+      password: ${IWRITE_CREDENTIAL_PROVISIONING_PASSWORD:}
+    # Peers allowed to supply X-Forwarded-For/Forwarded for the login rate limiter's origin
+    # dimension; see ClientAddressResolver. Comma-separated IPs, CIDRs, or hostnames (resolved by
+    # DNS on every check). Empty by default: no peer is trusted and the TCP peer address is always
+    # used. In the Compose topology, the frontend container is the only hop between the browser and
+    # this backend, so it is the only entry set below.
+    trusted-proxies: ${IWRITE_AUTH_TRUSTED_PROXIES:}
+    # Bounded in-memory login throttling; see LoginRateLimiter. A single instance's own memory —
+    # multiple replicas need a shared store to enforce one combined limit.
+    login-rate-limit:
+      max-attempts-per-origin: ${IWRITE_LOGIN_RATE_LIMIT_MAX_PER_ORIGIN:20}
+      max-attempts-per-account: ${IWRITE_LOGIN_RATE_LIMIT_MAX_PER_ACCOUNT:8}
+      max-tracked-keys: ${IWRITE_LOGIN_RATE_LIMIT_MAX_TRACKED_KEYS:10000}
+      window: ${IWRITE_LOGIN_RATE_LIMIT_WINDOW:1m}
   current-user:
     development:
       enabled: ${IWRITE_DEVELOPMENT_CURRENT_USER_ENABLED:false}

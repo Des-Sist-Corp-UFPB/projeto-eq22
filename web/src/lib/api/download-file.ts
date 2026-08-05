@@ -1,4 +1,4 @@
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8085";
+import { ApiError, readErrorMessage } from "@/lib/api/client";
 
 type DownloadFileOptions = {
   path: string;
@@ -6,10 +6,14 @@ type DownloadFileOptions = {
 };
 
 export async function downloadFile({ path, fallbackFileName }: DownloadFileOptions) {
-  const response = await fetch(`${API_URL}${path}`);
+  // Same-origin relative path, so the session cookie is sent with the download too.
+  const response = await fetch(path, { credentials: "same-origin" });
 
   if (!response.ok) {
-    throw new Error(await readDownloadErrorMessage(response));
+    // ApiError, not a plain Error: this is a plain fetch outside React Query's caches, so a caller
+    // wired through useMutation is what lets the shared status-401 handling in QueryProvider see
+    // this failure and end the session, same as every other request in the app.
+    throw new ApiError(await readErrorMessage(response), response.status);
   }
 
   const blob = await response.blob();
@@ -40,13 +44,4 @@ export function getFileNameFromContentDisposition(contentDisposition: string | n
 
   const fileNameMatch = contentDisposition.match(/filename="([^"]+)"/i) ?? contentDisposition.match(/filename=([^;]+)/i);
   return fileNameMatch?.[1]?.trim() || null;
-}
-
-async function readDownloadErrorMessage(response: Response) {
-  try {
-    const data = (await response.json()) as { messages?: string[]; error?: string };
-    return data.messages?.join(", ") ?? data.error ?? `HTTP ${response.status}`;
-  } catch {
-    return `HTTP ${response.status}`;
-  }
 }
