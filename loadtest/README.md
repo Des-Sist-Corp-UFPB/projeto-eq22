@@ -81,10 +81,14 @@ logins (as `N` VUs + o login interno de `setup()`) contra a mesma conta, e
 esses logins tendem a se concentrar dentro do `WARMUP_DURATION` — o que pode
 estourar o rate limiter de login
 (`IWRITE_LOGIN_RATE_LIMIT_MAX_PER_ACCOUNT`/`_ORIGIN`, padrão 8/20 por janela
-de 1 minuto — ver `.env.example`). Por isso `docker-compose.k6.local.yml`
-(gitignored, só para a stack Docker isolada deste teste) eleva os dois
-limites para este ambiente **local e isolado** — os defaults de produção em
-`application.yml`/`.env.example` não são alterados.
+de 1 minuto — ver `.env.example`) e devolver `429` antes da fase medida
+terminar de autenticar. Por isso o comando de subida em [§2](#2-pré-requisitos)
+inclui o overlay versionado
+[`docker-compose.loadtest.yml`](../docker-compose.loadtest.yml), que eleva
+os dois limites só para este ambiente **local e isolado** — os defaults de
+produção em `application.yml`/`.env.example` não são alterados, e o overlay
+só entra em vigor se alguém passar `-f docker-compose.loadtest.yml`
+explicitamente.
 
 `GET /ping` continua no script, mas só como smoke check **inicial** dentro do
 `setup()`: se o ambiente não responder, o teste aborta antes de criar qualquer
@@ -94,15 +98,35 @@ dado.
 
 ## 2. Pré-requisitos
 
-Suba o backend localmente com o overlay de demonstração (cria os usuários
-`autor-a@iwrite.local` / `autor-b@iwrite.local` — ver
-[`docs/demonstracao-multi-tenant.md`](../docs/demonstracao-multi-tenant.md)):
+Suba o backend localmente com o overlay de demonstração **e** o overlay de
+carga (cria os usuários `autor-a@iwrite.local` / `autor-b@iwrite.local` — ver
+[`docs/demonstracao-multi-tenant.md`](../docs/demonstracao-multi-tenant.md) —
+e eleva o rate limiter de login só nesta stack, ver [§1](#1-o-que-o-teste-faz)):
 
 ```bash
 # copie .env.example para .env e preencha IWRITE_DEMO_SEED_ENABLED=true e as
 # duas senhas (sem valor padrão) antes de subir
-docker compose -f docker-compose.yml -f docker-compose.demo.yml up -d --build
+docker compose \
+  -f docker-compose.yml \
+  -f docker-compose.demo.yml \
+  -f docker-compose.loadtest.yml \
+  up -d --build
 ```
+
+Equivalente em PowerShell:
+
+```powershell
+docker compose `
+  -f docker-compose.yml `
+  -f docker-compose.demo.yml `
+  -f docker-compose.loadtest.yml `
+  up -d --build
+```
+
+**O overlay `-f docker-compose.loadtest.yml` não é opcional** para rodar com
+`VUS` maior que ~8: sem ele, o backend sobe com o rate limiter de login
+padrão de produção (8 tentativas/conta por minuto) e a execução recebe `429`
+antes de todas as VUs terminarem de autenticar — ver [§1](#1-o-que-o-teste-faz).
 
 Tenha o k6 disponível (`k6.io/docs` para instalação, ou use a imagem
 `grafana/k6` via Docker apontando `BASE_URL` para `host.docker.internal`).
@@ -112,7 +136,8 @@ Tenha o k6 disponível (`k6.io/docs` para instalação, ou use a imagem
 ## 3. Autenticação
 
 O script reproduz exatamente o handshake que `web/e2e/auth.setup.ts` usa contra
-o backend real:
+o backend real — mas cada contexto de execução (setup(), cada VU, teardown())
+faz o próprio handshake, no seu próprio cookie jar isolado do k6:
 
 1. `GET /api/auth/csrf` → emite o cookie `XSRF-TOKEN` (o Spring Security emite
    esse cookie em qualquer requisição que passe pelo `CsrfFilter`, então o
@@ -120,10 +145,20 @@ o backend real:
    não da resposta de uma chamada específica).
 2. `POST /api/auth/login` com `{ "email": ..., "password": ... }` e o header
    `X-XSRF-TOKEN` — devolve o cookie de sessão `JSESSIONID`.
-3. Toda chamada autenticada subsequente envia `Cookie: JSESSIONID=...;
-   XSRF-TOKEN=...` e `X-XSRF-TOKEN: ...` manualmente (VUs não compartilham o
-   cookie jar do `setup()` — é assim que o k6 funciona), construído a partir do
-   que `setup()` devolveu.
+3. O k6 recicla o "jar corrente" (o que `http.cookieJar()` devolve) a cada
+   chamada de nível superior — `setup()`, `teardown()` e **cada iteração** de
+   uma VU começam com um jar vazio, mesmo dentro da mesma VU; não é o jar
+   persistente "por VU" que a documentação do k6 sugere à primeira leitura.
+   Por isso cada VU guarda a referência do próprio jar (`vuJar`, variável de
+   módulo) na primeira iteração e a passa explicitamente (`{ jar: vuJar }`)
+   em toda requisição das iterações seguintes — sem isso, a sessão se
+   perderia a cada nova iteração. `setup()` e `teardown()` usam o mesmo
+   padrão com um `jar` local de escopo único. O header CSRF de duplo envio
+   (`X-XSRF-TOKEN`) é lido de volta do jar ativo no momento de cada
+   requisição (`authHeaders(jar)`); o cookie de sessão em si não precisa de
+   header manual — o k6 já o reenvia sozinho a partir do jar passado.
+   `setup()` nunca devolve o jar, o cookie ou o token a ninguém — só
+   `[{ bookId, sceneId }, ...]` (ver [§5](#5-dados-sintéticos-e-limpeza)).
 
 **Credenciais vêm só de variável de ambiente, nunca de arquivo versionado:**
 
@@ -465,9 +500,13 @@ quanto maior `VUS`. Nenhum dos dois foi decomposto neste PR.
   cena longa de verdade. `save_scene` sob um payload realisticamente maior
   tende a ser mais lento ainda que o medido aqui.
 - `IWRITE_LOGIN_RATE_LIMIT_MAX_PER_ACCOUNT`/`_ORIGIN` foram elevados só nesta
-  stack local isolada (`docker-compose.k6.local.yml`, gitignored) para
-  acomodar `VUS+1` logins por execução — os defaults de produção em
-  `application.yml`/`.env.example` não foram alterados (ver [§3](#3-autenticação)).
+  stack local isolada para acomodar `VUS+1` logins por execução — os
+  defaults de produção em `application.yml`/`.env.example` não foram
+  alterados. Nesta execução específica o ajuste veio de um overlay local não
+  versionado; reproduções posteriores devem usar o overlay versionado
+  [`docker-compose.loadtest.yml`](../docker-compose.loadtest.yml) (ver
+  [§2](#2-pré-requisitos)/[§3](#3-autenticação)), que aplica o mesmo ajuste
+  de forma reproduzível.
 
 **Próxima ação recomendada:** investigar o crescimento de `list_books` com o
 tamanho da coleção de livros do tenant antes de rodar com `VUS` bem maior

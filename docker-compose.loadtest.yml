@@ -1,0 +1,26 @@
+# Overlay exclusivo para carga LOCAL do k6 (loadtest/carga.js, issue #129). Use junto do compose
+# base + demo:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.demo.yml -f docker-compose.loadtest.yml \
+#     up -d --build
+#
+# Por que existe: loadtest/carga.js autentica cada VU individualmente (uma sessão real por VU,
+# não uma sessão de setup() repassada a todas — ver loadtest/README.md §3), então uma execução com
+# VUS=N faz até N+1 logins contra a mesma conta, concentrados no warmup. O default de produção
+# (application.yml: 8 tentativas/conta, 20/origem por 1 minuto) rejeita esse volume com 429 antes
+# da fase medida terminar de autenticar.
+#
+# Só eleva os dois limites de login — não muda mais nada do backend. NÃO altera os defaults
+# seguros de application.yml/.env.example: este overlay é opt-in, só entra no compose se alguém
+# passar -f docker-compose.loadtest.yml explicitamente.
+#
+# NUNCA use isto contra Render, produção ou o servidor acadêmico compartilhado — é só para a
+# stack Docker isolada e local usada por loadtest/carga.js.
+#
+# Nenhuma senha/segredo pertence a este arquivo — credenciais continuam vindo só do .env
+# (IWRITE_DEMO_AUTOR_A_PASSWORD/_B_PASSWORD via docker-compose.demo.yml) ou de LOAD_TEST_PASSWORD.
+services:
+  backend:
+    environment:
+      IWRITE_LOGIN_RATE_LIMIT_MAX_PER_ACCOUNT: "100"
+      IWRITE_LOGIN_RATE_LIMIT_MAX_PER_ORIGIN: "100"
