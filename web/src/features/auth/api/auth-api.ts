@@ -17,6 +17,22 @@ export function login(email: string, password: string) {
   });
 }
 
+export type RegisterInput = {
+  displayName: string;
+  email: string;
+  password: string;
+  passwordConfirmation: string;
+  primaryPersona: string;
+  timeZone: string;
+};
+
+export function register(input: RegisterInput) {
+  return apiRequest<AuthenticatedSession>("/api/auth/register", {
+    method: "POST",
+    body: input,
+  });
+}
+
 /**
  * Restores the session on load. Not being logged in is a normal outcome, not a failure, so 401
  * resolves to {@code null}; anything else (backend down, proxy misconfigured) stays an error so the
