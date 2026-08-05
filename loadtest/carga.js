@@ -211,21 +211,26 @@ function jarCookie(jar, url, name) {
 }
 
 /**
- * Autentica no contexto de execução atual — setup(), uma VU ou teardown()
- * têm, cada um, seu próprio cookie jar isolado no k6 (é assim que o k6
- * funciona: VUs nunca compartilham o jar de setup()). Deixa JSESSIONID +
- * XSRF-TOKEN só nesse jar; nunca retorna nem guarda o cookie/token numa
- * variável que sobreviva além dele. Quem precisa do header CSRF numa
- * requisição lê de volta do jar, no momento da chamada, via
- * `currentAuthHeaders()` — o cookie de sessão em si não precisa de header
- * manual, o k6 já o reenvia automaticamente do jar ativo.
+ * Autentica no jar explicitamente passado. k6 recicla o "jar corrente"
+ * (o que `http.cookieJar()` devolve) a cada chamada de nível superior —
+ * setup(), teardown() e CADA iteração de default() começam com um jar
+ * vazio, mesmo dentro da mesma VU; não é o jar persistente "por VU" que a
+ * documentação sugere à primeira leitura (confirmado empiricamente: chamar
+ * `http.cookieJar()` de novo numa iteração posterior da mesma VU devolve um
+ * jar sem os cookies da iteração anterior). Por isso login() nunca usa o
+ * jar implícito — sempre recebe e devolve a autenticação no jar que o
+ * chamador guardou (setup()/teardown() num `const jar` local; a VU num
+ * `vuJar` de módulo, reaproveitado entre iterações via `{ jar }` explícito
+ * em toda requisição). Nunca retorna nem guarda o cookie/token numa
+ * variável separada do jar — quem precisa do header CSRF lê de volta do
+ * jar, no momento da requisição, via `authHeaders(jar)`.
  */
-function login() {
-  const csrfRes = http.get(`${BASE}/api/auth/csrf`, { tags: { operation: 'auth_csrf', name: 'GET /api/auth/csrf' } });
+function login(jar) {
+  const csrfRes = http.get(`${BASE}/api/auth/csrf`, { jar, tags: { operation: 'auth_csrf', name: 'GET /api/auth/csrf' } });
   if (csrfRes.status !== 204) {
     throw new Error(`GET /api/auth/csrf retornou ${csrfRes.status}, esperado 204.`);
   }
-  const csrfToken = jarCookie(http.cookieJar(), BASE, 'XSRF-TOKEN');
+  const csrfToken = jarCookie(jar, BASE, 'XSRF-TOKEN');
   if (!csrfToken) {
     throw new Error('Backend não emitiu o cookie XSRF-TOKEN.');
   }
@@ -234,6 +239,7 @@ function login() {
     `${BASE}/api/auth/login`,
     JSON.stringify({ email: LOGIN_EMAIL, password: LOGIN_PASSWORD }),
     {
+      jar,
       headers: { 'Content-Type': 'application/json', 'X-XSRF-TOKEN': csrfToken },
       tags: { operation: 'auth_login', name: 'POST /api/auth/login' },
     }
@@ -241,43 +247,49 @@ function login() {
   if (loginRes.status !== 200) {
     throw new Error(`Login falhou com status ${loginRes.status}. Confira LOAD_TEST_EMAIL/LOAD_TEST_PASSWORD contra o seed demo (docker-compose.demo.yml).`);
   }
-  if (!jarCookie(http.cookieJar(), BASE, 'JSESSIONID')) {
+  if (!jarCookie(jar, BASE, 'JSESSIONID')) {
     throw new Error('Backend não emitiu o cookie JSESSIONID em /api/auth/login.');
   }
 }
 
-function currentAuthHeaders() {
-  const csrfToken = jarCookie(http.cookieJar(), BASE, 'XSRF-TOKEN');
+function authHeaders(jar) {
+  const csrfToken = jarCookie(jar, BASE, 'XSRF-TOKEN');
   return csrfToken ? { 'X-XSRF-TOKEN': csrfToken } : {};
 }
 
-function jsonHeaders(extra) {
-  return Object.assign({ 'Content-Type': 'application/json' }, currentAuthHeaders(), extra || {});
+function jsonHeaders(jar, extra) {
+  return Object.assign({ 'Content-Type': 'application/json' }, authHeaders(jar), extra || {});
 }
 
+let vuJar = null;
 let vuAuthenticated = false;
 
 /**
  * Login único por VU, feito na primeira iteração daquela VU — não em
- * setup() nem repetido a cada iteração. Cada VU passa a ter sua própria
- * sessão de servidor real, refletindo VUS sessões independentes do mesmo
- * autor editando livros distintos, em vez de uma única sessão de setup()
- * repassada manualmente via headers para todas. Falha ao autenticar não
- * derruba a execução inteira: só a iteração atual desta VU é perdida (e a
- * próxima iteração tenta autenticar de novo, já que `vuAuthenticated`
- * continua `false`).
+ * setup() nem repetido a cada iteração. `vuJar` é guardado em variável de
+ * módulo (sobrevive entre iterações da mesma VU) e passado explicitamente
+ * (`{ jar: vuJar }`) em toda requisição do loop principal — sem isso, a
+ * sessão se perderia a cada nova iteração (ver comentário de `login()`).
+ * Cada VU passa a ter sua própria sessão de servidor real, refletindo VUS
+ * sessões independentes do mesmo autor editando livros distintos, em vez de
+ * uma única sessão de setup() repassada manualmente via headers para todas.
+ * Falha ao autenticar não derruba a execução inteira: só a iteração atual
+ * desta VU é perdida (e a próxima iteração tenta autenticar de novo, já que
+ * `vuAuthenticated` continua `false`).
  */
 function ensureVuAuthenticated() {
   if (vuAuthenticated) {
-    return true;
+    return vuJar;
   }
   try {
-    login();
+    vuJar = http.cookieJar();
+    login(vuJar);
     vuAuthenticated = true;
-    return true;
+    return vuJar;
   } catch (err) {
     console.error(`VU ${__VU}: falha ao autenticar: ${err.message}`);
-    return false;
+    vuJar = null;
+    return null;
   }
 }
 
@@ -289,12 +301,13 @@ function ensureVuAuthenticated() {
  * sessão/CSRF) para permitir limpeza manual pontual em vez de exigir varrer
  * tudo que casa com LOADTEST-.
  */
-function cleanupBooks(bookIds, originalError) {
+function cleanupBooks(jar, bookIds, originalError) {
   console.error(`setup() falhou após criar ${bookIds.length} livro(s) sintético(s): ${originalError.message}`);
   const failedCleanups = [];
   bookIds.forEach((bookId) => {
     const cleanupRes = http.del(`${BASE}/api/books/${bookId}`, null, {
-      headers: jsonHeaders(),
+      jar,
+      headers: jsonHeaders(jar),
       tags: { operation: 'setup_cleanup_book', name: 'DELETE /api/books/{bookId}' },
     });
     if (cleanupRes.status !== 204) {
@@ -332,7 +345,8 @@ export function setup() {
     throw new Error(`Smoke check falhou: GET /ping retornou ${ping.status}. Suba o ambiente antes de rodar a carga.`);
   }
 
-  login();
+  const jar = http.cookieJar();
+  login(jar);
 
   const runId = `${Date.now().toString(36)}${Math.floor(Math.random() * 1e6).toString(36)}`;
 
@@ -353,7 +367,7 @@ export function setup() {
       const bookRes = http.post(
         `${BASE}/api/books`,
         JSON.stringify({ title: marker, status: 'WRITING', targetWordCount: 1000 }),
-        { headers: jsonHeaders(), tags: { operation: 'setup_create_book', name: 'POST /api/books' } }
+        { jar, headers: jsonHeaders(jar), tags: { operation: 'setup_create_book', name: 'POST /api/books' } }
       );
       if (bookRes.status !== 201) {
         throw new Error(`Criação do livro sintético ${i + 1}/${VUS} falhou com status ${bookRes.status}.`);
@@ -364,7 +378,7 @@ export function setup() {
       const sectionRes = http.post(
         `${BASE}/api/books/${bookId}/sections`,
         JSON.stringify({ title: `${marker}-section`, type: 'PART', sortOrder: 0 }),
-        { headers: jsonHeaders(), tags: { operation: 'setup_create_section', name: 'POST /api/books/{bookId}/sections' } }
+        { jar, headers: jsonHeaders(jar), tags: { operation: 'setup_create_section', name: 'POST /api/books/{bookId}/sections' } }
       );
       if (sectionRes.status !== 201) {
         throw new Error(`Criação da seção sintética ${i + 1}/${VUS} falhou com status ${sectionRes.status}.`);
@@ -374,7 +388,7 @@ export function setup() {
       const chapterRes = http.post(
         `${BASE}/api/sections/${sectionId}/chapters`,
         JSON.stringify({ title: `${marker}-chapter`, sortOrder: 0 }),
-        { headers: jsonHeaders(), tags: { operation: 'setup_create_chapter', name: 'POST /api/sections/{sectionId}/chapters' } }
+        { jar, headers: jsonHeaders(jar), tags: { operation: 'setup_create_chapter', name: 'POST /api/sections/{sectionId}/chapters' } }
       );
       if (chapterRes.status !== 201) {
         throw new Error(`Criação do capítulo sintético ${i + 1}/${VUS} falhou com status ${chapterRes.status}.`);
@@ -384,7 +398,7 @@ export function setup() {
       const sceneRes = http.post(
         `${BASE}/api/chapters/${chapterId}/scenes`,
         JSON.stringify({ title: `${marker}-scene`, sortOrder: 0 }),
-        { headers: jsonHeaders(), tags: { operation: 'setup_create_scene', name: 'POST /api/chapters/{chapterId}/scenes' } }
+        { jar, headers: jsonHeaders(jar), tags: { operation: 'setup_create_scene', name: 'POST /api/chapters/{chapterId}/scenes' } }
       );
       if (sceneRes.status !== 201) {
         throw new Error(`Criação da cena sintética ${i + 1}/${VUS} falhou com status ${sceneRes.status}.`);
@@ -393,7 +407,7 @@ export function setup() {
       resources.push({ bookId, sceneId: sceneRes.json('id') });
     }
   } catch (err) {
-    cleanupBooks(createdBookIds, err);
+    cleanupBooks(jar, createdBookIds, err);
   }
 
   console.log(`Setup concluído: ${resources.length} livro(s) sintético(s) (1 por VU, runId ${runId}).`);
@@ -419,7 +433,8 @@ function thinkTime() {
  * compartilhado com outra VU.
  */
 export default function (data) {
-  if (!ensureVuAuthenticated()) {
+  const jar = ensureVuAuthenticated();
+  if (!jar) {
     sleep(thinkTime());
     return;
   }
@@ -433,7 +448,8 @@ export default function (data) {
   const { bookId, sceneId } = resource;
 
   const listRes = http.get(`${BASE}/api/books`, {
-    headers: jsonHeaders(),
+    jar,
+    headers: jsonHeaders(jar),
     tags: { operation: 'list_books', name: 'GET /api/books' },
   });
   if (!check(listRes, { 'list_books status 200': (r) => r.status === 200 })) {
@@ -442,7 +458,8 @@ export default function (data) {
   }
 
   const outlineRes = http.get(`${BASE}/api/books/${bookId}/outline`, {
-    headers: jsonHeaders(),
+    jar,
+    headers: jsonHeaders(jar),
     tags: { operation: 'load_outline', name: 'GET /api/books/{bookId}/outline' },
   });
   if (!check(outlineRes, { 'load_outline status 200': (r) => r.status === 200 })) {
@@ -455,7 +472,8 @@ export default function (data) {
   // perdeu, por exemplo) nunca produz uma sequência de conflitos de revisão
   // artificiais — a próxima escrita sempre parte do estado real do servidor.
   const sceneRes = http.get(`${BASE}/api/scenes/${sceneId}`, {
-    headers: jsonHeaders(),
+    jar,
+    headers: jsonHeaders(jar),
     tags: { operation: 'load_scene', name: 'GET /api/scenes/{sceneId}' },
   });
   if (!check(sceneRes, { 'load_scene status 200': (r) => r.status === 200 })) {
@@ -477,7 +495,7 @@ export default function (data) {
       expectedContentRevision: revision,
       operationId: uuidv4(),
     }),
-    { headers: jsonHeaders(), tags: { operation: 'save_scene', name: 'PATCH /api/scenes/{sceneId}/content' } }
+    { jar, headers: jsonHeaders(jar), tags: { operation: 'save_scene', name: 'PATCH /api/scenes/{sceneId}/content' } }
   );
   check(saveRes, { 'save_scene status 200': (r) => r.status === 200 });
 
@@ -494,12 +512,14 @@ export default function (data) {
  * medido.
  */
 export function teardown(data) {
-  login();
+  const jar = http.cookieJar();
+  login(jar);
 
   const failed = [];
   data.forEach(({ bookId }) => {
     const res = http.del(`${BASE}/api/books/${bookId}`, null, {
-      headers: jsonHeaders(),
+      jar,
+      headers: jsonHeaders(jar),
       tags: { operation: 'teardown_delete_book', name: 'DELETE /api/books/{bookId}' },
     });
     if (res.status !== 204) {
