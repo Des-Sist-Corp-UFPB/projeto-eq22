@@ -1,6 +1,7 @@
 import http from 'k6/http';
-import { check, sleep } from 'k6';
+import { check } from 'k6';
 import { Rate } from 'k6/metrics';
+import exec from 'k6/execution';
 
 // Nenhuma falha de autenticação de VU é tolerada: rate==1 reprova o run
 // inteiro mesmo que uma VU se autentique com sucesso numa iteração
@@ -106,28 +107,60 @@ function parseSafeHost(rawUrl) {
 // um por VU, para que cada VU edite sempre o próprio livro/cena).
 const VUS = Number(__ENV.VUS || 10);
 
-const WARMUP_DURATION = __ENV.WARMUP_DURATION || '30s';
-const STEADY_DURATION = __ENV.STEADY_DURATION || '2m';
-const RAMPDOWN_DURATION = __ENV.RAMPDOWN_DURATION || '30s';
-
 const LOGIN_EMAIL = __ENV.LOAD_TEST_EMAIL || 'autor-a@iwrite.local';
 const LOGIN_PASSWORD = __ENV.LOAD_TEST_PASSWORD;
 
 const THINK_TIME_MIN_S = Number(__ENV.THINK_TIME_MIN_S || 0.3);
 const THINK_TIME_MAX_S = Number(__ENV.THINK_TIME_MAX_S || 1);
 
+// Um único par (número, unidade) do formato de duração do k6 (Go duration:
+// ms/s/m/h, parte fracionária opcional) — fonte única reaproveitada tanto
+// pela validação de formato completo (DURATION_FULL_RE) quanto pela extração
+// de cada token em k6DurationToMs(), para não duplicar a mesma regra em dois
+// regexes que poderiam divergir.
+const DURATION_TOKEN_SOURCE = '([0-9]+(?:\\.[0-9]+)?)(ms|s|m|h)';
+const DURATION_FULL_RE = new RegExp(`^(?:${DURATION_TOKEN_SOURCE})+$`);
+const DURATION_TOKEN_RE = new RegExp(DURATION_TOKEN_SOURCE, 'g');
+const DURATION_UNIT_MS = { ms: 1, s: 1000, m: 60 * 1000, h: 60 * 60 * 1000 };
+
 /**
  * Valida um valor de duração no formato do k6 (Go duration: unidades
  * ms/s/m/h encadeadas, ex. "10m", "90s", "1h30m") antes de aceitar
- * SETUP_TIMEOUT/TEARDOWN_TIMEOUT — um valor malformado deve falhar cedo e de
- * forma clara, não virar silenciosamente o timeout padrão de 60s do k6.
+ * WARMUP_DURATION/STEADY_DURATION/RAMPDOWN_DURATION/SETUP_TIMEOUT/TEARDOWN_TIMEOUT
+ * — um valor malformado deve falhar cedo e de forma clara, não virar
+ * silenciosamente o timeout padrão de 60s do k6 nem um cálculo de fase
+ * incorreto em k6DurationToMs().
  */
 function validateK6Duration(raw, name) {
-  if (!/^([0-9]+(?:\.[0-9]+)?(?:ms|s|m|h))+$/.test(raw)) {
+  if (!DURATION_FULL_RE.test(raw)) {
     throw new Error(`${name} inválido: "${raw}". Use um formato de duração do k6, unidades ms/s/m/h encadeadas, com parte fracionária opcional (ex.: "10m", "90s", "1h30m", "0.5m", "1.5s").`);
   }
   return raw;
 }
+
+/**
+ * Converte uma duração já validada por validateK6Duration() para
+ * milissegundos, somando cada token (número, unidade) capturado por
+ * DURATION_TOKEN_RE. Nunca chamada sobre uma duração não validada — um valor
+ * malformado deve falhar em validateK6Duration(), não virar 0/NaN aqui.
+ */
+function k6DurationToMs(raw) {
+  let totalMs = 0;
+  let match;
+  DURATION_TOKEN_RE.lastIndex = 0;
+  while ((match = DURATION_TOKEN_RE.exec(raw)) !== null) {
+    totalMs += parseFloat(match[1]) * DURATION_UNIT_MS[match[2]];
+  }
+  return totalMs;
+}
+
+const WARMUP_DURATION = validateK6Duration(__ENV.WARMUP_DURATION || '30s', 'WARMUP_DURATION');
+const STEADY_DURATION = validateK6Duration(__ENV.STEADY_DURATION || '2m', 'STEADY_DURATION');
+const RAMPDOWN_DURATION = validateK6Duration(__ENV.RAMPDOWN_DURATION || '30s', 'RAMPDOWN_DURATION');
+// Só warmup/steady são necessários para classificar a fase (ver currentPhase()
+// abaixo) — o que sobra depois de warmup+steady já é ramp_down por exclusão.
+const WARMUP_MS = k6DurationToMs(WARMUP_DURATION);
+const STEADY_MS = k6DurationToMs(STEADY_DURATION);
 
 // setup() cria 1 livro/seção/capítulo/cena por VU, em loop serial: o número
 // de requisições (e portanto o tempo de setup) cresce com VUS, então o
@@ -165,14 +198,18 @@ export const options = {
     // posterior — o teste não pode passar operando com menos sessões que o
     // VUS pretendido (ver ensureVuAuthenticated()).
     vu_auth_success: ['rate==1'],
-    // Operações principais do cenário medido, sob carga (loop de VUs):
-    'http_req_duration{operation:list_books}': ['p(95)<500'],
-    'http_req_duration{operation:load_outline}': ['p(95)<500'],
-    'http_req_duration{operation:load_scene}': ['p(95)<500'],
-    'http_req_duration{operation:save_scene}': ['p(95)<500'],
+    // Operações principais do cenário medido, restritas à fase estável
+    // (phase:steady, ver currentPhase()): os estágios de warmup/rampdown
+    // (WARMUP_DURATION/RAMPDOWN_DURATION) operam com menos VUs que o pico e
+    // misturariam amostras de latência mais baixa nesses percentis, mascarando
+    // se o teto de 500ms se sustenta sob o VUS pretendido de verdade.
+    'http_req_duration{operation:list_books,phase:steady}': ['p(95)<500'],
+    'http_req_duration{operation:load_outline,phase:steady}': ['p(95)<500'],
+    'http_req_duration{operation:load_scene,phase:steady}': ['p(95)<500'],
+    'http_req_duration{operation:save_scene,phase:steady}': ['p(95)<500'],
     // Refetch do outline que o frontend real dispara (invalidateQueries) após
     // um save_scene bem-sucedido — ver ensureVuAuthenticated()/default().
-    'http_req_duration{operation:refresh_outline_after_save}': ['p(95)<500'],
+    'http_req_duration{operation:refresh_outline_after_save,phase:steady}': ['p(95)<500'],
     // Autenticação/setup/teardown: fora do loop medido (rodam 1x, ou VUS
     // vezes já que cada VU também autentica sozinho e setup() cria um livro
     // por VU), orçamento mais folgado só para pegar uma chamada realmente
@@ -442,6 +479,35 @@ function thinkTime() {
   return THINK_TIME_MIN_S + Math.random() * (THINK_TIME_MAX_S - THINK_TIME_MIN_S);
 }
 
+// Substitui k6/sleep dentro de default(), que agora é async: sleep() bloqueia
+// a thread e nunca resolveria as Promises paralelas do refetch em segundo
+// plano (ver default()). exec.scenario.startTime é o timestamp (ms desde
+// epoch) de quando o cenário começou — currentPhase() usa isso, não __VU nem
+// contagem de VUs ativas, porque o k6 não expõe "VUs atuais" por requisição.
+function delay(seconds) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, seconds * 1000);
+  });
+}
+
+/**
+ * Fase do estágio no instante da chamada: ramp_up (WARMUP_DURATION),
+ * steady (STEADY_DURATION) ou ramp_down (RAMPDOWN_DURATION), pelo tempo
+ * decorrido desde o início do cenário. Chamada uma vez no início de cada
+ * iteração de default() — a mesma fase vale para as cinco operações
+ * daquela iteração, mesmo que ela atravesse uma borda de fase.
+ */
+function currentPhase() {
+  const elapsedMs = Date.now() - exec.scenario.startTime;
+  if (elapsedMs < WARMUP_MS) {
+    return 'ramp_up';
+  }
+  if (elapsedMs < WARMUP_MS + STEADY_MS) {
+    return 'steady';
+  }
+  return 'ramp_down';
+}
+
 /**
  * Autenticação (uma vez por VU) e depois list_books/load_outline/load_scene
  * são pré-requisitos sequenciais do fluxo real (não dá para abrir uma cena
@@ -456,38 +522,41 @@ function thinkTime() {
  * a __VU (`data[__VU - 1]`), criados 1:1 por setup() — nunca um recurso
  * compartilhado com outra VU.
  */
-export default function (data) {
+export default async function (data) {
   const jar = ensureVuAuthenticated();
   if (!jar) {
-    sleep(thinkTime());
+    await delay(thinkTime());
     return;
   }
 
   const resource = data[__VU - 1];
   if (!resource) {
     console.error(`VU ${__VU}: nenhum livro provisionado por setup() (criou ${data.length}, VUS=${VUS}).`);
-    sleep(thinkTime());
+    await delay(thinkTime());
     return;
   }
   const { bookId, sceneId } = resource;
+  // Capturada uma vez por iteração: as cinco operações abaixo carregam a
+  // mesma fase, mesmo que a iteração atravesse uma borda warmup/steady/rampdown.
+  const phase = currentPhase();
 
   const listRes = http.get(`${BASE}/api/books`, {
     jar,
     headers: jsonHeaders(jar),
-    tags: { operation: 'list_books', name: 'GET /api/books' },
+    tags: { operation: 'list_books', name: 'GET /api/books', phase },
   });
   if (!check(listRes, { 'list_books status 200': (r) => r.status === 200 })) {
-    sleep(thinkTime());
+    await delay(thinkTime());
     return;
   }
 
   const outlineRes = http.get(`${BASE}/api/books/${bookId}/outline`, {
     jar,
     headers: jsonHeaders(jar),
-    tags: { operation: 'load_outline', name: 'GET /api/books/{bookId}/outline' },
+    tags: { operation: 'load_outline', name: 'GET /api/books/{bookId}/outline', phase },
   });
   if (!check(outlineRes, { 'load_outline status 200': (r) => r.status === 200 })) {
-    sleep(thinkTime());
+    await delay(thinkTime());
     return;
   }
 
@@ -498,10 +567,10 @@ export default function (data) {
   const sceneRes = http.get(`${BASE}/api/scenes/${sceneId}`, {
     jar,
     headers: jsonHeaders(jar),
-    tags: { operation: 'load_scene', name: 'GET /api/scenes/{sceneId}' },
+    tags: { operation: 'load_scene', name: 'GET /api/scenes/{sceneId}', phase },
   });
   if (!check(sceneRes, { 'load_scene status 200': (r) => r.status === 200 })) {
-    sleep(thinkTime());
+    await delay(thinkTime());
     return;
   }
   const revision = sceneRes.json('contentRevision');
@@ -525,7 +594,7 @@ export default function (data) {
       expectedContentRevision: revision,
       operationId: uuidv4(),
     }),
-    { jar, headers: jsonHeaders(jar), tags: { operation: 'save_scene', name: 'PATCH /api/scenes/{sceneId}/content' } }
+    { jar, headers: jsonHeaders(jar), tags: { operation: 'save_scene', name: 'PATCH /api/scenes/{sceneId}/content', phase } }
   );
   const saveSucceeded = check(saveRes, { 'save_scene status 200': (r) => r.status === 200 });
 
@@ -535,16 +604,29 @@ export default function (data) {
   // Só roda depois de um save bem-sucedido — o frontend também só invalida
   // o outline nesse caso — e fica numa tag própria (não agregada em
   // load_outline) para mostrar separadamente o custo desse refetch.
+  //
+  // O editor real dispara essa invalidação com `void
+  // queryClient.invalidateQueries(...)` (scene-editor.tsx) — fire-and-forget,
+  // sem bloquear a UI nem o think time seguinte. Serializar esse GET aqui
+  // (await síncrono) somaria a latência inteira do refetch ao think time e
+  // reduziria a taxa de requisições da VU bem no momento em que o backend
+  // fica mais lento — subestimando a carga oferecida. Por isso o refetch roda
+  // em paralelo com o think time via http.asyncRequest() + Promise.all(): o
+  // que demorar mais entre os dois é que dita quando a próxima iteração começa.
   if (saveSucceeded) {
-    const refreshRes = http.get(`${BASE}/api/books/${bookId}/outline`, {
+    const refreshPromise = http.asyncRequest('GET', `${BASE}/api/books/${bookId}/outline`, null, {
       jar,
       headers: jsonHeaders(jar),
-      tags: { operation: 'refresh_outline_after_save', name: 'GET /api/books/{bookId}/outline' },
+      tags: { operation: 'refresh_outline_after_save', name: 'GET /api/books/{bookId}/outline', phase },
     });
+
+    const [refreshRes] = await Promise.all([refreshPromise, delay(thinkTime())]);
+
     check(refreshRes, { 'refresh_outline_after_save status 200': (r) => r.status === 200 });
+    return;
   }
 
-  sleep(thinkTime());
+  await delay(thinkTime());
 }
 
 /**
@@ -621,10 +703,12 @@ function renderShortSummary(data) {
   if (m.http_reqs) {
     lines.push(`http_reqs: ${m.http_reqs.values.count} (${m.http_reqs.values.rate.toFixed(2)}/s)`);
   }
+  // Só as amostras da fase estável (phase:steady) têm threshold, então só
+  // essa combinação de tags vira sub-métrica rastreada pelo k6 (ver options.thresholds).
   ['list_books', 'load_outline', 'load_scene', 'save_scene', 'refresh_outline_after_save'].forEach((op) => {
-    const trend = m[`http_req_duration{operation:${op}}`];
+    const trend = m[`http_req_duration{operation:${op},phase:steady}`];
     if (trend) {
-      lines.push(`${op} p95: ${trend.values['p(95)'].toFixed(1)}ms`);
+      lines.push(`${op} steady p95: ${trend.values['p(95)'].toFixed(1)}ms`);
     }
   });
 
