@@ -35,8 +35,21 @@ Fluxo por VU, uma vez por iteração:
    `queryClient.invalidateQueries({ queryKey: queryKeys.outline(bookId) })`
    assim que o save é confirmado, o que refaz este `GET`. Como o frontend só
    invalida nesse caso, o script também só refaz a chamada quando o `PATCH`
-   teve sucesso.
-6. think time curto (0.3–1s, configurável)
+   teve sucesso. O editor real dispara essa invalidação com `void
+   queryClient.invalidateQueries(...)` (`scene-editor.tsx`) — fire-and-forget,
+   sem bloquear a UI. O script espelha isso: o refetch usa
+   `http.asyncRequest()` e roda **em paralelo** com o think time do passo 6
+   (`Promise.all([refreshPromise, delay(thinkTime())])`), nunca serializado
+   antes dele — um GET síncrono aqui somaria a latência inteira do refetch ao
+   think time e reduziria a taxa de requisições da VU justamente quando o
+   backend fica mais lento, subestimando a carga oferecida.
+6. think time curto (0.3–1s, configurável), sobreposto ao passo 5 quando ele roda
+
+Cada requisição das 5 operações acima também carrega uma tag `phase`
+(`ramp_up`/`steady`/`ramp_down`), calculada uma vez por iteração a partir de
+`exec.scenario.startTime` (k6/execution) e das durações configuradas
+(`WARMUP_DURATION`/`STEADY_DURATION`/`RAMPDOWN_DURATION`) — ver
+[§7](#7-thresholds) para por que isso importa para os thresholds.
 
 Sem chamadas de IA. Cada VU escreve **somente no próprio livro/cena**, nunca
 um recurso compartilhado com outra VU — evita contenção artificial no lock
@@ -440,13 +453,13 @@ ação. Os JSONs brutos por execução ficam em `loadtest/resultados/`.
 ## 7. Thresholds
 
 ```text
-http_req_failed          < 1%
-checks                   > 99%
-vu_auth_success          == 100%   (zero tolerância — ver §3)
-http_req_duration p(95)  < 500ms   (global)
-http_req_duration p(95)  < 500ms   (por operação principal: list_books, load_outline, load_scene, save_scene, refresh_outline_after_save)
-http_req_duration p(95)  < 2000ms  (auth/setup/teardown — fora do loop medido)
-http_req_duration p(95)  < 8000ms  (auth_login — bcrypt + cold start da JVM, ver §9)
+http_req_failed              < 1%
+checks                       > 99%
+vu_auth_success               == 100%   (zero tolerância — ver §3)
+http_req_duration p(95)      < 500ms   (global — todas as fases, todas as requisições)
+http_req_duration p(95)      < 500ms   (por operação principal, SÓ fase estável: list_books, load_outline, load_scene, save_scene, refresh_outline_after_save — tag phase:steady)
+http_req_duration p(95)      < 2000ms  (auth/setup/teardown — fora do loop medido)
+http_req_duration p(95)      < 8000ms  (auth_login — bcrypt + cold start da JVM, ver §9)
 ```
 
 Qualquer violação faz o `k6 run` sair com código diferente de zero — apropriado
@@ -459,28 +472,47 @@ rodam 1x ou `VUS` vezes por execução, nunca sob a carga em regime.
 única falha de login de VU nunca pode "passar" reduzindo a carga
 silenciosamente — ver [§3](#3-autenticação).
 
+**Por que `phase:steady` e não a operação sem filtro:** os estágios de
+`WARMUP_DURATION`/`RAMPDOWN_DURATION` rodam com menos VUs que o pico
+(rampando para cima/para baixo), então misturar essas amostras no mesmo p95
+que os 2 minutos de `STEADY_DURATION` dilui o percentil — um threshold podia
+"passar" mesmo que a carga em regime, sozinha, já rompesse o teto. A fase é
+calculada uma vez por iteração (`currentPhase()` em `carga.js`, via
+`exec.scenario.startTime` do módulo `k6/execution` e as durações
+configuradas, convertidas para ms por `k6DurationToMs()`) e a mesma tag vale
+para as 5 operações daquela iteração. `http_req_duration` **sem** tag
+continua agregando as 3 fases — é o número de "execução completa" em
+[§9](#9-resultados-obtidos), não o de regime permanente.
+
 ---
 
 ## 8. Como ler o resultado
 
-- **Tags exportadas:** só `operation` (dimensão funcional: `list_books`,
-  `save_scene`, `auth_login`, ...) e `name` (rota HTTP normalizada, ex. `GET
-  /api/scenes/{sceneId}`) — nunca a URL concreta. A tag automática `url` do
-  k6 está desabilitada via `systemTags`, então nenhum `bookId`, `sceneId`,
-  `runId`, título, conteúdo, usuário ou tenant vaza para uma tag, mesmo que o
-  resultado seja exportado para um time-series output (`--out json=...`) ou o
-  k6 cloud — validado rodando um smoke com `--out json=` e conferindo que
-  nenhum UUID aparece em `data.tags` (arquivo temporário, nunca versionado).
-- **`http_req_duration{operation:...}`** — cada operação tem sua própria série
-  de percentis (`avg`, `min`, `med`=p50, `p(90)`, `p(95)`, `p(99)`, `max`),
-  graças a essas tags e a `summaryTrendStats` configurado no script.
+- **Tags exportadas:** `operation` (dimensão funcional: `list_books`,
+  `save_scene`, `auth_login`, ...), `name` (rota HTTP normalizada, ex. `GET
+  /api/scenes/{sceneId}`) e, só nas 5 operações principais, `phase`
+  (`ramp_up`/`steady`/`ramp_down`) — nunca a URL concreta. A tag automática
+  `url` do k6 está desabilitada via `systemTags`, então nenhum `bookId`,
+  `sceneId`, `runId`, título, conteúdo, usuário ou tenant vaza para uma tag,
+  mesmo que o resultado seja exportado para um time-series output (`--out
+  json=...`) ou o k6 cloud — validado rodando um smoke com `--out json=` e
+  conferindo que nenhum UUID aparece em `data.tags` e que `phase` só assume
+  os 3 valores esperados (arquivo temporário, nunca versionado).
+- **`http_req_duration{operation:...,phase:steady}`** — cada operação
+  principal tem sua própria série de percentis (`avg`, `min`, `med`=p50,
+  `p(90)`, `p(95)`, `p(99)`, `max`), restrita à fase estável, graças a essas
+  tags e a `summaryTrendStats` configurado no script. O k6 só rastreia uma
+  combinação de tags como sub-métrica separada no summary quando ela tem
+  threshold associado ([§7](#7-thresholds)) — por isso `operation:X` **sem**
+  `phase` não aparece mais como série própria: sem essa tag adicional, a
+  amostra cairia de volta no `http_req_duration` global agregando as 3 fases.
 - **`http_req_duration` (sem tag) e `http_reqs.rate`** — agregam **todas** as
-  requisições da execução: smoke, auth, setup do livro/seção/capítulo/cenas,
-  as 5 operações principais **e** o teardown. Não representam a latência do
-  loop principal sozinho — para isso, leia as séries individuais de
-  `list_books`/`load_outline`/`load_scene`/`save_scene`/`refresh_outline_after_save`.
+  requisições da execução, **todas as fases**: smoke, auth, setup do
+  livro/seção/capítulo/cenas, as 5 operações principais **e** o teardown. Não
+  representam a latência do loop principal sozinho nem a fase estável isolada
+  — para isso, leia as séries `phase:steady` das 5 operações principais.
   `resultado.json` mantém essa distinção explícita (`execucao_completa` vs.
-  `operacoes_principais` vs. `auth_setup_teardown`).
+  `operacoes_principais` [phase:steady] vs. `auth_setup_teardown`).
 - **`checks`** — as 5 asserções de status das operações principais
   (`list_books`, `load_outline`, `load_scene`, `save_scene`,
   `refresh_outline_after_save` — só roda, e só é checada, quando `save_scene`
@@ -496,20 +528,36 @@ silenciosamente — ver [§3](#3-autenticação).
 
 ## 9. Resultados obtidos
 
-Execuções reais, ambiente local isolado (ver limitações abaixo). **Estes
-números são de um cenário diferente da medição anterior deste README** — o
-`contentText`/`contentJson` enviado em `save_scene` alterna a contagem de
-palavras entre iterações pares/ímpares da mesma VU (em vez de um template
-fixo), então `wordCountDelta` nunca mais é `0` a partir do segundo save de
-cada VU e `WordCountEventService.shouldUpdateDailyRollup()` passa a
-atualizar o rollup diário em praticamente toda escrita — o commit `884701a`
-(template fixo, `wordCountDelta=0` na maioria dos saves) fica só como
-evidência histórica, não como a medição final desta PR.
+Execuções reais, ambiente local isolado (ver limitações abaixo). **Esta é uma
+remedição de metodologia, não só de comportamento** — 2 findings P2 do Codex
+sobre a rodada anterior (`2838fe0`) mudaram o *pacing* da iteração e o que os
+thresholds das operações principais efetivamente medem:
 
-- **`measured_code_commit`**: `2838fe0fd66568d333fbe19941fdb38017baa43c` — o
+1. `refresh_outline_after_save` era um `http.get()` **síncrono** após
+   `save_scene`: sua latência somava ao think time e reduzia a taxa de
+   requisições da VU justamente quando o backend fica mais lento,
+   subestimando a carga oferecida — o editor real dispara essa invalidação
+   fire-and-forget. Corrigido com `http.asyncRequest()` +
+   `Promise.all([refreshPromise, delay(thinkTime())])`, rodando o refetch em
+   paralelo ao think time.
+2. Os thresholds de p95<500ms das 5 operações principais agregavam as
+   amostras dos 3 estágios (warmup + carga estável + rampdown) sem filtrar
+   por fase — warmup/rampdown rodam com menos VUs que o pico e diluíam o
+   p95, então um threshold podia "passar" mesmo que os 2 minutos de carga
+   estável sozinhos já rompessem o teto. Corrigido com uma tag `phase`
+   (`ramp_up`/`steady`/`ramp_down`) por requisição e thresholds que filtram
+   `phase:steady` — ver [§7](#7-thresholds).
+
+Como o pacing e o que os thresholds medem mudaram, **os números desta rodada
+não são uma comparação de performance ponto a ponto** com `2838fe0` — ver a
+tabela de comparação ao final desta seção, que traz o aviso completo.
+Nenhuma mudança na lógica de conteúdo/contagem de palavras de `save_scene`
+desde `2838fe0` (alternância par/ímpar de `wordCountDelta`, ver abaixo).
+
+- **`measured_code_commit`**: `dbd5904b7132050b05b838a378989d54bf373a0f` — o
   commit de `loadtest/carga.js` exatamente como executado para gerar os
   números abaixo, com working tree limpo, sem nenhuma mudança de código
-  depois. Reproduzir: `git checkout 2838fe0 -- loadtest/carga.js`.
+  depois. Reproduzir: `git checkout dbd5904 -- loadtest/carga.js`.
 - **`evidence_commit`**: o commit imediatamente seguinte nesta branch, que só
   adiciona/atualiza `resultado.json`, `resultados/*.json` e este README — sem
   nenhuma mudança de comportamento do script. Hash exato na descrição da PR
@@ -521,134 +569,141 @@ Resumo comparativo completo, estruturado, em
 [`resultados/resultado-10vus.json`](resultados/resultado-10vus.json) e
 [`resultados/resultado-30vus.json`](resultados/resultado-30vus.json).
 
-**Execução completa** (todas as requisições — smoke, auth, setup, as 5
-operações principais e teardown):
+### Execução completa (todas as fases, todas as requisições)
+
+Smoke, auth, setup, as 5 operações principais (`ramp_up`+`steady`+`ramp_down`)
+e teardown — `http_req_duration` **sem** tag `phase`:
 
 | | VUs | Duração | Requests | RPS global | p50 (ms) | p90 (ms) | p95 (ms) | p99 (ms) | Erros | Checks | `vu_auth_success` |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| Baseline | 10 | 3m (30s/2m/30s) | 8105 | 43.4 | 39.5 | 125.7 | 152.7 | 219.4 | 0% (0/8105) | 100% (8030/8030) | 100% (10/10) |
-| Carga ampliada | 30 | 3m (30s/2m/30s) | 11580 | 61.5 | 198.4 | 584.0 | 739.9 | 1048.1 | 0% (0/11580) | 100% (11365/11365) | 100% (30/30) |
+| Baseline | 10 | 3m (30s/2m/30s) | 10565 | 57.9 | 11.4 | 37.2 | 45.5 | 64.8 | 0% (0/10565) | 100% (10490/10490) | 100% (10/10) |
+| Carga ampliada | 30 | 3m (30s/2m/30s) | 24340 | 132.9 | 32.0 | 128.9 | 194.7 | 458.4 | 0% (0/24340) | 100% (24125/24125) | 100% (30/30) |
 
 `vu_auth_success` confirma exatamente uma autenticação bem-sucedida por VU
-nas duas execuções — nenhuma VU rodou sem sessão própria
-([§3](#3-autenticação)). Esses percentis incluem auth/setup/teardown — não
-são a latência do loop principal; para isso, a tabela seguinte.
+nas duas execuções. Estes percentis incluem auth/setup/teardown **e**
+warmup/rampdown — não são a fase estável isolada; para isso, a seção
+seguinte.
 
-**Operações principais** (p95/p99 em ms, medidas só dentro do loop de VUs —
-sem misturar com auth/setup/teardown):
+### Fase estável (`phase:steady`) — só as operações principais, só os 2 minutos com VUS constante no pico
 
-| Operação | 10 VUs p95 | 10 VUs p99 | 30 VUs p95 | 30 VUs p99 |
-|---|---|---|---|---|
-| `list_books` | 191.4 | 265.4 | 933.5 | 1233.5 |
-| `load_outline` | 61.6 | 100.2 | 726.7 | 968.4 |
-| `load_scene` | 58.1 | 83.7 | 571.6 | 849.6 |
-| `save_scene` | 178.3 | 250.2 | 733.3 | 1083.8 |
-| `refresh_outline_after_save` | 62.4 | 92.4 | 263.1 | 566.2 |
+| Operação | 10 VUs p50 | 10 VUs p90 | 10 VUs p95 | 10 VUs p99 | 10 VUs max | 30 VUs p50 | 30 VUs p90 | 30 VUs p95 | 30 VUs p99 | 30 VUs max |
+|---|---|---|---|---|---|---|---|---|---|---|
+| `list_books` | 28.2 | 49.7 | 56.1 | 72.4 | 90.4 | 92.2 | 231.0 | 365.7 | 877.0 | 1743.5 |
+| `load_outline` | 7.8 | 14.0 | 16.1 | 21.7 | 41.9 | 20.4 | 113.6 | 191.0 | 616.2 | 1652.8 |
+| `load_scene` | 7.0 | 12.4 | 14.4 | 18.9 | 29.9 | 18.0 | 107.3 | 162.9 | 363.5 | 1762.0 |
+| `save_scene` | 26.1 | 44.1 | 53.6 | 78.7 | 230.5 | 51.9 | 196.0 | 286.8 | 437.5 | 1300.0 |
+| `refresh_outline_after_save` | 7.7 | 13.3 | 14.9 | 18.4 | 27.8 | 14.8 | 76.8 | 117.1 | 220.9 | 710.7 |
 
-Em cada execução, a contagem do check `refresh_outline_after_save status
-200` bate exatamente com `save_scene status 200` (1606/1606 em 10 VUs,
-2273/2273 em 30 VUs, zero falhas) — confirmando que o refetch só roda após
-um save bem-sucedido, nunca a mais nem a menos. A alternância de
-`wordCountDelta` foi confirmada diretamente no banco
-(`book_word_count_events.manuscript_word_delta`) numa execução de controle
-isolada: sequência real observada `8, -1, +1, -1, +1, -1, ...` — nunca `0` a
-partir do segundo save.
+**Todos os 10 thresholds `p95<500ms` (5 operações × 2 execuções) passaram** —
+mudança em relação à rodada anterior, em que 4 de 5 falhavam em 30 VUs; ver
+"Leitura do resultado" abaixo para por que essa comparação não é direta.
+`checks` (100%) e `http_req_failed` (0%) passaram nas duas execuções — nenhuma
+requisição falhou.
 
-Todos os thresholds passaram em 10 VUs. Em 30 VUs, **4 de 5 thresholds de
-operação principal falharam** (`list_books` p95 933.5ms, `load_outline` p95
-726.7ms, `load_scene` p95 571.6ms, `save_scene` p95 733.3ms — todos acima do
-teto de 500ms; só `refresh_outline_after_save` passou, 263.1ms) — na medição
-anterior (`884701a`) eram 3 de 5, com `load_scene` passando por margem
-mínima (498.2ms); agora ele também rompe o teto. `checks` (100%) e
-`http_req_failed` (0%) passaram nas duas execuções — nenhuma requisição
-falhou, só ficou mais lenta que o threshold.
+Em cada execução, a contagem do check `refresh_outline_after_save status 200`
+bate exatamente com `save_scene status 200` (2098/2098 em 10 VUs, 4825/4825
+em 30 VUs, zero falhas) — confirmando que o refetch só roda após um save
+bem-sucedido, nunca a mais nem a menos, mesmo sendo assíncrono agora. A
+alternância de `wordCountDelta` não foi re-verificada nesta rodada (a lógica
+não mudou desde `2838fe0`, onde foi confirmada diretamente no banco:
+sequência real `8, -1, +1, -1, +1, -1, ...` — nunca `0` a partir do segundo
+save).
 
-**Auth/setup/teardown** (fora do loop medido — `auth_csrf`/`auth_login`
-rodam `VUS+2` vezes agora: setup + 1/VU + teardown; `setup_create_book/section/chapter/scene`
-e `teardown_delete_book` rodam `VUS` vezes, um livro por VU):
+### Auth/setup/teardown (fora do loop medido)
+
+`auth_csrf`/`auth_login` rodam `VUS+2` vezes (setup + 1/VU + teardown);
+`setup_create_book/section/chapter/scene` e `teardown_delete_book` rodam
+`VUS` vezes, um livro por VU:
 
 | Operação | 10 VUs avg | 10 VUs p95 | 30 VUs avg | 30 VUs p95 |
 |---|---|---|---|---|
-| `auth_csrf` | 15.8ms | 36.2ms | 12.9ms | 24.9ms |
-| `auth_login` | 392.3ms | 1154.9ms | 297.8ms | 786.9ms |
-| `setup_create_book` | 105.6ms | 294.2ms | 59.7ms | 88.6ms |
-| `setup_create_section` | 44.9ms | 87.9ms | 32.1ms | 55.2ms |
-| `setup_create_chapter` | 50.1ms | 71.9ms | 36.4ms | 57.8ms |
-| `setup_create_scene` | 71.8ms | 103.2ms | 64.8ms | 91.6ms |
-| `teardown_delete_book` | 76.0ms | 102.3ms | 60.4ms | 88.1ms |
+| `auth_csrf` | 4.4ms | 6.5ms | 5.2ms | 8.2ms |
+| `auth_login` | 74.7ms | 103.6ms | 95.3ms | 158.5ms |
+| `setup_create_book` | 35.7ms | 49.3ms | 13.5ms | 21.6ms |
+| `setup_create_section` | 24.7ms | 42.4ms | 7.2ms | 10.3ms |
+| `setup_create_chapter` | 26.7ms | 43.2ms | 8.2ms | 11.0ms |
+| `setup_create_scene` | 38.4ms | 47.5ms | 13.0ms | 23.9ms |
+| `teardown_delete_book` | 38.7ms | 60.6ms | 28.0ms | 52.8ms |
 
-**Comparação com a medição anterior (`884701a`)** — mesmo cenário de 5
-operações por iteração; a única mudança de código é a contagem de palavras
-alternada em `save_scene`, e o host desta rodada teve o container que
-dominava a contenção anterior (`crm-marketing-backend`) parado antes de
-rodar:
+### Leitura do resultado — por que não é uma comparação direta com `2838fe0`
 
-| | 10 VUs: `884701a` → `2838fe0` | 30 VUs: `884701a` → `2838fe0` |
+Três variáveis mudaram ao mesmo tempo em relação à medição anterior:
+
+1. `refresh_outline_after_save` passou de síncrono para assíncrono — muda o
+   pacing de toda iteração (mais iterações no mesmo tempo).
+2. Os percentis de operações principais passaram a filtrar `phase:steady` em
+   vez de agregar as 3 fases.
+3. Pela **primeira vez** nesta série de medições, `crm-marketing-backend-1`
+   (~478% de CPU, o mesmo container que dominava a contenção nas duas
+   medições anteriores) ficou parado durante a execução **inteira**, não só
+   parte dela.
+
+| | 10 VUs: `2838fe0` → `dbd5904` | 30 VUs: `2838fe0` → `dbd5904` |
 |---|---|---|
-| Requests totais | 9520 → 8105 (-14.9%) | 13170 → 11580 (-12.1%) |
-| Iterações | 1889 → 1606 (-15.0%) | 2591 → 2273 (-12.3%) |
-| RPS global | 52.0 → 43.4 (-16.5%) | 70.3 → 61.5 (-12.6%) |
-| `http_req_duration` global p95 | 87.9ms → 152.7ms (pior) | 666.9ms → 739.9ms (pior) |
-| `save_scene` p95 | 139.6ms → 178.3ms (pior) | 609.8ms → 733.3ms (pior) |
+| Requests totais | 8105 → 10565 (+30.4%) | 11580 → 24340 (+110.2%) |
+| RPS global | 43.4 → 57.9 (+33.5%) | 61.5 → 132.9 (+116.1%) |
+| Iterações | 1606 → 2098 (+30.6%) | 2273 → 4825 (+112.3%) |
+| Thresholds de operação principal | 5/5 passaram | 1/5 passava → 5/5 passam |
 
-`save_scene` mais lento nas duas cargas **é o efeito esperado da própria
-correção**: com `wordCountDelta` nunca mais `0`,
-`WordCountEventService.shouldUpdateDailyRollup()` faz trabalho real de
-rollup em praticamente toda escrita, em vez de ser pulado como antes — o
-benchmark estava subestimando o custo real do caminho de save.
+O salto é bem maior em 30 VUs porque a contenção de `crm-marketing-backend-1`
+crescia com a carga do próprio IWrite disputando CPU — isolar o host ajuda
+mais quanto maior o VUS. **Não dá para separar, só com estes dois runs,
+quanto do ganho veio do host isolado vs. do refetch assíncrono vs. do filtro
+de fase.** A leitura honesta: a medição anterior estava dominada por
+contenção externa e por percentis diluídos por warmup/rampdown, não por um
+gargalo real do IWrite sob 30 VUs nesta escala — ver "Próxima ação
+recomendada".
 
-**Gargalo principal:** em 10 VUs, todas as cinco operações principais têm
-folga confortável frente ao teto de 500ms, apesar do `save_scene` mais lento
-que na medição anterior. Em 30 VUs, `list_books` continua sendo a operação
-mais perto/acima do teto (cresce com o tamanho da coleção de livros do
-tenant, que aumenta com `VUS` por construção do cenário) — mas agora
-`save_scene` e `load_scene` também rompem o teto de forma mais clara que na
-medição anterior. A causa dominante da piora de `save_scene` (nas duas
-cargas) é a própria correção desta rodada — ver "Próxima ação recomendada"
-para decompor esse custo com OTel.
+**Gargalo principal:** nenhum — as 5 operações passam o teto de 500ms com
+folga em 10 e 30 VUs nesta rodada. `list_books` continua sendo a operação
+relativamente mais lenta (cresce com o tamanho da coleção de livros do
+tenant, que aumenta com `VUS` por construção do cenário), mas está longe do
+teto mesmo em 30 VUs.
 
 **Limitações desta execução:**
 - Rodada em uma stack Docker isolada só para este teste (`docker-compose -p
   iwrite-k6smoke`, container_name/portas remapeados via overlay não
-  versionado). O container que dominava a contenção da medição anterior
-  (`crm-marketing-backend`, ~200% de CPU) foi parado antes de rodar, mas um
-  Postgres de **outro worktree do IWrite** (`iwrite-db`, porta 5435)
-  permaneceu ativo e ocioso durante a execução — não é hardware dedicado.
+  versionado). `crm-marketing-backend-1` ficou parado durante toda a
+  execução, mas um Postgres de **outro worktree do IWrite** (`iwrite-db`,
+  porta 5435) permaneceu ativo e ocioso — não é hardware dedicado.
 - Backend, Postgres e k6 rodam na mesma máquina (sem separação de rede/CPU
   entre gerador de carga e alvo), então parte da latência medida pode ser
   contenção local, não custo real de rede.
 - `list_books` cresce com `VUS` por construção do próprio cenário (1 livro
   por VU no tenant do autor de teste) — em execuções com `VUS` bem maior que
-  30, esse custo pode se tornar o novo fator dominante antes mesmo de
-  qualquer contenção real de escrita. Não investigado neste PR (paginação?
-  índice? projeção mais enxuta na listagem?).
-- A piora de `save_scene` (10 e 30 VUs) não foi decomposta entre custo do
-  `INSERT` em `book_word_count_events`, cálculo do rollup diário e a própria
-  escrita da cena — só o efeito agregado foi medido.
+  30, esse custo pode se tornar o novo fator dominante. Não investigado
+  neste PR (paginação? índice? projeção mais enxuta na listagem?).
+- A composição de custo de `save_scene` (`INSERT` em
+  `book_word_count_events`, cálculo do rollup diário, escrita da própria
+  cena) não foi decomposta — só o efeito agregado foi medido.
 - Sem OTel habilitado durante a execução (evita adicionar overhead de
   instrumentação à medição); a decomposição do custo de
   `save_scene`/`list_books`/`load_outline` entre suas etapas internas não
   foi feita neste PR.
-- `contentJson` sintético é um único parágrafo curto (agora com 7-8
-  palavras) — não representa uma cena longa de verdade. `save_scene` sob um
-  payload realisticamente maior tende a ser mais lento ainda que o medido
-  aqui.
+- `contentJson` sintético é um único parágrafo curto (7-8 palavras) — não
+  representa uma cena longa de verdade. `save_scene` sob um payload
+  realisticamente maior tende a ser mais lento ainda que o medido aqui.
 - `IWRITE_LOADTEST_LOGIN_RATE_LIMIT` (overlay versionado
   `docker-compose.loadtest.yml`) foi mantido no default (`1000`) nesta
   execução — cobre folgadamente `VUS` até `998`; os defaults de produção em
   `application.yml`/`.env.example` não foram alterados — ver
   [§2](#2-pré-requisitos).
+- Como o host ficou sem a contenção de `crm-marketing-backend-1` pela
+  primeira vez nesta série, esta medição não isola quanto do ganho de
+  RPS/latência veio do host vs. do refetch assíncrono vs. do filtro de fase
+  — ver "Leitura do resultado" acima.
 
-**Próxima ação recomendada:** rodar o teste com OTel habilitado
-(`docker-compose.observability.yml`) e usar os traces correlacionados de
-`scene_content_save` para decompor quanto da piora de `save_scene` vem do
-`INSERT` em `book_word_count_events`/rollup diário vs. da própria escrita de
-conteúdo da cena — esta PR tornou esse custo visível pela primeira vez sob
-carga. Repetir 30 VUs em hardware totalmente dedicado (sem nenhum outro
-container Docker ativo na máquina) para confirmar se `list_books`/`load_outline`
-continuam rompendo o teto de 500ms fora de qualquer contenção residual.
-Investigar o crescimento de `list_books`/`load_outline` com o tamanho da
-coleção de livros do tenant antes de rodar com `VUS` bem maior que 30.
+**Próxima ação recomendada:** repetir 30 VUs (e testar `VUS` maior, ex.
+50-100) em hardware totalmente dedicado, sem nenhum outro container Docker
+ativo na máquina, para uma linha de base limpa que não dependa de lembrar de
+parar containers de outros projetos manualmente. Rodar o teste com OTel
+habilitado (`docker-compose.observability.yml`) e usar os traces
+correlacionados de `scene_content_save` para decompor o custo de
+`save_scene` entre `INSERT` em `book_word_count_events`/rollup diário e a
+própria escrita de conteúdo da cena. Investigar o crescimento de
+`list_books`/`load_outline` com o tamanho da coleção de livros do tenant
+antes de rodar com `VUS` bem maior que 30, já que a folga atual sob 500ms
+pode não se sustentar em escala maior.
 
 ---
 
@@ -671,9 +726,20 @@ coleção de livros do tenant antes de rodar com `VUS` bem maior que 30.
       (não versionado), que zero requisições `load_scene`/`save_scene`
       acontecem quando um pré-requisito falha
 - [x] Tags exportadas testadas com `--out json=` temporário (não versionado):
-      zero ocorrências de `"url"` como chave de tag e zero UUIDs em
-      `data.tags` em toda a execução — só `operation` e `name` (rota
-      normalizada)
+      zero ocorrências de `"url"` como chave de tag e zero UUIDs/JSESSIONID/
+      XSRF-TOKEN em `data.tags` em toda a execução — só `operation`, `name`
+      (rota normalizada) e, nas 5 operações principais, `phase`
+- [x] Tag `phase` confirmada com exatamente 3 valores possíveis (smoke com
+      `--out json=` temporário, VUS=3/5s/8s/5s): 315 `ramp_up` + 1036
+      `steady` + 540 `ramp_down` = 1891, batendo com o total de amostras
+      tagueadas com `phase` — nenhum quarto valor, nenhuma amostra sem tag
+- [x] Refetch assíncrono (`http.asyncRequest()` + `Promise.all()`) validado:
+      `k6 run` completa sem erro de Promise não tratada, `refresh_outline_after_save
+      status 200` continua batendo exatamente com `save_scene status 200`
+      nas 3 execuções (smoke/10 VUs/30 VUs) mesmo sendo assíncrono, e a
+      contagem de iterações por segundo aumentou (10 VUs: 1606→2098; 30 VUs:
+      2273→4825) — consistente com o refetch não bloquear mais a próxima
+      iteração além do think time
 - [x] Falha de `setup()` após a criação de um livro (seção/capítulo/cena de
       uma VU) testada com fault injection: limpeza automática remove **todos**
       os livros já criados até aquele ponto (não só o da VU corrente),
@@ -712,8 +778,17 @@ coleção de livros do tenant antes de rodar com `VUS` bem maior que 30.
       `save_scene status 200` — zero requisições dessa operação quando o
       `PATCH` falha (fault injection)
 - [x] Alternância de `wordCountDelta` confirmada diretamente em
-      `book_word_count_events.manuscript_word_delta` (execução de controle
-      isolada, VUS=1): sequência real `8, -1, +1, -1, +1, -1, ...` — nunca
-      `0` a partir do segundo save da mesma VU
+      `book_word_count_events.manuscript_word_delta` na rodada `2838fe0`
+      (execução de controle isolada, VUS=1): sequência real
+      `8, -1, +1, -1, +1, -1, ...` — nunca `0` a partir do segundo save da
+      mesma VU. Não re-verificada em `dbd5904`: a lógica de conteúdo/contagem
+      de palavras não foi tocada por este diff (só `phase` e o refetch
+      assíncrono mudaram)
+- [x] Thresholds `phase:steady` das 5 operações principais confirmados
+      passando nas duas execuções (10 e 30 VUs) — `k6 inspect` mostra as 5
+      chaves `http_req_duration{operation:X,phase:steady}` nos `thresholds`
+      (ver [§7](#7-thresholds)); o resumo curto no terminal ("Todos os
+      thresholds passaram") e os JSONs brutos em `resultados/*.json`
+      confirmam
 - [x] Resultados gerados com working tree limpo, exatamente no commit
       registrado como `measured_code_commit` em `resultado.json`
