@@ -84,10 +84,10 @@ literalmente o cenário do [§1](#1-o-que-o-teste-faz): sessões independentes
 do mesmo autor.
 
 **Efeito colateral:** com uma sessão por VU (em vez de uma única sessão de
-`setup()` repassada a todas), uma execução com `VUS=N` agora faz até `N+1`
-logins (as `N` VUs + o login interno de `setup()`) contra a mesma conta, e
-esses logins tendem a se concentrar dentro do `WARMUP_DURATION` — o que pode
-estourar o rate limiter de login
+`setup()` repassada a todas), uma execução com `VUS` VUs agora faz até
+`VUS + 2` logins (1 de `setup()` + 1 por VU + 1 de `teardown()`) contra a
+mesma conta, e esses logins tendem a se concentrar dentro do
+`WARMUP_DURATION` — o que pode estourar o rate limiter de login
 (`IWRITE_LOGIN_RATE_LIMIT_MAX_PER_ACCOUNT`/`_ORIGIN`, padrão 8/20 por janela
 de 1 minuto — ver `.env.example`) e devolver `429` antes da fase medida
 terminar de autenticar. Por isso o comando de subida em [§2](#2-pré-requisitos)
