@@ -306,6 +306,15 @@ quando `setup()` lança. O log da tentativa de limpeza lista quais livros
 falharam ao ser removidos (só `bookId`/status HTTP), nunca cookies ou o
 token CSRF.
 
+**Se a própria resposta do `POST /api/books` se perder** (timeout, erro de
+rede) depois que o servidor já persistiu o livro, o ID nunca chegaria à
+lista de limpeza — `recoverOrphanedBookIds()` cobre esse caso: antes de
+relançar o erro, `setup()` lista os livros da conta e casa pelo marcador
+EXATO desta execução (prefixo `LOADTEST-${runId}-vu`, nunca `LOADTEST-`
+genérico), unindo qualquer órfão encontrado aos já rastreados antes de
+tentar remover todos. Nunca toca livros de outra execução concorrente (outro
+`runId`).
+
 `teardown()` autentica de novo (sessão própria, não reaproveita a de nenhuma
 VU nem a de `setup()`) e apaga **todos** os livros da execução (cascata apaga
 seção/capítulo/cena via `CascadeType.ALL` + `orphanRemoval`) — **reprova a
@@ -352,6 +361,14 @@ fracionária opcional — `10m`, `90s`, `1h30m`, `0.5m`, `1.5s` são todos
 aceitos; `10x`, `1..5s`, `abc` continuam rejeitados) — um valor malformado
 falha imediatamente com uma mensagem clara, em vez de o k6 rejeitar
 silenciosamente as `options` ou cair no timeout padrão de 60s.
+
+`THINK_TIME_MIN_S`/`THINK_TIME_MAX_S` também são validados antes de montar
+`options` ou disparar qualquer requisição: precisam ser números finitos,
+não negativos, com `THINK_TIME_MIN_S <= THINK_TIME_MAX_S` (`0` e
+`min == max` são válidos). Um valor como `abc`, `NaN`, `Infinity`, `-1` ou
+`min > max` falha imediatamente — sem isso, `Number("abc")` viraria `NaN` e
+o think time seguinte seria efetivamente zero, inflando a taxa de
+requisições da VU sem aviso.
 
 Validação estática antes de rodar:
 
@@ -528,36 +545,56 @@ continua agregando as 3 fases — é o número de "execução completa" em
 
 ## 9. Resultados obtidos
 
-Execuções reais, ambiente local isolado (ver limitações abaixo). **Esta é uma
-remedição de metodologia, não só de comportamento** — 2 findings P2 do Codex
-sobre a rodada anterior (`2838fe0`) mudaram o *pacing* da iteração e o que os
-thresholds das operações principais efetivamente medem:
+Execuções reais, ambiente local isolado (ver limitações abaixo). **Esta é
+uma remedição depois de 2 correções P2 do Codex sobre `bb23e29`** — mas, ao
+contrário da remedição anterior, nenhuma delas muda o *pacing* da iteração
+nem o que os thresholds medem: ambas atuam fora do loop de carga medido.
 
-1. `refresh_outline_after_save` era um `http.get()` **síncrono** após
-   `save_scene`: sua latência somava ao think time e reduzia a taxa de
-   requisições da VU justamente quando o backend fica mais lento,
-   subestimando a carga oferecida — o editor real dispara essa invalidação
-   fire-and-forget. Corrigido com `http.asyncRequest()` +
-   `Promise.all([refreshPromise, delay(thinkTime())])`, rodando o refetch em
-   paralelo ao think time.
-2. Os thresholds de p95<500ms das 5 operações principais agregavam as
-   amostras dos 3 estágios (warmup + carga estável + rampdown) sem filtrar
-   por fase — warmup/rampdown rodam com menos VUs que o pico e diluíam o
-   p95, então um threshold podia "passar" mesmo que os 2 minutos de carga
-   estável sozinhos já rompessem o teto. Corrigido com uma tag `phase`
-   (`ramp_up`/`steady`/`ramp_down`) por requisição e thresholds que filtram
-   `phase:steady` — ver [§7](#7-thresholds).
+1. Livro órfão em falha ambígua de `setup()`: se o `POST /api/books`
+   persistisse no servidor mas a resposta se perdesse (timeout) antes de
+   `createdBookIds.push(bookId)`, esse ID nunca entrava na lista de limpeza
+   — e como `teardown()` nunca roda quando `setup()` lança, o livro ficava
+   órfão. Corrigido com `recoverOrphanedBookIds()`: antes de relançar o erro,
+   `setup()` lista os livros da conta e casa pelo marcador EXATO desta
+   execução (`LOADTEST-${runId}-vu`, nunca `LOADTEST-` genérico, para não
+   tocar em livros de outra execução concorrente), unindo qualquer órfão
+   encontrado aos já rastreados antes de tentar remover todos.
+2. `THINK_TIME_MIN_S`/`THINK_TIME_MAX_S` não eram validados: um valor não
+   numérico virava `NaN` e o timer efetivamente não esperava nada,
+   inflando silenciosamente a taxa de requisições da VU. Corrigido com
+   `validateThinkTime()` — rejeita não-finito, negativo ou `min > max`
+   antes de montar `options` ou disparar qualquer HTTP (`k6 inspect` já
+   falha nesses casos).
 
-Como o pacing e o que os thresholds medem mudaram, **os números desta rodada
-não são uma comparação de performance ponto a ponto** com `2838fe0` — ver a
-tabela de comparação ao final desta seção, que traz o aviso completo.
-Nenhuma mudança na lógica de conteúdo/contagem de palavras de `save_scene`
-desde `2838fe0` (alternância par/ímpar de `wordCountDelta`, ver abaixo).
+Como nenhuma das duas correções toca o código das 5 operações principais
+nem os thresholds/tags que os medem, **os números desta rodada são
+diretamente comparáveis à medição anterior (`bb23e29`)** — ver a tabela de
+comparação ao final desta seção. Nenhuma mudança na lógica de
+conteúdo/contagem de palavras de `save_scene` desde `2838fe0` (alternância
+par/ímpar de `wordCountDelta`, ver abaixo).
 
-- **`measured_code_commit`**: `dbd5904b7132050b05b838a378989d54bf373a0f` — o
+- **`measured_code_commit`**: `fc521b7f5d53669875fb543848f679d90f3d625c` — o
   commit de `loadtest/carga.js` exatamente como executado para gerar os
   números abaixo, com working tree limpo, sem nenhuma mudança de código
-  depois. Reproduzir: `git checkout dbd5904 -- loadtest/carga.js`.
+  depois. Reproduzir: `git checkout fc521b7 -- loadtest/carga.js`.
+- **`measured_script_path`**: `loadtest/carga.js`.
+- **`measured_script_git_blob`**: `73450fd5dba30e4227c278e5a9c850eddc925bff`
+  — saída de `git hash-object loadtest/carga.js` sobre o arquivo exatamente
+  como medido; confirmado igual a `git rev-parse fc521b7:loadtest/carga.js`.
+- **`measured_script_sha256`**:
+  `fde69d4f1899ebafc583f9b1c4526a73b5da053d178d7f9f9636140c375e2159` — saída
+  de `sha256sum loadtest/carga.js` (bash) ou
+  `(Get-FileHash loadtest/carga.js -Algorithm SHA256).Hash.ToLower()`
+  (PowerShell) sobre o mesmo arquivo.
+- **Por que blob + SHA-256, e não só `measured_code_commit`**: depois de um
+  squash-merge (e possível exclusão da branch `feature/k6-realistic-baseline`),
+  `measured_code_commit` pode deixar de ser alcançável a partir de `master` —
+  um `git checkout fc521b7 -- loadtest/carga.js` num clone novo falharia.
+  O blob e o SHA-256 não dependem de nenhum commit específico continuar
+  alcançável: bastam o conteúdo do arquivo em `master` e um `git hash-object`/
+  `sha256sum` local para confirmar que é byte a byte o mesmo script que
+  gerou os números abaixo — `measured_code_commit` continua registrado só
+  como referência histórica de onde a medição aconteceu.
 - **`evidence_commit`**: o commit imediatamente seguinte nesta branch, que só
   adiciona/atualiza `resultado.json`, `resultados/*.json` e este README — sem
   nenhuma mudança de comportamento do script. Hash exato na descrição da PR
@@ -576,8 +613,8 @@ e teardown — `http_req_duration` **sem** tag `phase`:
 
 | | VUs | Duração | Requests | RPS global | p50 (ms) | p90 (ms) | p95 (ms) | p99 (ms) | Erros | Checks | `vu_auth_success` |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| Baseline | 10 | 3m (30s/2m/30s) | 10565 | 57.9 | 11.4 | 37.2 | 45.5 | 64.8 | 0% (0/10565) | 100% (10490/10490) | 100% (10/10) |
-| Carga ampliada | 30 | 3m (30s/2m/30s) | 24340 | 132.9 | 32.0 | 128.9 | 194.7 | 458.4 | 0% (0/24340) | 100% (24125/24125) | 100% (30/30) |
+| Baseline | 10 | 3m (30s/2m/30s) | 10150 | 55.9 | 13.8 | 48.5 | 64.8 | 91.8 | 0% (0/10150) | 100% (10075/10075) | 100% (10/10) |
+| Carga ampliada | 30 | 3m (30s/2m/30s) | 25270 | 137.0 | 42.6 | 122.6 | 146.3 | 200.9 | 0% (0/25270) | 100% (25055/25055) | 100% (30/30) |
 
 `vu_auth_success` confirma exatamente uma autenticação bem-sucedida por VU
 nas duas execuções. Estes percentis incluem auth/setup/teardown **e**
@@ -588,26 +625,25 @@ seguinte.
 
 | Operação | 10 VUs p50 | 10 VUs p90 | 10 VUs p95 | 10 VUs p99 | 10 VUs max | 30 VUs p50 | 30 VUs p90 | 30 VUs p95 | 30 VUs p99 | 30 VUs max |
 |---|---|---|---|---|---|---|---|---|---|---|
-| `list_books` | 28.2 | 49.7 | 56.1 | 72.4 | 90.4 | 92.2 | 231.0 | 365.7 | 877.0 | 1743.5 |
-| `load_outline` | 7.8 | 14.0 | 16.1 | 21.7 | 41.9 | 20.4 | 113.6 | 191.0 | 616.2 | 1652.8 |
-| `load_scene` | 7.0 | 12.4 | 14.4 | 18.9 | 29.9 | 18.0 | 107.3 | 162.9 | 363.5 | 1762.0 |
-| `save_scene` | 26.1 | 44.1 | 53.6 | 78.7 | 230.5 | 51.9 | 196.0 | 286.8 | 437.5 | 1300.0 |
-| `refresh_outline_after_save` | 7.7 | 13.3 | 14.9 | 18.4 | 27.8 | 14.8 | 76.8 | 117.1 | 220.9 | 710.7 |
+| `list_books` | 33.6 | 56.1 | 66.9 | 82.4 | 104.1 | 108.8 | 159.9 | 179.7 | 234.4 | 489.2 |
+| `load_outline` | 9.1 | 16.0 | 18.6 | 24.1 | 46.6 | 31.4 | 80.2 | 99.0 | 144.0 | 291.7 |
+| `load_scene` | 8.1 | 14.3 | 17.0 | 22.6 | 50.0 | 29.7 | 78.3 | 94.8 | 147.7 | 328.7 |
+| `save_scene` | 33.5 | 72.4 | 80.4 | 101.0 | 127.6 | 69.5 | 156.7 | 183.7 | 236.9 | 371.9 |
+| `refresh_outline_after_save` | 9.4 | 14.7 | 17.2 | 22.7 | 47.0 | 22.4 | 72.5 | 90.7 | 131.3 | 295.5 |
 
-**Todos os 10 thresholds `p95<500ms` (5 operações × 2 execuções) passaram** —
-mudança em relação à rodada anterior, em que 4 de 5 falhavam em 30 VUs; ver
-"Leitura do resultado" abaixo para por que essa comparação não é direta.
-`checks` (100%) e `http_req_failed` (0%) passaram nas duas execuções — nenhuma
-requisição falhou.
+**Todos os 10 thresholds `p95<500ms` (5 operações × 2 execuções) passaram**,
+com folga confortável em relação ao teto nas duas cargas — ver "Leitura do
+resultado" abaixo pela comparação com a rodada anterior (`bb23e29`), que
+também passava nos 10. `checks` (100%) e `http_req_failed` (0%) passaram nas
+duas execuções — nenhuma requisição falhou.
 
 Em cada execução, a contagem do check `refresh_outline_after_save status 200`
-bate exatamente com `save_scene status 200` (2098/2098 em 10 VUs, 4825/4825
+bate exatamente com `save_scene status 200` (2015/2015 em 10 VUs, 5011/5011
 em 30 VUs, zero falhas) — confirmando que o refetch só roda após um save
-bem-sucedido, nunca a mais nem a menos, mesmo sendo assíncrono agora. A
-alternância de `wordCountDelta` não foi re-verificada nesta rodada (a lógica
-não mudou desde `2838fe0`, onde foi confirmada diretamente no banco:
-sequência real `8, -1, +1, -1, +1, -1, ...` — nunca `0` a partir do segundo
-save).
+bem-sucedido, nunca a mais nem a menos. A alternância de `wordCountDelta` não
+foi re-verificada nesta rodada (a lógica não mudou desde `2838fe0`, onde foi
+confirmada diretamente no banco: sequência real `8, -1, +1, -1, +1, -1, ...`
+— nunca `0` a partir do segundo save).
 
 ### Auth/setup/teardown (fora do loop medido)
 
@@ -617,42 +653,39 @@ save).
 
 | Operação | 10 VUs avg | 10 VUs p95 | 30 VUs avg | 30 VUs p95 |
 |---|---|---|---|---|
-| `auth_csrf` | 4.4ms | 6.5ms | 5.2ms | 8.2ms |
-| `auth_login` | 74.7ms | 103.6ms | 95.3ms | 158.5ms |
-| `setup_create_book` | 35.7ms | 49.3ms | 13.5ms | 21.6ms |
-| `setup_create_section` | 24.7ms | 42.4ms | 7.2ms | 10.3ms |
-| `setup_create_chapter` | 26.7ms | 43.2ms | 8.2ms | 11.0ms |
-| `setup_create_scene` | 38.4ms | 47.5ms | 13.0ms | 23.9ms |
-| `teardown_delete_book` | 38.7ms | 60.6ms | 28.0ms | 52.8ms |
+| `auth_csrf` | 8.6ms | 14.0ms | 5.7ms | 9.6ms |
+| `auth_login` | 116.5ms | 150.0ms | 107.1ms | 153.7ms |
+| `setup_create_book` | 27.1ms | 37.0ms | 28.9ms | 56.4ms |
+| `setup_create_section` | 20.0ms | 31.5ms | 12.9ms | 20.9ms |
+| `setup_create_chapter` | 19.6ms | 27.7ms | 14.9ms | 24.0ms |
+| `setup_create_scene` | 30.0ms | 37.7ms | 27.3ms | 52.8ms |
+| `teardown_delete_book` | 42.7ms | 67.3ms | 53.5ms | 69.8ms |
 
-### Leitura do resultado — por que não é uma comparação direta com `2838fe0`
+### Leitura do resultado — comparação com a rodada anterior (`bb23e29`)
 
-Três variáveis mudaram ao mesmo tempo em relação à medição anterior:
+Ao contrário da remedição anterior (`2838fe0` → `dbd5904`, que mudava pacing e
+o filtro de fase ao mesmo tempo), **nenhuma das duas correções desta rodada
+toca o código das 5 operações principais, os thresholds ou o cálculo de
+`phase`** — `recoverOrphanedBookIds()` só roda no caminho de falha de
+`setup()`, e `validateThinkTime()` só rejeita entradas inválidas, sem mudar o
+sorteio de think time para entradas válidas. A comparação com a rodada
+anterior (`bb23e29`, código `dbd5904`) é direta:
 
-1. `refresh_outline_after_save` passou de síncrono para assíncrono — muda o
-   pacing de toda iteração (mais iterações no mesmo tempo).
-2. Os percentis de operações principais passaram a filtrar `phase:steady` em
-   vez de agregar as 3 fases.
-3. Pela **primeira vez** nesta série de medições, `crm-marketing-backend-1`
-   (~478% de CPU, o mesmo container que dominava a contenção nas duas
-   medições anteriores) ficou parado durante a execução **inteira**, não só
-   parte dela.
-
-| | 10 VUs: `2838fe0` → `dbd5904` | 30 VUs: `2838fe0` → `dbd5904` |
+| | 10 VUs: `bb23e29` → `fc521b7` | 30 VUs: `bb23e29` → `fc521b7` |
 |---|---|---|
-| Requests totais | 8105 → 10565 (+30.4%) | 11580 → 24340 (+110.2%) |
-| RPS global | 43.4 → 57.9 (+33.5%) | 61.5 → 132.9 (+116.1%) |
-| Iterações | 1606 → 2098 (+30.6%) | 2273 → 4825 (+112.3%) |
-| Thresholds de operação principal | 5/5 passaram | 1/5 passava → 5/5 passam |
+| Requests totais | 10565 → 10150 (-3.9%) | 24340 → 25270 (+3.8%) |
+| RPS global | 57.9 → 55.9 (-3.5%) | 132.9 → 137.0 (+3.1%) |
+| Iterações | 2098 → 2015 (-4.0%) | 4825 → 5011 (+3.9%) |
+| `save_scene` p95 (steady) | 53.6 → 80.4 (+50.0%) | 286.8 → 183.7 (-35.9%) |
+| Thresholds de operação principal | 5/5 passaram | 5/5 passaram |
 
-O salto é bem maior em 30 VUs porque a contenção de `crm-marketing-backend-1`
-crescia com a carga do próprio IWrite disputando CPU — isolar o host ajuda
-mais quanto maior o VUS. **Não dá para separar, só com estes dois runs,
-quanto do ganho veio do host isolado vs. do refetch assíncrono vs. do filtro
-de fase.** A leitura honesta: a medição anterior estava dominada por
-contenção externa e por percentis diluídos por warmup/rampdown, não por um
-gargalo real do IWrite sob 30 VUs nesta escala — ver "Próxima ação
-recomendada".
+As variações (poucos % em requests/RPS/iterações, mais visíveis no p95
+individual de `save_scene`) são consistentes com variância normal de
+execução em execução na mesma máquina de desenvolvimento compartilhada — não
+há mudança de código no caminho medido que explicaria uma diferença
+sistemática, e as duas rodadas têm `crm-marketing-backend-1` parado durante a
+execução inteira (ver limitações abaixo). Os 10 thresholds de operação
+principal (5 operações × 2 cargas) passam com folga nas duas rodadas.
 
 **Gargalo principal:** nenhum — as 5 operações passam o teto de 500ms com
 folga em 10 e 30 VUs nesta rodada. `list_books` continua sendo a operação
@@ -688,10 +721,10 @@ teto mesmo em 30 VUs.
   execução — cobre folgadamente `VUS` até `998`; os defaults de produção em
   `application.yml`/`.env.example` não foram alterados — ver
   [§2](#2-pré-requisitos).
-- Como o host ficou sem a contenção de `crm-marketing-backend-1` pela
-  primeira vez nesta série, esta medição não isola quanto do ganho de
-  RPS/latência veio do host vs. do refetch assíncrono vs. do filtro de fase
-  — ver "Leitura do resultado" acima.
+- `crm-marketing-backend-1` foi parado manualmente antes de cada uma das
+  três execuções (smoke, 10 VUs, 30 VUs) desta rodada e reiniciado só depois
+  — mesma isolação já usada na rodada anterior (`bb23e29`), o que torna a
+  comparação em "Leitura do resultado" acima direta.
 
 **Próxima ação recomendada:** repetir 30 VUs (e testar `VUS` maior, ex.
 50-100) em hardware totalmente dedicado, sem nenhum outro container Docker
@@ -748,6 +781,20 @@ pode não se sustentar em escala maior.
 - [x] Falha de `teardown()` testada com fault injection (um dos livros já
       ausente): `k6 run` sai com código diferente de zero, listando qual
       `bookId` não foi removido, em vez de só logar
+- [x] Recuperação de livro órfão em resposta ambígua testada com fault
+      injection: `throw` inserido entre o `POST /api/books` bem-sucedido e
+      `createdBookIds.push(bookId)`, simulando resposta perdida. Confirmado
+      com dois cenários (VUS=1, `createdBookIds` vazio no momento da falha;
+      VUS=3, falha na 2ª de 3 criações, `createdBookIds` já com 1 entrada) —
+      nos dois, o livro órfão foi encontrado pelo marcador
+      `LOADTEST-${runId}-vu` e removido junto dos já rastreados
+      (`console.error` confirma a contagem exata: 1 e 2 respectivamente),
+      `SELECT count(*) FROM books WHERE title LIKE 'LOADTEST-%'` retornou 0
+      após cada execução, e `k6 run` saiu com código diferente de zero
+- [x] A recuperação de órfãos não remove livros de outra execução: um livro
+      `LOADTEST-<outro-runId>-vu1` criado manualmente antes do teste acima
+      (VUS=3) permaneceu intacto no banco depois da limpeza automática —
+      só removido manualmente ao final do teste
 - [x] `teardown()` remove todos os livros sintéticos nas execuções normais —
       confirmado sem resíduo `LOADTEST-` após todas as execuções (smoke, 10
       VUs, 30 VUs, e os testes de fault injection acima)
@@ -768,6 +815,18 @@ pode não se sustentar em escala maior.
       (`10x`, `1..5s`, `abc`) rejeitados antes de rodar, com mensagem clara;
       valores válidos, incluindo fracionários (`10m`, `90s`, `0.5m`, `1.5s`)
       aceitos e refletidos em `k6 inspect`
+- [x] `THINK_TIME_MIN_S`/`THINK_TIME_MAX_S` validados com `k6 inspect`
+      (falha antes de qualquer HTTP, no carregamento do módulo): `abc`,
+      `NaN`, `Infinity` rejeitados como "não é um número finito";
+      `-1` rejeitado como negativo; `THINK_TIME_MIN_S > THINK_TIME_MAX_S`
+      (ex. `2` / `1`) rejeitado explicitamente citando os dois valores;
+      `0`/`0`, `1.5`/`1.5` (min==max) e `0.15`/`0.75` (decimais) aceitos sem
+      erro
+- [x] `measured_script_git_blob`/`measured_script_sha256` conferidos:
+      `git hash-object loadtest/carga.js` bate com
+      `git rev-parse fc521b7:loadtest/carga.js`, e `sha256sum
+      loadtest/carga.js` bate com o valor registrado em `resultado.json` e
+      neste README
 - [x] `vu_auth_success` (threshold `rate==1`) confirmado: execução normal
       reprova o `k6 run` diante de qualquer falha de login de VU, mesmo
       quando a mesma VU se autentica com sucesso numa iteração seguinte
