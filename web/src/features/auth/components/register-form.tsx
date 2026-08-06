@@ -263,6 +263,11 @@ function validate(displayName: string, email: string, password: string, password
   if (!trimmedDisplayName) {
     return "Informe seu nome de exibição.";
   }
+  // Checked first, same order as the backend (#149 review, round 8): an unpaired surrogate is not
+  // a control character and would otherwise reach the control-character/length checks unnoticed.
+  if (hasUnpairedSurrogate(trimmedDisplayName)) {
+    return "Informe um nome de exibição válido.";
+  }
   // An embedded control character (e.g. a pasted NUL) is not stripped by trim() and must be
   // rejected before the length check, same order as the backend.
   if (containsControlCharacter(trimmedDisplayName)) {

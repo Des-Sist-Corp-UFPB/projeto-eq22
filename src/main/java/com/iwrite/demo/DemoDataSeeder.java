@@ -1,5 +1,7 @@
 package com.iwrite.demo;
 
+import com.iwrite.auth.BcryptInputPolicy;
+import com.iwrite.auth.PasswordPolicy;
 import com.iwrite.book.entity.Book;
 import com.iwrite.book.entity.BookStatus;
 import com.iwrite.book.repository.BookRepository;
@@ -93,6 +95,16 @@ public class DemoDataSeeder implements ApplicationRunner {
      * <p>The {@code demo} profile already keeps this bean out of a production context; this is the
      * second lock, for the case where someone activates {@code demo} alongside it. Neither message
      * contains a password — they name the variables to set, never their values.
+     *
+     * <p>Every password is also checked against {@link BcryptInputPolicy} (#149 review, round 8),
+     * the same bcrypt-input guard {@code /api/auth/register}, {@code /api/auth/login} and {@link
+     * com.iwrite.auth.CredentialProvisioningRunner} already enforce: {@code seedAuthor} below calls
+     * {@code passwordEncoder.encode} directly, and without this check a configured password over
+     * bcrypt's 72-byte effective limit, or one containing an unpaired surrogate, would still create
+     * the user, workspace and credential — just with a hash that silently ignores the bytes past 72,
+     * or one where {@code String.getBytes(UTF_8)} substitutes the malformed surrogate instead of
+     * rejecting it. Checked before either {@code seedAuthor} call, so before any repository access,
+     * hash, or write.
      */
     static void requireSafeConfiguration(String[] activeProfiles, String... passwords) {
         for (String profile : activeProfiles) {
@@ -109,6 +121,17 @@ public class DemoDataSeeder implements ApplicationRunner {
                         "Demo seed is enabled but the demo passwords are not set. "
                                 + "Provide IWRITE_DEMO_AUTOR_A_PASSWORD and IWRITE_DEMO_AUTOR_B_PASSWORD, "
                                 + "or set IWRITE_DEMO_SEED_ENABLED=false.");
+            }
+        }
+
+        for (String password : passwords) {
+            if (!BcryptInputPolicy.isValid(password, PasswordPolicy.MAX_UTF8_BYTES)) {
+                throw new IllegalStateException(
+                        "Demo seed is enabled but a configured demo password is not a valid bcrypt input: "
+                                + "it either exceeds " + PasswordPolicy.MAX_UTF8_BYTES + " UTF-8 bytes "
+                                + "(bcrypt's effective input limit) or contains malformed UTF-16. Configure valid "
+                                + "IWRITE_DEMO_AUTOR_A_PASSWORD / IWRITE_DEMO_AUTOR_B_PASSWORD values and retry. "
+                                + "This message never echoes the configured value.");
             }
         }
     }

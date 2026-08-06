@@ -476,6 +476,82 @@ class RegistrationIntegrationTest {
         assertThat(userRepository.findByEmail(email)).isEmpty();
     }
 
+    // Codex P3 (round 8): an unpaired surrogate is not Character.isISOControl and codePointCount
+    // counts it as one ordinary character, so RegistrationService's existing checks never caught it
+    // before this round. Built as a literal JSON escape (\ud800), never via ObjectMapper on a Java
+    // String holding the surrogate, so Jackson's deserializer is guaranteed to hand
+    // RegistrationService the exact same unpaired surrogate the finding describes, intact.
+
+    @Test
+    void displayNameComHighSurrogateIsoladoEmbutidoRetorna400NuncaErroInternoSemCriarNada() throws Exception {
+        String email = uniqueEmail();
+        long usersBefore = userRepository.count();
+        long tenantsBefore = tenantRepository.count();
+        long credentialsBefore = credentialRepository.count();
+        long membershipsBefore = membershipRepository.count();
+        long personasBefore = personaRepository.count();
+
+        String json = literalDisplayNameRegisterBody("Ana\\ud800Beatriz", email);
+
+        String responseBody = mockMvc.perform(withCsrf(post("/api/auth/register"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json))
+                .andExpect(status().isBadRequest())
+                .andReturn().getResponse().getContentAsString();
+
+        assertThat(responseBody).contains(RegistrationMessages.INVALID_DISPLAY_NAME);
+        assertThat(userRepository.findByEmail(email)).isEmpty();
+        assertThat(userRepository.count()).isEqualTo(usersBefore);
+        assertThat(tenantRepository.count()).isEqualTo(tenantsBefore);
+        assertThat(credentialRepository.count()).isEqualTo(credentialsBefore);
+        assertThat(membershipRepository.count()).isEqualTo(membershipsBefore);
+        assertThat(personaRepository.count()).isEqualTo(personasBefore);
+    }
+
+    @Test
+    void displayNameComLowSurrogateIsoladoRetorna400NuncaErroInternoSemCriarNada() throws Exception {
+        String email = uniqueEmail();
+
+        String json = literalDisplayNameRegisterBody("Ana\\udc01", email);
+
+        String responseBody = mockMvc.perform(withCsrf(post("/api/auth/register"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json))
+                .andExpect(status().isBadRequest())
+                .andReturn().getResponse().getContentAsString();
+
+        assertThat(responseBody).contains(RegistrationMessages.INVALID_DISPLAY_NAME);
+        assertThat(userRepository.findByEmail(email)).isEmpty();
+    }
+
+    @Test
+    void displayNameComParSurrogateValidoEEmojiContinuaAceitoViaJson() throws Exception {
+        String email = uniqueEmail();
+
+        // U+1F600 ("😀") as its own literal high+low surrogate pair — must not be mistaken for two
+        // lone surrogates by the same code path the tests above exercise.
+        String json = literalDisplayNameRegisterBody("Ana\\ud83d\\ude00Beatriz", email);
+
+        mockMvc.perform(withCsrf(post("/api/auth/register"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json))
+                .andExpect(status().isOk());
+
+        assertThat(userRepository.findByEmail(email)).hasValueSatisfying(
+                user -> assertThat(user.getDisplayName()).isEqualTo("Ana😀Beatriz"));
+    }
+
+    private String literalDisplayNameRegisterBody(String literalDisplayNameJsonEscape, String email) {
+        return "{"
+                + "\"displayName\":\"" + literalDisplayNameJsonEscape + "\","
+                + "\"email\":\"" + email + "\","
+                + "\"password\":\"" + VALID_PASSWORD + "\","
+                + "\"passwordConfirmation\":\"" + VALID_PASSWORD + "\","
+                + "\"primaryPersona\":\"WRITER\","
+                + "\"timeZone\":\"America/Sao_Paulo\""
+                + "}";
+    }
+
     @Test
     void usuarioLegadoEPersonaDeBackfillPermanecemIntactos() {
         Optional<User> legacyUser = userRepository.findByEmail("carlos.legacy@iwrite.local");

@@ -156,6 +156,13 @@ public class RegistrationService {
     }
 
     private void validateDisplayName(String displayName) {
+        // Checked first: an unpaired surrogate is not Character.isISOControl and codePointCount
+        // counts it as one ordinary character, so neither check below ever catches it. PostgreSQL
+        // cannot represent a surrogate code point at all, and the JDBC UTF-8 conversion could
+        // otherwise substitute it silently instead of failing loudly (#149 review, round 8).
+        if (!WellFormedUtf8.isWellFormed(displayName)) {
+            throw new BadRequestException(RegistrationMessages.INVALID_DISPLAY_NAME);
+        }
         // Same reasoning as validateEmailFormat: an embedded NUL (or other control character) is not
         // stripped by String.trim() unless it sits at the very start/end of the raw input, and
         // users.display_name is a Postgres varchar that rejects NUL outright.

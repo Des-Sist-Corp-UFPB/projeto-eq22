@@ -489,6 +489,51 @@ class RegistrationServiceTest {
         verifyNoInteractions(userRepository, credentialRepository, tenantRepository, membershipRepository, personaRepository);
     }
 
+    // Codex P3 (round 8): an unpaired surrogate is not Character.isISOControl and codePointCount
+    // counts it as one ordinary character, so neither existing check below catches it — this pins
+    // the new WellFormedUtf8 check RegistrationService#validateDisplayName now runs first.
+
+    @Test
+    void displayNameComHighSurrogateIsoladoEmbutidoRetorna400SemGravarNada() {
+        String displayName = "Ana" + '\uD800' + "Beatriz";
+        RegisterRequest request = new RegisterRequest(displayName, "nova@iwrite.local", RAW_PASSWORD, RAW_PASSWORD, "writer", "America/Sao_Paulo");
+        lenient().when(timeZoneValidator.validate("America/Sao_Paulo")).thenReturn(ZoneId.of("America/Sao_Paulo"));
+
+        assertThatThrownBy(() -> service.register(request))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessage(RegistrationMessages.INVALID_DISPLAY_NAME);
+
+        verifyNoInteractions(userRepository, credentialRepository, tenantRepository, membershipRepository, personaRepository);
+    }
+
+    @Test
+    void displayNameComLowSurrogateIsoladoRetorna400SemGravarNada() {
+        String displayName = "Ana" + '\uDC01';
+        RegisterRequest request = new RegisterRequest(displayName, "nova@iwrite.local", RAW_PASSWORD, RAW_PASSWORD, "writer", "America/Sao_Paulo");
+        lenient().when(timeZoneValidator.validate("America/Sao_Paulo")).thenReturn(ZoneId.of("America/Sao_Paulo"));
+
+        assertThatThrownBy(() -> service.register(request))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessage(RegistrationMessages.INVALID_DISPLAY_NAME);
+
+        verifyNoInteractions(userRepository, credentialRepository, tenantRepository, membershipRepository, personaRepository);
+    }
+
+    @Test
+    void displayNameComParSurrogateValidoContinuaAceito() {
+        stubHappyPathCollaborators();
+        // U+1F600 ("😀") is a valid high+low surrogate pair — must not be mistaken for two lone
+        // surrogates.
+        String displayName = "Ana😀Beatriz";
+        RegisterRequest request = new RegisterRequest(displayName, " Nova@IWrite.local ", RAW_PASSWORD, RAW_PASSWORD, "writer", "America/Sao_Paulo");
+
+        service.register(request);
+
+        ArgumentCaptor<User> userCaptor = ArgumentCaptor.forClass(User.class);
+        verify(userRepository).saveAndFlush(userCaptor.capture());
+        assertThat(userCaptor.getValue().getDisplayName()).isEqualTo(displayName);
+    }
+
     @Test
     void displayNameComEmojiEZwjContinuaAceito() {
         // Category Cf (ZERO WIDTH JOINER, U+200D) is not Cc/isISOControl — legitimate emoji

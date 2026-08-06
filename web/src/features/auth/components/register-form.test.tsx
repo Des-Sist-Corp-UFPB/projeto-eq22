@@ -244,6 +244,40 @@ describe("RegisterForm", () => {
     expect(authApi.register).not.toHaveBeenCalled();
   });
 
+  // Codex P3 (round 8): mirrors RegistrationService's new WellFormedUtf8 check — an unpaired
+  // surrogate is not a control character and would otherwise reach the control-character/length
+  // checks unnoticed, letting an invalid displayName reach the request.
+  test("recusa nome de exibição com high surrogate isolado no cliente", async () => {
+    renderWithClient(<RegisterForm />);
+    fillForm({ displayName: "Ana" + String.fromCharCode(0xd800) + "Silva" });
+
+    submit();
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Informe um nome de exibição válido.");
+    expect(authApi.register).not.toHaveBeenCalled();
+  });
+
+  test("recusa nome de exibição com low surrogate isolado no cliente", async () => {
+    renderWithClient(<RegisterForm />);
+    fillForm({ displayName: "Ana" + String.fromCharCode(0xdc01) });
+
+    submit();
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Informe um nome de exibição válido.");
+    expect(authApi.register).not.toHaveBeenCalled();
+  });
+
+  test("aceita nome de exibição com par de surrogate válido, sem recusar no cliente", async () => {
+    const displayName = "Ana😀Silva"; // valid high+low surrogate pair — must not be mistaken for two lone surrogates
+    renderWithClient(<RegisterForm />);
+    fillForm({ displayName });
+
+    submit();
+
+    await waitFor(() => expect(authApi.register).toHaveBeenCalledWith(expect.objectContaining({ displayName })));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
   test("aceita nome de exibição com acentos e emoji, sem recusar no cliente", async () => {
     const displayName = "José da Conceição 😀";
     renderWithClient(<RegisterForm />);
