@@ -5,9 +5,19 @@
 -- #149 review: this slice restricts account emails to ASCII (see EmailNormalizer's class doc —
 -- Java's toLowerCase(Locale.ROOT) and PostgreSQL's lower() are not guaranteed to canonicalize every
 -- Unicode code point the same way). A legacy row with a non-ASCII email must never be silently
--- rewritten by the lower() below, which could lose or change it in a way nothing can undo — it must
--- abort the whole migration instead, before any UPDATE runs, the same way the collision check does.
--- Resolving it (deciding what the account's real email should be) is a human decision.
+-- rewritten by the ASCII-lowercasing below, which could lose or change it in a way nothing can
+-- undo — it must abort the whole migration instead, before any UPDATE runs, the same way the
+-- collision check does. Resolving it (deciding what the account's real email should be) is a human
+-- decision.
+
+-- #149 review (fresh finding): PostgreSQL's lower() is collation-dependent even for pure ASCII
+-- input — on a database whose collation uses Turkish casing rules, lower('I') is 'ı' (U+0131,
+-- non-ASCII), not 'i'. That row would still pass the ASCII guard above (its raw email is ASCII), get
+-- rewritten non-ASCII by lower() below, and only then get caught by V33's chk_users_email_ascii —
+-- too late, since V32 and V33 are separate, already-committed transactions; V33 aborting leaves V32's
+-- damage in place and every subsequent startup stuck on the failed migration. translate() maps
+-- exactly the 26 ASCII letters and nothing else, so it is deterministic regardless of the database's
+-- collation — the same guarantee EmailNormalizer.isAscii already established for the input.
 do $$
 declare
     non_ascii_emails integer;
@@ -30,9 +40,9 @@ declare
 begin
     select count(*) into colliding_emails
     from (
-        select lower(trim(email))
+        select translate(trim(email), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz')
         from users
-        group by lower(trim(email))
+        group by translate(trim(email), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz')
         having count(*) > 1
     ) as collisions;
 
@@ -42,10 +52,11 @@ begin
 end $$;
 
 update users
-set email = lower(trim(email))
-where email <> lower(trim(email));
+set email = translate(trim(email), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz')
+where email <> translate(trim(email), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz');
 
 -- Ids, credentials, memberships, tenants and books are untouched: this statement only ever
 -- rewrites the users.email column of existing rows, never a row's identity.
 alter table users
-    add constraint chk_users_email_normalized check (email = lower(trim(email)));
+    add constraint chk_users_email_normalized
+        check (email = translate(trim(email), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'));

@@ -1,7 +1,5 @@
 package com.iwrite.auth;
 
-import java.nio.charset.StandardCharsets;
-
 /**
  * Password policy enforced on registration. Documented here and in {@code README.md} /
  * {@code docs/authentication-multitenancy.md}: at least {@value #MIN_LENGTH} characters, with at
@@ -13,7 +11,10 @@ import java.nio.charset.StandardCharsets;
  * {@link org.springframework.security.crypto.password.DelegatingPasswordEncoder}-selected encoder):
  * bcrypt silently ignores any byte past the 72nd, so without this cap two different passwords that
  * share the same 72-byte UTF-8 prefix would hash identically. Rejecting outright, rather than
- * truncating, means no such collision can ever be registered.
+ * truncating, means no such collision can ever be registered. The byte length itself is measured by
+ * {@link BcryptInputPolicy#encode(String)}, not {@code String.getBytes(UTF_8)} — the latter
+ * silently substitutes an unpaired surrogate instead of rejecting it, which would let two distinct
+ * malformed passwords encode to the same bytes (#149 review).
  */
 public final class PasswordPolicy {
 
@@ -27,7 +28,7 @@ public final class PasswordPolicy {
         if (password == null || password.codePointCount(0, password.length()) < MIN_LENGTH) {
             return false;
         }
-        if (password.getBytes(StandardCharsets.UTF_8).length > MAX_UTF8_BYTES) {
+        if (!BcryptInputPolicy.isValid(password, MAX_UTF8_BYTES)) {
             return false;
         }
         // codePoints(), not charAt()/Character.isLetter(char): a supplementary-plane letter or digit

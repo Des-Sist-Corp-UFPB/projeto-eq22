@@ -1,9 +1,14 @@
 package com.iwrite.auth;
 
+import com.iwrite.user.repository.UserCredentialRepository;
+import com.iwrite.user.repository.UserRepository;
 import org.junit.jupiter.api.Test;
+import org.springframework.security.crypto.password.PasswordEncoder;
 
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verifyNoInteractions;
 
 /**
  * The one guard that keeps the runner from starting half-configured. Pure, so it needs no context:
@@ -89,5 +94,33 @@ class CredentialProvisioningRunnerTest {
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("IWRITE_CREDENTIAL_PROVISIONING_PASSWORD")
                 .hasMessageNotContaining(password);
+    }
+
+    // Codex P2 (fresh finding, round 7, #149): String.getBytes(UTF_8) silently substitutes an
+    // unpaired surrogate instead of rejecting it — this runner calls passwordEncoder.encode
+    // directly, so it needs the same BcryptInputPolicy guard PasswordPolicy now has.
+    @Test
+    void requireBcryptSafePasswordRecusaSenhaComSurrogateIsoladoSemEcoarOValor() {
+        String password = "senha-com-surrogate-" + '\uD800';
+        assertThatThrownBy(() -> CredentialProvisioningRunner.requireBcryptSafePassword(password))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("IWRITE_CREDENTIAL_PROVISIONING_PASSWORD")
+                .hasMessageNotContaining(password);
+    }
+
+    // Codex P2 (fresh finding, round 7, #149): run() must fail on the guard above before ever
+    // reaching passwordEncoder.encode or either repository — this exercises run() itself (not just
+    // the static guard) to pin that ordering.
+    @Test
+    void runComSenhaConfiguradaComSurrogateIsoladoNaoChamaEncodeNemRepositorios() {
+        UserRepository userRepository = mock(UserRepository.class);
+        UserCredentialRepository credentialRepository = mock(UserCredentialRepository.class);
+        PasswordEncoder passwordEncoder = mock(PasswordEncoder.class);
+        CredentialProvisioningRunner runner = new CredentialProvisioningRunner(
+                userRepository, credentialRepository, passwordEncoder, EMAIL, "senha-com-surrogate-" + '\uD800');
+
+        assertThatThrownBy(() -> runner.run(null)).isInstanceOf(IllegalStateException.class);
+
+        verifyNoInteractions(userRepository, credentialRepository, passwordEncoder);
     }
 }

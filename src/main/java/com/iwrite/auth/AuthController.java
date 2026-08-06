@@ -104,6 +104,15 @@ public class AuthController {
             if (request.email() == null || request.password() == null) {
                 throw new BadCredentialsException("Missing credentials");
             }
+            // Checked before authenticate() ever runs, so a malformed-surrogate or oversized
+            // password never reaches PasswordEncoder.matches: String.getBytes(UTF_8) would silently
+            // substitute an unpaired surrogate instead of rejecting it, letting a password crafted
+            // with one unpaired surrogate authenticate in place of a stored password that only
+            // shares its first 72 bytes with a different one (#149 review). The reservation above
+            // stays spent — this is a real failed attempt, not refunded like a successful login.
+            if (!BcryptInputPolicy.isValid(request.password(), PasswordPolicy.MAX_UTF8_BYTES)) {
+                throw new BadCredentialsException("Malformed or oversized password");
+            }
             authentication = authenticationManager.authenticate(
                     UsernamePasswordAuthenticationToken.unauthenticated(
                             EmailNormalizer.normalize(request.email()), request.password()));

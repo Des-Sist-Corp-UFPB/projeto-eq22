@@ -413,6 +413,47 @@ describe("RegisterForm", () => {
     expect(authApi.register).not.toHaveBeenCalled();
   });
 
+  // Codex P2 (fresh finding, round 7, #149): TextEncoder alone cannot catch this — per the WHATWG
+  // encoding spec it silently substitutes an unpaired surrogate with U+FFFD instead of surfacing it,
+  // so two different malformed passwords would report the same byte length. hasUnpairedSurrogate
+  // scans UTF-16 code units directly instead.
+
+  test("recusa senha com high surrogate isolado", async () => {
+    const password = "abcdefgh1" + String.fromCharCode(0xd800);
+    renderWithClient(<RegisterForm />);
+    fillForm({ password, passwordConfirmation: password });
+
+    submit();
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("A senha contém caracteres inválidos.");
+    expect(authApi.register).not.toHaveBeenCalled();
+  });
+
+  test("recusa senha com low surrogate isolado", async () => {
+    const password = "abcdefgh1" + String.fromCharCode(0xdc01);
+    renderWithClient(<RegisterForm />);
+    fillForm({ password, passwordConfirmation: password });
+
+    submit();
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("A senha contém caracteres inválidos.");
+    expect(authApi.register).not.toHaveBeenCalled();
+  });
+
+  // A valid surrogate pair (not two lone surrogates) must keep working — same code point already
+  // exercised above for the letter-classification tests, reused here to pin the surrogate detector
+  // specifically, independent of the letter/digit checks.
+  test("aceita senha com par de surrogate válido, sem recusar no cliente", async () => {
+    const password = "abcdefghij𝟎"; // U+1D7CE, a valid high+low surrogate pair
+    renderWithClient(<RegisterForm />);
+    fillForm({ password, passwordConfirmation: password });
+
+    submit();
+
+    await waitFor(() => expect(authApi.register).toHaveBeenCalled());
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
   test("recusa senha e confirmação divergentes no cliente", async () => {
     renderWithClient(<RegisterForm />);
     fillForm({ passwordConfirmation: "outra-senha-1" });

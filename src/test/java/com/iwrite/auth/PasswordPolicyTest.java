@@ -152,4 +152,31 @@ class PasswordPolicyTest {
         assertThat(PasswordPolicy.isValid(passwordA)).isFalse();
         assertThat(PasswordPolicy.isValid(passwordB)).isFalse();
     }
+
+    // Codex P2 (fresh finding, round 7, #149): String.getBytes(UTF_8) silently substitutes an
+    // unpaired surrogate with the same replacement byte instead of rejecting it, so two different
+    // malformed passwords could encode to the same bytes and hash identically. isValid must now
+    // reject any malformed surrogate outright — see BcryptInputPolicyTest for the exhaustive
+    // encoding-level coverage; these confirm the policy actually wires it in.
+
+    @Test
+    void rejeitaSenhaComHighSurrogateIsoladoMesmoLongaComLetraEDigito() {
+        String password = "abcdefgh1" + '\uD800';
+        assertThat(PasswordPolicy.isValid(password)).isFalse();
+    }
+
+    @Test
+    void rejeitaSenhaComLowSurrogateIsoladoMesmoLongaComLetraEDigito() {
+        String password = "abcdefgh1" + '\uDC01';
+        assertThat(PasswordPolicy.isValid(password)).isFalse();
+    }
+
+    @Test
+    void duasSenhasComSurrogatesIsoladosDiferentesNuncaSaoAmbasAceitas() {
+        String passwordA = "abcdefgh1" + '\uD800';
+        String passwordB = "abcdefgh1" + '\uD801';
+        assertThat(passwordA).isNotEqualTo(passwordB);
+        assertThat(PasswordPolicy.isValid(passwordA)).isFalse();
+        assertThat(PasswordPolicy.isValid(passwordB)).isFalse();
+    }
 }

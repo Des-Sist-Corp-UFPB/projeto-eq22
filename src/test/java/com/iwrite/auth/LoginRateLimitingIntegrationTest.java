@@ -117,10 +117,36 @@ class LoginRateLimitingIntegrationTest {
         attemptLogin(email, PASSWORD).andExpect(status().isOk());
     }
 
+    // Codex P2 (fresh finding, round 7, #149): a password rejected by BcryptInputPolicy (malformed
+    // surrogate or over the bcrypt byte limit) fails before AuthenticationManager.authenticate ever
+    // runs, but the account-dimension reservation must stay spent exactly like any other failed
+    // attempt — never refunded, or this path would let an attacker retry it without limit.
+    @Test
+    void tentativasComSenhaMalformadaContamParaOLimitePorConta() throws Exception {
+        for (int attempt = 0; attempt < MAX_ATTEMPTS_PER_ACCOUNT; attempt++) {
+            attemptLoginWithRawJsonEscapedPassword(email, "abcdefgh1\\ud800").andExpect(status().isUnauthorized());
+        }
+
+        attemptLogin(email, PASSWORD).andExpect(status().isTooManyRequests());
+    }
+
     private org.springframework.test.web.servlet.ResultActions attemptLogin(String email, String password) throws Exception {
         return mockMvc.perform(withCsrf(post("/api/auth/login"))
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(Map.of("email", email, "password", password))));
+    }
+
+    /** See {@code AuthenticationIntegrationTest#loginWithRawJsonEscapedPassword} for why a lone
+     *  surrogate must travel as a raw {@code \\uD800} JSON escape rather than an actual Java {@code
+     *  char} embedded in the request body string: the latter is silently collapsed by the same
+     *  lossy {@code String.getBytes()} substitution this suite is testing against, before the
+     *  request ever leaves the test harness. */
+    private org.springframework.test.web.servlet.ResultActions attemptLoginWithRawJsonEscapedPassword(
+            String email, String jsonEscapedPassword) throws Exception {
+        String body = "{\"email\":\"" + email + "\",\"password\":\"" + jsonEscapedPassword + "\"}";
+        return mockMvc.perform(withCsrf(post("/api/auth/login"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body));
     }
 
     private MockHttpServletRequestBuilder withCsrf(MockHttpServletRequestBuilder request) throws Exception {

@@ -172,6 +172,24 @@ class RegistrationServiceTest {
         verifyNoInteractions(userRepository, credentialRepository, tenantRepository, membershipRepository, personaRepository, passwordEncoder);
     }
 
+    // Codex P2 (fresh finding, round 7, #149): String.getBytes(UTF_8) silently substitutes an
+    // unpaired surrogate with the same replacement byte instead of rejecting it — PasswordPolicy now
+    // rejects it outright via BcryptInputPolicy (see PasswordPolicyTest/BcryptInputPolicyTest for the
+    // exhaustive encoding coverage), so this must fail the same stable WEAK_PASSWORD path, before
+    // bcrypt or any write.
+    @Test
+    void senhaComSurrogateIsoladoFalhaAntesDeQualquerEscritaOuBcrypt() {
+        String malformed = "abcdefgh1" + '\uD800';
+        RegisterRequest request = new RegisterRequest("Nova", "nova@iwrite.local", malformed, malformed, "WRITER", "America/Sao_Paulo");
+        lenient().when(timeZoneValidator.validate("America/Sao_Paulo")).thenReturn(ZoneId.of("America/Sao_Paulo"));
+
+        assertThatThrownBy(() -> service.register(request))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessage(RegistrationMessages.WEAK_PASSWORD);
+
+        verifyNoInteractions(userRepository, credentialRepository, tenantRepository, membershipRepository, personaRepository, passwordEncoder);
+    }
+
     @Test
     void personaInvalidaFalhaAntesDeQualquerEscritaNoBanco() {
         RegisterRequest request = new RegisterRequest("Nova", "nova@iwrite.local", RAW_PASSWORD, RAW_PASSWORD, "PROTAGONISTA", "America/Sao_Paulo");

@@ -14,8 +14,6 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.nio.charset.StandardCharsets;
-
 /**
  * Provisions the login credential for one already-existing user, on demand.
  *
@@ -108,16 +106,19 @@ public class CredentialProvisioningRunner implements ApplicationRunner {
         }
     }
 
-    /** bcrypt (via {@link PasswordEncoder}) silently ignores any UTF-8 byte past the 72nd — the same
-     *  reasoning as {@link PasswordPolicy#MAX_UTF8_BYTES}, applied here because this is another path
-     *  that calls {@code passwordEncoder.encode} directly (#149 review). Checked before that call,
-     *  and the message never echoes the configured value. */
+    /** bcrypt (via {@link PasswordEncoder}) silently ignores any UTF-8 byte past the 72nd, and
+     *  silently substitutes rather than rejects a malformed surrogate — the same reasoning as
+     *  {@link BcryptInputPolicy}, applied here because this is another path that calls
+     *  {@code passwordEncoder.encode} directly (#149 review). Checked before that call, and the
+     *  message never echoes the configured value. */
     static void requireBcryptSafePassword(String password) {
-        if (password.getBytes(StandardCharsets.UTF_8).length > PasswordPolicy.MAX_UTF8_BYTES) {
+        if (!BcryptInputPolicy.isValid(password, PasswordPolicy.MAX_UTF8_BYTES)) {
             throw new IllegalStateException(
-                    "Credential provisioning is enabled but IWRITE_CREDENTIAL_PROVISIONING_PASSWORD exceeds "
-                            + PasswordPolicy.MAX_UTF8_BYTES + " UTF-8 bytes, bcrypt's effective input limit. "
-                            + "Configure a shorter password and retry. This runner never echoes the configured value.");
+                    "Credential provisioning is enabled but IWRITE_CREDENTIAL_PROVISIONING_PASSWORD is not a "
+                            + "valid bcrypt input: it either exceeds " + PasswordPolicy.MAX_UTF8_BYTES
+                            + " UTF-8 bytes (bcrypt's effective input limit) or contains malformed UTF-16. "
+                            + "Configure a valid, shorter password and retry. This runner never echoes the "
+                            + "configured value.");
         }
     }
 }

@@ -229,6 +229,35 @@ function passwordUtf8ByteLength(password: string) {
   return textEncoder.encode(password).length;
 }
 
+// Mirrors the backend's BcryptInputPolicy (#149 review, round 7): TextEncoder alone cannot detect
+// this — per the WHATWG encoding spec it silently replaces every unpaired surrogate with the same
+// U+FFFD substitution, so it would report identical byte lengths for two different malformed
+// passwords instead of surfacing the problem. This scans UTF-16 code units directly: a high
+// surrogate (0xD800-0xDBFF) is only valid immediately followed by a low surrogate (0xDC00-0xDFFF);
+// either half appearing without its other half is malformed. A valid pair is skipped as a unit, so
+// it is never mistaken for two lone surrogates.
+function hasUnpairedSurrogate(value: string): boolean {
+  for (let i = 0; i < value.length; i++) {
+    const unit = value.charCodeAt(i);
+    if (unit >= 0xd800 && unit <= 0xdbff) {
+      // A high surrogate as the last unit has no next one: charCodeAt(i + 1) then returns NaN, and
+      // NaN < x / NaN > x are both false in JS — without the explicit i + 1 >= value.length check,
+      // that falls through as if a valid low surrogate had followed.
+      if (i + 1 >= value.length) {
+        return true;
+      }
+      const next = value.charCodeAt(i + 1);
+      if (next < 0xdc00 || next > 0xdfff) {
+        return true;
+      }
+      i++; // valid pair: skip the low surrogate we just consumed
+    } else if (unit >= 0xdc00 && unit <= 0xdfff) {
+      return true; // low surrogate not preceded by a high surrogate we consumed above
+    }
+  }
+  return false;
+}
+
 function validate(displayName: string, email: string, password: string, passwordConfirmation: string) {
   const trimmedDisplayName = displayName.trim();
   if (!trimmedDisplayName) {
@@ -262,6 +291,11 @@ function validate(displayName: string, email: string, password: string, password
   }
   if ([...password].length < 10 || !PASSWORD_HAS_LETTER.test(password) || !PASSWORD_HAS_DIGIT.test(password)) {
     return "A senha deve ter ao menos 10 caracteres, incluindo letras e números.";
+  }
+  // Checked ahead of the byte-length check: TextEncoder alone would silently substitute a lone
+  // surrogate rather than reveal it, so this must run first (#149 review, round 7).
+  if (hasUnpairedSurrogate(password)) {
+    return "A senha contém caracteres inválidos.";
   }
   if (passwordUtf8ByteLength(password) > MAX_PASSWORD_UTF8_BYTES) {
     return `A senha deve ter no máximo ${MAX_PASSWORD_UTF8_BYTES} bytes (em UTF-8).`;

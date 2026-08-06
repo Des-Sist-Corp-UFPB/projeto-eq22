@@ -21,6 +21,13 @@
 -- database that already applied V32 *before* that amendment (requiring a documented `flyway repair`
 -- to accept the new checksum, never run automatically) — mirrored here as defense in depth, exactly
 -- like the collision guard below mirrors V32's.
+--
+-- #149 review (fresh finding, round 7): both this migration's own canonicalization and V32's now use
+-- translate() to lowercase the 26 ASCII letters, not PostgreSQL's lower() — lower() is
+-- collation-dependent even for ASCII input (e.g. a database with Turkish casing rules maps 'I' to the
+-- non-ASCII 'ı'), which could otherwise make V32 commit a non-ASCII row that this migration's own
+-- chk_users_email_ascii would then reject, wedging every subsequent startup on a failed migration.
+-- translate() only ever touches those 26 code points and is deterministic regardless of collation.
 
 alter table users
     drop constraint chk_users_email_normalized;
@@ -48,9 +55,9 @@ declare
 begin
     select count(*) into colliding_emails
     from (
-        select lower(regexp_replace(email, '^[\x01-\x20]+|[\x01-\x20]+$', '', 'g'))
+        select translate(regexp_replace(email, '^[\x01-\x20]+|[\x01-\x20]+$', '', 'g'), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz')
         from users
-        group by lower(regexp_replace(email, '^[\x01-\x20]+|[\x01-\x20]+$', '', 'g'))
+        group by translate(regexp_replace(email, '^[\x01-\x20]+|[\x01-\x20]+$', '', 'g'), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz')
         having count(*) > 1
     ) as collisions;
 
@@ -60,14 +67,14 @@ begin
 end $$;
 
 update users
-set email = lower(regexp_replace(email, '^[\x01-\x20]+|[\x01-\x20]+$', '', 'g'))
-where email <> lower(regexp_replace(email, '^[\x01-\x20]+|[\x01-\x20]+$', '', 'g'));
+set email = translate(regexp_replace(email, '^[\x01-\x20]+|[\x01-\x20]+$', '', 'g'), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz')
+where email <> translate(regexp_replace(email, '^[\x01-\x20]+|[\x01-\x20]+$', '', 'g'), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz');
 
 -- Ids, credentials, memberships, tenants and books are untouched: this statement only ever rewrites
 -- the users.email column of existing rows, never a row's identity.
 alter table users
     add constraint chk_users_email_normalized
-        check (email = lower(regexp_replace(email, '^[\x01-\x20]+|[\x01-\x20]+$', '', 'g')));
+        check (email = translate(regexp_replace(email, '^[\x01-\x20]+|[\x01-\x20]+$', '', 'g'), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'));
 
 -- #149 review: closes the ASCII-only policy at the database level, the same way
 -- chk_users_email_normalized closes the case/padding one above — no future write (application bug,

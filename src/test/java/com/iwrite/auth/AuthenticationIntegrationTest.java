@@ -24,6 +24,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 
+import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;
 import java.util.Map;
 import java.util.UUID;
@@ -137,6 +138,67 @@ class AuthenticationIntegrationTest extends PostgresIntegrationTest {
         assertThat(ambiguous).isEqualTo(wrongPassword);
     }
 
+    // Codex P2 (fresh finding, round 7, #149): String.getBytes(UTF_8) — used internally by bcrypt's
+    // matches() — silently substitutes an unpaired surrogate with the same replacement byte instead
+    // of rejecting it. BcryptInputPolicy, now checked in AuthController#login before
+    // AuthenticationManager.authenticate ever runs, must reject this the same way a wrong password
+    // is rejected: generic 401, reservation still spent, PasswordEncoder.matches never reached.
+
+    @Test
+    void loginComSenhaContendoSurrogateIsoladoEIndistinguivelDeSenhaErrada() throws Exception {
+        String malformed = messagesOf(loginWithRawJsonEscapedPassword(email, PASSWORD.substring(0, 5) + "\\ud800")
+                .andExpect(status().isUnauthorized())
+                .andReturn());
+        String wrongPassword = messagesOf(login(email, "senha-completamente-errada")
+                .andExpect(status().isUnauthorized())
+                .andReturn());
+
+        assertThat(malformed).isEqualTo(wrongPassword);
+        assertThat(malformed).contains(AuthMessages.INVALID_CREDENTIALS);
+    }
+
+    /**
+     * The exact collision BcryptInputPolicy exists to close: {@code String.getBytes(UTF_8)}'s
+     * default substitution replaces an unpaired surrogate with the same byte as a literal {@code
+     * '?'}, so an account whose real password contains one could previously be authenticated by an
+     * entirely different, malformed attempt that happened to encode to the same bytes.
+     */
+    @Test
+    void senhaValidaComInterrogacaoNaoEAutenticadaPorTentativaComSurrogateIsolado() throws Exception {
+        String realPasswordWithQuestionMark = "abcdefgh1?";
+
+        String questionMarkEmail = "com-interrogacao-" + UUID.randomUUID() + "@iwrite.local";
+        UUID questionMarkUserId = createUser(questionMarkEmail, "Com Interrogação", realPasswordWithQuestionMark);
+        addMembership(questionMarkUserId, createTenant("Espaço Com Interrogação").getId());
+
+        // "abcdefgh1" + a lone high surrogate: String.getBytes(UTF_8) would substitute the surrogate
+        // with the same byte as a literal '?', so this must NOT authenticate against the real
+        // "abcdefgh1?" password above.
+        loginWithRawJsonEscapedPassword(questionMarkEmail, "abcdefgh1\\ud800").andExpect(status().isUnauthorized());
+        login(questionMarkEmail, realPasswordWithQuestionMark).andExpect(status().isOk());
+    }
+
+    /**
+     * Registration (round 6) already refuses to create an account whose real password exceeds 72
+     * UTF-8 bytes, but nothing previously stopped a login attempt itself from submitting more than
+     * 72 bytes that merely share their first 72 with a real, shorter-or-equal stored password —
+     * bcrypt truncates internally and would match on that shared prefix regardless of what follows.
+     * Login must recuse outright, past this limit, not silently accept the truncation.
+     */
+    @Test
+    void loginComPrefixoValidoDe72BytesMaisSufixoERecusadoNaoAutenticado() throws Exception {
+        String realPassword72Bytes = "a1" + "b".repeat(70);
+        assertThat(realPassword72Bytes.getBytes(StandardCharsets.UTF_8)).hasSize(72);
+
+        String prefixEmail = "prefixo-72-" + UUID.randomUUID() + "@iwrite.local";
+        UUID prefixUserId = createUser(prefixEmail, "Prefixo 72", realPassword72Bytes);
+        addMembership(prefixUserId, createTenant("Espaço Prefixo 72").getId());
+
+        String attemptWithSuffix = realPassword72Bytes + "X";
+        login(prefixEmail, attemptWithSuffix).andExpect(status().isUnauthorized());
+        login(prefixEmail, realPassword72Bytes).andExpect(status().isOk());
+    }
+
     @Test
     void loginIsRejectedWithoutCsrfToken() throws Exception {
         mockMvc.perform(post("/api/auth/login")
@@ -231,6 +293,27 @@ class AuthenticationIntegrationTest extends PostgresIntegrationTest {
         return mockMvc.perform(withCsrf(post("/api/auth/login"))
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(credentialsJson(loginEmail, password)));
+    }
+
+    /**
+     * Sends a password containing a lone (unpaired) surrogate as a raw {@code \\uD800}-style JSON
+     * escape, not as an actual Java {@code char} embedded in the request body string. Embedding the
+     * real character and going through {@code objectMapper.writeValueAsString} +
+     * {@code MockHttpServletRequestBuilder.content(String)} silently collapses it: that path itself
+     * encodes the body via {@code String.getBytes()}, which — exactly like the vulnerability this
+     * suite tests — substitutes a lone surrogate with {@code '?'} before the request ever reaches
+     * the server, turning a would-be malformed attempt into a real, matching password by accident.
+     * A {@code \\uD800} escape inside otherwise-plain-ASCII JSON text has no such loss: every byte
+     * of the request body is plain ASCII, and the server's own JSON parser is what turns the escape
+     * into the lone surrogate code unit, so the malformed value actually reaches
+     * {@code AuthController#login}.
+     */
+    private org.springframework.test.web.servlet.ResultActions loginWithRawJsonEscapedPassword(
+            String loginEmail, String jsonEscapedPassword) throws Exception {
+        String body = "{\"email\":\"" + loginEmail + "\",\"password\":\"" + jsonEscapedPassword + "\"}";
+        return mockMvc.perform(withCsrf(post("/api/auth/login"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body));
     }
 
     /** Performs the browser side of the double-submit contract: cookie in, same value as header. */
