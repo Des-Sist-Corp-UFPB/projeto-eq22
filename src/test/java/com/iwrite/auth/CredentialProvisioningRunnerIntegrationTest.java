@@ -103,6 +103,48 @@ class CredentialProvisioningRunnerIntegrationTest {
                 .hasMessageContaining("no user matches");
     }
 
+    // Codex P2 (round 6, #149): V32/V33 normalize every stored row (trim + lowercase), but a
+    // configured value that still carries the legacy spelling must resolve to that same row —
+    // exactly the upgrade scenario the finding names (IWRITE_CREDENTIAL_PROVISIONING_EMAIL set to
+    // "Owner@Example.com" against a row already stored as "owner@example.com").
+
+    @Test
+    void provisionsUsingMixedCaseConfiguredEmail() throws Exception {
+        runner("Carlos.Legacy@IWrite.local", PASSWORD).run(null);
+
+        login(LEGACY_EMAIL, PASSWORD);
+    }
+
+    @Test
+    void provisionsUsingConfiguredEmailPaddedWithSpacesTabCrAndLf() throws Exception {
+        runner(" \t" + LEGACY_EMAIL + "\r\n", PASSWORD).run(null);
+
+        login(LEGACY_EMAIL, PASSWORD);
+    }
+
+    // ASCII-only policy (#149 review, see EmailNormalizer): this runner does a real lookup, so a
+    // misconfigured non-ASCII value must fail loudly at boot, before ever reaching the repository —
+    // not resolve to the wrong row or silently no-op.
+    @Test
+    void failsClearlyWhenTheConfiguredEmailIsNotAsciiWithoutEchoingIt() {
+        String nonAscii = "usuária@iwrite.local";
+        assertThatThrownBy(() -> runner(nonAscii, PASSWORD).run(null))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("IWRITE_CREDENTIAL_PROVISIONING_EMAIL")
+                .hasMessageNotContaining(nonAscii);
+    }
+
+    // Codex P2 (round 6, #149): bcrypt silently ignores UTF-8 bytes past the 72nd; this runner calls
+    // passwordEncoder.encode directly, so it needs the same guard RegistrationService now has.
+    @Test
+    void failsClearlyWhenTheConfiguredPasswordExceedsTheBcryptByteLimitWithoutEchoingIt() {
+        String tooLong = "a1" + "b".repeat(71); // 73 UTF-8 bytes
+        assertThatThrownBy(() -> runner(LEGACY_EMAIL, tooLong).run(null))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("IWRITE_CREDENTIAL_PROVISIONING_PASSWORD")
+                .hasMessageNotContaining(tooLong);
+    }
+
     private CredentialProvisioningRunner runner(String email, String password) {
         return new CredentialProvisioningRunner(userRepository, credentialRepository, passwordEncoder, email, password);
     }

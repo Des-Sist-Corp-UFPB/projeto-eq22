@@ -277,15 +277,53 @@ describe("RegisterForm", () => {
     expect(authApi.register).not.toHaveBeenCalled();
   });
 
-  test("aceita email com letra acentuada, sem recusar no cliente", async () => {
-    const email = "usuária@iwrite.local";
+  // ASCII-only policy (#149 review): mirrors the backend's EmailNormalizer.isAscii — Java's
+  // toLowerCase(Locale.ROOT) and PostgreSQL's lower() are not guaranteed to canonicalize every
+  // Unicode code point the same way, so this slice restricts account emails to ASCII. Unlike
+  // displayName/password (still full Unicode), a non-ASCII email must now be recusado no cliente.
+  test("recusa email com letra acentuada (política ASCII-somente)", async () => {
     renderWithClient(<RegisterForm />);
-    fillForm({ email });
+    fillForm({ email: "usuária@iwrite.local" });
 
     submit();
 
-    await waitFor(() => expect(authApi.register).toHaveBeenCalledWith(expect.objectContaining({ email })));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Informe um email válido.");
+    expect(authApi.register).not.toHaveBeenCalled();
+  });
+
+  // Codex P2 (round 6, #149): javaTrim, not email.trim() — the value validated (and sent) must be
+  // exactly what RegistrationService computes with Java's String.trim(), which strips every
+  // leading/trailing code point <= U+0020, not just JavaScript's own whitespace definition.
+  test("remove TAB/CR/LF/espaços nas bordas do email antes de validar e enviar", async () => {
+    renderWithClient(<RegisterForm />);
+    fillForm({ email: " \t\r\nnova@iwrite.local \t\r\n" });
+
+    submit();
+
+    await waitFor(() =>
+      expect(authApi.register).toHaveBeenCalledWith(expect.objectContaining({ email: "nova@iwrite.local" })),
+    );
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  test("recusa email cujo controle embutido não é removido pelo trim", async () => {
+    renderWithClient(<RegisterForm />);
+    fillForm({ email: "a" + String.fromCharCode(0x0009) + "b@iwrite.local" });
+
+    submit();
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Informe um email válido.");
+    expect(authApi.register).not.toHaveBeenCalled();
+  });
+
+  test("recusa email vazio após remover apenas espaços/controles nas bordas", async () => {
+    renderWithClient(<RegisterForm />);
+    fillForm({ email: " \t\r\n " });
+
+    submit();
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Informe seu email.");
+    expect(authApi.register).not.toHaveBeenCalled();
   });
 
   test("recusa nome de exibição com mais de 255 caracteres no cliente", async () => {
@@ -345,6 +383,33 @@ describe("RegisterForm", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "O nome de exibição deve ter no máximo 255 caracteres.",
     );
+    expect(authApi.register).not.toHaveBeenCalled();
+  });
+
+  // Codex P2 (round 6, #149): mirrors the backend's PasswordPolicy.MAX_UTF8_BYTES — bcrypt silently
+  // ignores any UTF-8 byte past the 72nd, so the client must reject the same boundary with a clear
+  // message before ever sending the request.
+  test("aceita senha com exatamente 72 bytes UTF-8", async () => {
+    const password = "a1" + "b".repeat(70);
+    expect(new TextEncoder().encode(password)).toHaveLength(72);
+    renderWithClient(<RegisterForm />);
+    fillForm({ password, passwordConfirmation: password });
+
+    submit();
+
+    await waitFor(() => expect(authApi.register).toHaveBeenCalled());
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  test("recusa senha com 73 bytes UTF-8 com mensagem clara de tamanho máximo", async () => {
+    const password = "a1" + "b".repeat(71);
+    expect(new TextEncoder().encode(password)).toHaveLength(73);
+    renderWithClient(<RegisterForm />);
+    fillForm({ password, passwordConfirmation: password });
+
+    submit();
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("A senha deve ter no máximo 72 bytes");
     expect(authApi.register).not.toHaveBeenCalled();
   });
 

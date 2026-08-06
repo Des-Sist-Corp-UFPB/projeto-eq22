@@ -2,6 +2,8 @@ package com.iwrite.auth;
 
 import org.junit.jupiter.api.Test;
 
+import java.nio.charset.StandardCharsets;
+
 import static org.assertj.core.api.Assertions.assertThat;
 
 class PasswordPolicyTest {
@@ -100,5 +102,54 @@ class PasswordPolicyTest {
         assertThat(password.length()).isEqualTo(10);
         assertThat(password.codePointCount(0, password.length())).isEqualTo(9);
         assertThat(PasswordPolicy.isValid(password)).isFalse();
+    }
+
+    // Codex P2 (round 6, #149): DelegatingPasswordEncoder's bcrypt silently ignores any UTF-8 byte
+    // past the 72nd, so two passwords sharing the same 72-byte prefix would otherwise hash
+    // identically. These pin the boundary exactly at MAX_UTF8_BYTES, both for plain ASCII (1 byte
+    // per code point) and Unicode (where a code point can be several bytes), mirrored in
+    // register-form.test.tsx via TextEncoder.
+
+    @Test
+    void aceitaSenhaComExatamente72BytesAscii() {
+        String password = "a1" + "b".repeat(70);
+        assertThat(password.getBytes(StandardCharsets.UTF_8)).hasSize(72);
+        assertThat(PasswordPolicy.isValid(password)).isTrue();
+    }
+
+    @Test
+    void rejeitaSenhaCom73BytesAscii() {
+        String password = "a1" + "b".repeat(71);
+        assertThat(password.getBytes(StandardCharsets.UTF_8)).hasSize(73);
+        assertThat(PasswordPolicy.isValid(password)).isFalse();
+    }
+
+    @Test
+    void aceitaSenhaUnicodeComExatamente72Bytes() {
+        // "ç" (U+00E7) is 2 bytes in UTF-8: 34 of them (68 bytes) + "a1" + 2 ASCII bytes = 72 bytes,
+        // 36 code points — well above MIN_LENGTH.
+        String password = "a1" + "ç".repeat(35);
+        assertThat(password.getBytes(StandardCharsets.UTF_8)).hasSize(72);
+        assertThat(PasswordPolicy.isValid(password)).isTrue();
+    }
+
+    @Test
+    void rejeitaSenhaUnicodeComMaisDe72Bytes() {
+        String password = "a1" + "ç".repeat(36);
+        assertThat(password.getBytes(StandardCharsets.UTF_8).length).isGreaterThan(72);
+        assertThat(PasswordPolicy.isValid(password)).isFalse();
+    }
+
+    @Test
+    void duasSenhasComOMesmoPrefixoDe72BytesNuncaSaoAmbasAceitasComoEquivalentes() {
+        // Both exceed 72 bytes and differ only after byte 72 — the exact shape bcrypt would silently
+        // collapse into the same hash. Rejecting both outright (never truncating) means neither can
+        // ever be registered, so no such collision is reachable.
+        String prefix = "a1" + "b".repeat(70); // 72 bytes, shared
+        String passwordA = prefix + "X";
+        String passwordB = prefix + "Y";
+        assertThat(passwordA).isNotEqualTo(passwordB);
+        assertThat(PasswordPolicy.isValid(passwordA)).isFalse();
+        assertThat(PasswordPolicy.isValid(passwordB)).isFalse();
     }
 }

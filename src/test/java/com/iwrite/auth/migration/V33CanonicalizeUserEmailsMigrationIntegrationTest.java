@@ -88,6 +88,32 @@ class V33CanonicalizeUserEmailsMigrationIntegrationTest extends PostgresIntegrat
         }
     }
 
+    // #149 review: chk_users_email_ascii (added by this migration) must reject a brand-new
+    // non-ASCII users.email write, not just the legacy-row case V32 now aborts on ahead of time.
+    @Test
+    void v33sChkUsersEmailAsciiRejectsANewNonAsciiEmailWrite() throws Exception {
+        String schema = "phase_c1_v33_" + UUID.randomUUID().toString().replace("-", "");
+        createSchema(schema);
+        UUID plainUser = UUID.fromString("33000000-0000-0000-0000-000000000030");
+
+        try {
+            migrate(schema, MigrationVersion.fromVersion("31"));
+
+            try (Connection connection = TestDatabaseInitializer.openDirectConnection()) {
+                insertMinimalUser(connection, schema, plainUser, "plain@example.com");
+            }
+
+            migrate(schema, null);
+
+            try (Connection connection = TestDatabaseInitializer.openDirectConnection()) {
+                assertThrows(SQLException.class, () ->
+                        executeUpdate(connection, schema, "update users set email = 'usuária@iwrite.local' where id = '" + plainUser + "'"));
+            }
+        } finally {
+            dropSchema(schema);
+        }
+    }
+
     /**
      * The exact scenario V32's own constraint could not see: "user@example.com" and
      * "\tUSER@example.com\r\n" do not collide under V32's plain-space-only rule (the second row

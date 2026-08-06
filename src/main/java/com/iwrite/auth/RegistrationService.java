@@ -140,6 +140,11 @@ public class RegistrationService {
         if (containsControlCharacter(email)) {
             throw new BadRequestException(RegistrationMessages.INVALID_EMAIL);
         }
+        // ASCII-only policy (#149 review): see EmailNormalizer's class doc. Checked ahead of the
+        // format regex and any lookup/bcrypt/write, same ordering as the control-character check.
+        if (!EmailNormalizer.isAscii(email)) {
+            throw new BadRequestException(RegistrationMessages.INVALID_EMAIL);
+        }
         if (!EMAIL_PATTERN.matcher(email).matches()) {
             throw new BadRequestException(RegistrationMessages.INVALID_EMAIL);
         }

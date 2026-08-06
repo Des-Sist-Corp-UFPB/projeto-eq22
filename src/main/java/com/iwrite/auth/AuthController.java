@@ -31,6 +31,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.Optional;
+import java.util.UUID;
 
 /**
  * Session endpoints. Logout is not declared here: it is served by Spring Security's
@@ -40,6 +41,15 @@ import java.util.Optional;
 @RestController
 @RequestMapping("/api/auth")
 public class AuthController {
+
+    /**
+     * Session attribute holding a fresh {@link UUID} minted by whichever call to {@link
+     * #establishSession} last touched the session — never serialized into any response (#149
+     * review). Its sole purpose is telling apart "this session id changed because *this* flow
+     * mutated it" from "this session id changed because a concurrent flow did": a session id alone
+     * cannot distinguish the two, since either one rotates it the same way.
+     */
+    private static final String SESSION_OWNER_TOKEN_ATTRIBUTE = "iwrite.auth.session-owner-token";
 
     private final AuthenticationManager authenticationManager;
     private final AuthSessionService authSessionService;
@@ -108,7 +118,12 @@ public class AuthController {
         // successful logins.
         reservation.refund();
 
-        return establishSession(authentication, httpRequest, httpResponse);
+        UUID ownershipToken = UUID.randomUUID();
+        AuthenticatedUserResponse response = establishSession(authentication, ownershipToken, httpRequest, httpResponse);
+        // Nothing downstream of a successful login ever needs to tell this session apart from
+        // another flow's again; leaving the marker behind would only be dead state (#149 review).
+        releaseSessionOwnerIfStillOwned(httpRequest, ownershipToken);
+        return response;
     }
 
     /**
@@ -133,6 +148,13 @@ public class AuthController {
      * {@code establishSession} throws, and the narrower case where everything up to here succeeded
      * but the commit itself still fails, which must never leave a live session pointing at a user
      * that was never actually persisted.
+     *
+     * <p>Comparing session ids alone cannot tell "this session changed because registration mutated
+     * it" from "this session changed because a concurrent login mutated it" — either rotates the id
+     * the same way. {@link #SESSION_OWNER_TOKEN_ATTRIBUTE} (#149 review) is the tie-breaker: a fresh
+     * token minted for this one attempt, written by {@link #establishSession} before and after the
+     * mutation, so whichever flow's {@code establishSession} call ran last is whichever token is
+     * still on the session when this one's rollback callback runs.
      */
     @PostMapping("/register")
     @Transactional
@@ -149,16 +171,21 @@ public class AuthController {
 
         // Captured before anything below can create or rotate a session, so the rollback callback
         // can tell "this session already existed" from "this session is what registration made" —
-        // the only thing that tells the two apart, since neither the request nor the transaction
-        // status says which session, if any, belongs to this attempt.
+        // a first, coarse safety net kept alongside the ownership token below, since neither the
+        // request nor the transaction status says which session, if any, belongs to this attempt.
         HttpSession sessionBeforeRegistration = httpRequest.getSession(false);
         String preexistingSessionId = sessionBeforeRegistration != null ? sessionBeforeRegistration.getId() : null;
+        UUID registrationToken = UUID.randomUUID();
 
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
             @Override
             public void afterCompletion(int status) {
-                if (status != TransactionSynchronization.STATUS_COMMITTED) {
-                    discardPartialSession(httpRequest, preexistingSessionId);
+                if (status == TransactionSynchronization.STATUS_COMMITTED) {
+                    // No later step of this registration ever needs the marker again; leaving it
+                    // behind would only be dead session state (#149 review).
+                    releaseSessionOwnerIfStillOwned(httpRequest, registrationToken);
+                } else {
+                    discardPartialSession(httpRequest, preexistingSessionId, registrationToken);
                 }
             }
         });
@@ -169,7 +196,7 @@ public class AuthController {
         Authentication authentication = authenticationManager.authenticate(
                 UsernamePasswordAuthenticationToken.unauthenticated(email, request.password()));
 
-        return establishSession(authentication, httpRequest, httpResponse);
+        return establishSession(authentication, registrationToken, httpRequest, httpResponse);
     }
 
     /** A caller counts as already authenticated only if the security context carries IWrite's own
@@ -184,22 +211,27 @@ public class AuthController {
     }
 
     /**
-     * Invalidates the HTTP session only if it is not the one that already existed when {@link
-     * #register} started — i.e. only a session this registration attempt itself created or rotated
-     * (via {@link #establishSession}) — and always clears the security context this thread just
-     * installed. A no-op on the session side when nothing got that far yet (e.g. {@code authenticate}
-     * failed first) or when the caller's own pre-existing session was never touched; comparing ids
-     * rather than a flag set before {@link #establishSession} runs is what still catches the
-     * in-between case where session id rotation happened but the subsequent context save did not.
-     * {@code invalidate} can race {@link GlobalExceptionHandler#handleInvalidSession}, which also
-     * invalidates the same session for a {@code SessionAuthenticationException} thrown here — the
-     * second caller finds it already gone, which is fine, not a state to fail on.
+     * Invalidates the HTTP session only if both (a) it is not the one that already existed when
+     * {@link #register} started, and (b) {@link #SESSION_OWNER_TOKEN_ATTRIBUTE} still holds the
+     * token minted for this one registration attempt — never on session id alone (#149 review): a
+     * concurrent login sharing the same session also rotates its id, and would otherwise look
+     * indistinguishable from registration's own mutation. If a concurrent login (or another
+     * registration) has since taken ownership, the token comparison fails and this is a no-op on the
+     * session side, no matter what the id looks like. Always clears the security context this thread
+     * just installed. A no-op on the session side when nothing got that far yet (e.g. {@code
+     * authenticate} failed first, so {@link #establishSession} never ran) or when the caller's own
+     * pre-existing session was never touched. {@code invalidate} can race {@link
+     * GlobalExceptionHandler#handleInvalidSession}, which also invalidates the same session for a
+     * {@code SessionAuthenticationException} thrown here — the second caller finds it already gone,
+     * which is fine, not a state to fail on.
      */
-    private void discardPartialSession(HttpServletRequest httpRequest, String preexistingSessionId) {
+    private void discardPartialSession(HttpServletRequest httpRequest, String preexistingSessionId, UUID registrationToken) {
         HttpSession session = httpRequest.getSession(false);
         boolean sessionCreatedOrRotatedByRegistration =
                 session != null && !session.getId().equals(preexistingSessionId);
-        if (sessionCreatedOrRotatedByRegistration) {
+        boolean stillOwnedByThisRegistration =
+                session != null && registrationToken.equals(session.getAttribute(SESSION_OWNER_TOKEN_ATTRIBUTE));
+        if (sessionCreatedOrRotatedByRegistration && stillOwnedByThisRegistration) {
             try {
                 session.invalidate();
             } catch (IllegalStateException alreadyInvalidated) {
@@ -209,26 +241,56 @@ public class AuthController {
         SecurityContextHolder.clearContext();
     }
 
+    /** Removes {@link #SESSION_OWNER_TOKEN_ATTRIBUTE} only if it still holds exactly this token —
+     *  a compare-and-clear, safe regardless of what has run concurrently since: if some other flow
+     *  has since taken ownership, this correctly leaves that marker alone (#149 review). */
+    private void releaseSessionOwnerIfStillOwned(HttpServletRequest httpRequest, UUID ownershipToken) {
+        HttpSession session = httpRequest.getSession(false);
+        if (session != null && ownershipToken.equals(session.getAttribute(SESSION_OWNER_TOKEN_ATTRIBUTE))) {
+            session.removeAttribute(SESSION_OWNER_TOKEN_ATTRIBUTE);
+        }
+    }
+
     /**
      * Rotates the session id, persists the {@link SecurityContext} (Spring Security 6 no longer
      * does this implicitly — {@code requireExplicitSave} — so skipping it would leave the very next
      * request anonymous), and returns the session payload. Shared by {@link #login} and
      * {@link #register}: both end the same way, with a freshly authenticated principal that needs
      * a real, persisted session built for it.
+     *
+     * <p>{@code ownershipToken} is written to whatever session already exists before the mutation
+     * (a no-op if none does yet — this method, not its caller, is what may create one, and a fault
+     * injected inside {@code sessionAuthenticationStrategy.onAuthentication} below must still leave
+     * no session behind when none existed before) and reasserted after {@code saveContext}, which is
+     * guaranteed to have a session by then. Two writes, not one, because the mutation in between can
+     * itself create or rotate the session the first write landed on.
      */
     private AuthenticatedUserResponse establishSession(
             Authentication authentication,
+            UUID ownershipToken,
             HttpServletRequest httpRequest,
             HttpServletResponse httpResponse
     ) {
+        markSessionOwnerIfSessionExists(httpRequest, ownershipToken);
         sessionAuthenticationStrategy.onAuthentication(authentication, httpRequest, httpResponse);
 
         SecurityContext context = SecurityContextHolder.createEmptyContext();
         context.setAuthentication(authentication);
         SecurityContextHolder.setContext(context);
         securityContextRepository.saveContext(context, httpRequest, httpResponse);
+        // Reasserted, not just written once above: saveContext (or the strategy call before it) may
+        // have created a brand-new session, or rotated the id of the one the first write landed on —
+        // either way, the marker must end up on whichever session this request is actually left with.
+        httpRequest.getSession(true).setAttribute(SESSION_OWNER_TOKEN_ATTRIBUTE, ownershipToken);
 
         return currentSession((IWriteUserDetails) authentication.getPrincipal());
+    }
+
+    private void markSessionOwnerIfSessionExists(HttpServletRequest httpRequest, UUID ownershipToken) {
+        HttpSession session = httpRequest.getSession(false);
+        if (session != null) {
+            session.setAttribute(SESSION_OWNER_TOKEN_ATTRIBUTE, ownershipToken);
+        }
     }
 
     @GetMapping("/me")

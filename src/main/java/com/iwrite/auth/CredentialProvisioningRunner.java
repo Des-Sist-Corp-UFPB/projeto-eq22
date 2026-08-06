@@ -14,6 +14,8 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.nio.charset.StandardCharsets;
+
 /**
  * Provisions the login credential for one already-existing user, on demand.
  *
@@ -58,8 +60,14 @@ public class CredentialProvisioningRunner implements ApplicationRunner {
     @Transactional
     public void run(ApplicationArguments args) {
         requireBothValuesSet(email, password);
+        // Normalized the same way every other lookup/write path is (EmailNormalizer, shared with
+        // /api/auth/register and /api/auth/login): a configured value that differs only in case or
+        // padding from the stored, already-normalized row must still resolve to it (#149 review).
+        String normalizedEmail = EmailNormalizer.normalize(email);
+        requireAsciiEmail(normalizedEmail);
+        requireBcryptSafePassword(password);
 
-        User user = userRepository.findByEmail(email).orElseThrow(() -> new IllegalStateException(
+        User user = userRepository.findByEmail(normalizedEmail).orElseThrow(() -> new IllegalStateException(
                 "Credential provisioning is enabled but no user matches the configured email. "
                         + "Verify IWRITE_CREDENTIAL_PROVISIONING_EMAIL points to an existing user; "
                         + "this runner never creates one."));
@@ -84,6 +92,32 @@ public class CredentialProvisioningRunner implements ApplicationRunner {
                     "Credential provisioning is enabled but IWRITE_CREDENTIAL_PROVISIONING_EMAIL and "
                             + "IWRITE_CREDENTIAL_PROVISIONING_PASSWORD are not both set. Provide both, or set "
                             + "IWRITE_CREDENTIAL_PROVISIONING_ENABLED=false.");
+        }
+    }
+
+    /** ASCII-only policy (#149 review, see EmailNormalizer's class doc): this runner does a
+     *  lookup by the normalized value exactly like login and registration do, so it needs the same
+     *  guard against the Java/PostgreSQL lowercase divergence a non-ASCII value could hit. The
+     *  message never echoes the configured value, matching {@link #requireBothValuesSet}. */
+    static void requireAsciiEmail(String normalizedEmail) {
+        if (!EmailNormalizer.isAscii(normalizedEmail)) {
+            throw new IllegalStateException(
+                    "Credential provisioning is enabled but IWRITE_CREDENTIAL_PROVISIONING_EMAIL is not an "
+                            + "ASCII email address. This slice only supports ASCII account emails; configure a "
+                            + "valid one and retry. This runner never creates a user.");
+        }
+    }
+
+    /** bcrypt (via {@link PasswordEncoder}) silently ignores any UTF-8 byte past the 72nd — the same
+     *  reasoning as {@link PasswordPolicy#MAX_UTF8_BYTES}, applied here because this is another path
+     *  that calls {@code passwordEncoder.encode} directly (#149 review). Checked before that call,
+     *  and the message never echoes the configured value. */
+    static void requireBcryptSafePassword(String password) {
+        if (password.getBytes(StandardCharsets.UTF_8).length > PasswordPolicy.MAX_UTF8_BYTES) {
+            throw new IllegalStateException(
+                    "Credential provisioning is enabled but IWRITE_CREDENTIAL_PROVISIONING_PASSWORD exceeds "
+                            + PasswordPolicy.MAX_UTF8_BYTES + " UTF-8 bytes, bcrypt's effective input limit. "
+                            + "Configure a shorter password and retry. This runner never echoes the configured value.");
         }
     }
 }

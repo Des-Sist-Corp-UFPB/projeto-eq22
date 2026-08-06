@@ -66,6 +66,35 @@ class V32NormalizeUserEmailsMigrationIntegrationTest extends PostgresIntegration
         }
     }
 
+    // #149 review: a legacy row with a non-ASCII email must never be silently rewritten by V32's own
+    // lower() — Java's toLowerCase(Locale.ROOT) and PostgreSQL's lower() are not guaranteed to
+    // canonicalize every Unicode code point the same way (see EmailNormalizer's class doc). The
+    // migration must abort before touching anything, the same way the collision guard does.
+    @Test
+    void v32AbortsWithoutAlteringAnythingWhenALegacyEmailIsNonAscii() throws Exception {
+        String schema = "phase_c1_v32_" + UUID.randomUUID().toString().replace("-", "");
+        createSchema(schema);
+        String nonAsciiEmail = "usuária@iwrite.local";
+
+        try {
+            migrate(schema, MigrationVersion.fromVersion("31"));
+
+            try (Connection connection = TestDatabaseInitializer.openDirectConnection()) {
+                seedLegacyMixedCaseUser(connection, schema, nonAsciiEmail);
+            }
+
+            assertThrows(FlywayException.class, () -> migrate(schema, null));
+
+            try (Connection connection = TestDatabaseInitializer.openDirectConnection()) {
+                // Untouched: still exactly the raw, non-ASCII value it was seeded with.
+                assertEquals(nonAsciiEmail, scalar(connection, schema, "select email from users where id = '" + USER + "'"));
+                assertEquals("0", scalar(connection, schema, "select count(*)::text from information_schema.table_constraints where table_schema = current_schema() and table_name = 'users' and constraint_name = 'chk_users_email_normalized'"));
+            }
+        } finally {
+            dropSchema(schema);
+        }
+    }
+
     @Test
     void v32AbortsWithoutAlteringAnythingWhenTwoRowsCollideOnceNormalized() throws Exception {
         String schema = "phase_c1_v32_" + UUID.randomUUID().toString().replace("-", "");

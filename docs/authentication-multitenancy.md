@@ -297,10 +297,35 @@ só a principal, no cadastro.
 
 ### Política de senha
 
-Aplicada em `PasswordPolicy` (`com.iwrite.auth`), única fonte de verdade: no mínimo 10 caracteres,
-com ao menos uma letra e um dígito. O frontend replica a mesma checagem apenas como conveniência —
-o backend nunca confia nela. `passwordConfirmation` é comparada e descartada; nunca chega à
+Aplicada em `PasswordPolicy` (`com.iwrite.auth`), única fonte de verdade: no mínimo 10 code points,
+no máximo `MAX_UTF8_BYTES` = 72 bytes UTF-8, com ao menos uma letra e um dígito (por code point,
+`Character.isLetter(int)`/`isDigit(int)`, não os overloads `char`). O frontend replica a mesma
+checagem apenas como conveniência (`[...password].length`, `\p{L}`/`\p{Nd}`, `TextEncoder` para os
+bytes) — o backend nunca confia nela. `passwordConfirmation` é comparada e descartada; nunca chega à
 persistência nem é logada.
+
+O limite de 72 bytes existe porque o `DelegatingPasswordEncoder` usa bcrypt, que ignora silenciosamente
+qualquer byte além do 72º — sem o limite, duas senhas diferentes que compartilhem o mesmo prefixo de
+72 bytes hashariam de forma idêntica. Recusar de vez (nunca truncar) fecha essa colisão pela raiz.
+Aplicado em qualquer caminho que chame `passwordEncoder.encode` diretamente, inclusive
+`CredentialProvisioningRunner` (que valida só o limite de bytes, não a política completa — a senha
+provisionada por um operador nunca precisou de letra+dígito).
+
+### Política de email: ASCII apenas
+
+`EmailNormalizer.normalize` (trim + `toLowerCase(Locale.ROOT)`) e o `lower()` do PostgreSQL não são
+garantidamente equivalentes para todo code point Unicode — só concordam sempre dentro do intervalo
+ASCII (`U+0000`–`U+007F`). Em vez de reimplementar suporte parcial a EAI (email internacionalizado)
+nesta fatia, o email de conta é restrito a ASCII de ponta a ponta: `EmailNormalizer.isAscii`,
+verificado antes de qualquer lookup, chamada a bcrypt ou escrita, em `RegistrationService` e em
+`CredentialProvisioningRunner`. Só o email — `displayName` e senha continuam aceitando Unicode
+completo.
+
+No banco, `V32`/`V33` (ver abaixo) abortam a migração inteira, antes de qualquer `UPDATE`, se
+encontrarem um email legado não-ASCII — nunca escolhem uma conversão silenciosa para uma linha que
+pode perder informação. `V33` também adiciona `chk_users_email_ascii`, fechando o mesmo espaço no
+nível de banco (nenhuma escrita futura, aplicação ou SQL manual, pode reintroduzir um email
+não-ASCII).
 
 ### Limitação de tentativas de cadastro
 
@@ -315,6 +340,28 @@ Variáveis: `IWRITE_REGISTRATION_RATE_LIMIT_MAX_PER_ORIGIN` (padrão 10),
 `IWRITE_REGISTRATION_RATE_LIMIT_MAX_TRACKED_KEYS` (padrão 10000),
 `IWRITE_REGISTRATION_RATE_LIMIT_WINDOW` (padrão `1m`). Excedido, responde `429` com
 `RegistrationMessages.TOO_MANY_REGISTRATION_ATTEMPTS` — mensagem própria, nunca a de login.
+
+### Atribuição de propriedade da sessão em corridas
+
+Um `session.getId()` que mudou não diz, sozinho, *qual* fluxo mudou — um login concorrente na mesma
+sessão (a mesma aba/navegador) rotaciona o id exatamente da mesma forma que o próprio cadastro
+rotacionaria. Comparar apenas ids faria o rollback de um cadastro que falhou depois de um login
+concorrente invalidar a sessão do login por engano.
+
+`AuthController#establishSession` (compartilhado por `login` e `register`) grava um `UUID` próprio
+daquela chamada em `SESSION_OWNER_TOKEN_ATTRIBUTE` — um atributo de sessão do lado do servidor,
+nunca serializado em nenhuma resposta — antes da mutação (se já existir uma sessão) e de novo depois
+de `saveContext` (que pode ter criado ou rotacionado a sessão que o primeiro registro atingiu). O
+rollback do cadastro (`discardPartialSession`) só invalida a sessão quando *ambos* são verdade: o id
+mudou desde antes do cadastro **e** o marcador atual ainda é o token daquele cadastro — um login
+concorrente que tenha assumido a sessão depois falha a segunda checagem, preservando-o. No commit,
+o marcador é removido só se ainda pertencer àquele cadastro (`releaseSessionOwnerIfStillOwned`);
+`login` faz o mesmo logo após estabelecer sua própria sessão, já que nada depois precisa mais dele.
+
+Coberto por `RegistrationSessionOwnershipRaceIntegrationTest` (dois pontos de injeção deterministas,
+por latch, chaveados pelo email do cadastro em corrida, para não afetar a chamada do login
+concorrente) e, para o caso sem corrida, por
+`RegistrationWhileAuthenticatedIntegrationTest#falhaAposMutacaoRealDaSessaoContinuaInvalidandoASessaoParcial`.
 
 ### Frontend
 

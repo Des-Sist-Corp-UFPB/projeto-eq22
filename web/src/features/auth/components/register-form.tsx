@@ -56,6 +56,7 @@ export function RegisterForm() {
       return;
     }
 
+    const normalizedEmail = javaTrim(email);
     const validation = validate(displayName, email, password, passwordConfirmation);
     setValidationError(validation);
     if (validation) {
@@ -64,7 +65,7 @@ export function RegisterForm() {
 
     registerMutation.mutate({
       displayName,
-      email,
+      email: normalizedEmail,
       password,
       passwordConfirmation,
       primaryPersona,
@@ -191,6 +192,43 @@ function containsControlCharacter(value: string) {
   return [...value].some((character) => CONTROL_CHARACTER.test(character));
 }
 
+// Mirrors the backend's EmailNormalizer.isAscii (#149 review): Java's toLowerCase(Locale.ROOT) and
+// PostgreSQL's lower() are not guaranteed to canonicalize every Unicode code point the same way, so
+// this slice restricts account emails to ASCII. Email only — displayName and password keep
+// accepting any valid Unicode.
+const NON_ASCII_CHARACTER = /[^\x00-\x7F]/;
+function isAsciiOnly(value: string) {
+  return !NON_ASCII_CHARACTER.test(value);
+}
+
+// Explicit stand-in for Java's String.trim() (#149 review): the backend trims by stripping every
+// leading/trailing *code point* <= U+0020, which JavaScript's own String.prototype.trim() does not
+// match (it strips a different, Unicode-whitespace-based set — e.g. it leaves a bare U+0001 in
+// place, which Java's trim() would strip, and the two could disagree at the edges of a real email).
+// Iterating by code point (not UTF-16 code unit) is still exactly equivalent to Java's char-based
+// scan here: every code point <= U+0020 is in the BMP and is always one UTF-16 unit, never half of a
+// surrogate pair.
+function javaTrim(value: string): string {
+  const codePoints = [...value];
+  let start = 0;
+  let end = codePoints.length;
+  while (start < end && (codePoints[start].codePointAt(0) as number) <= 0x20) {
+    start++;
+  }
+  while (end > start && (codePoints[end - 1].codePointAt(0) as number) <= 0x20) {
+    end--;
+  }
+  return codePoints.slice(start, end).join("");
+}
+
+// Mirrors the backend's PasswordPolicy.MAX_UTF8_BYTES (#149 review): bcrypt silently ignores any
+// UTF-8 byte past the 72nd, so a password must be rejected outright past that limit, never truncated.
+const MAX_PASSWORD_UTF8_BYTES = 72;
+const textEncoder = new TextEncoder();
+function passwordUtf8ByteLength(password: string) {
+  return textEncoder.encode(password).length;
+}
+
 function validate(displayName: string, email: string, password: string, passwordConfirmation: string) {
   const trimmedDisplayName = displayName.trim();
   if (!trimmedDisplayName) {
@@ -204,13 +242,19 @@ function validate(displayName: string, email: string, password: string, password
   if ([...trimmedDisplayName].length > MAX_DISPLAY_NAME_LENGTH) {
     return "O nome de exibição deve ter no máximo 255 caracteres.";
   }
-  if (!email.trim()) {
+  // javaTrim, not email.trim(): the value validated here must be exactly the value the backend will
+  // see and validate (RegistrationService trims with Java's String.trim() before anything else).
+  const trimmedEmail = javaTrim(email);
+  if (!trimmedEmail) {
     return "Informe seu email.";
   }
-  if (containsControlCharacter(email)) {
+  if (containsControlCharacter(trimmedEmail)) {
     return "Informe um email válido.";
   }
-  if (!email.includes("@")) {
+  if (!isAsciiOnly(trimmedEmail)) {
+    return "Informe um email válido.";
+  }
+  if (!trimmedEmail.includes("@")) {
     return "Informe um email válido.";
   }
   if (!password) {
@@ -218,6 +262,9 @@ function validate(displayName: string, email: string, password: string, password
   }
   if ([...password].length < 10 || !PASSWORD_HAS_LETTER.test(password) || !PASSWORD_HAS_DIGIT.test(password)) {
     return "A senha deve ter ao menos 10 caracteres, incluindo letras e números.";
+  }
+  if (passwordUtf8ByteLength(password) > MAX_PASSWORD_UTF8_BYTES) {
+    return `A senha deve ter no máximo ${MAX_PASSWORD_UTF8_BYTES} bytes (em UTF-8).`;
   }
   if (password !== passwordConfirmation) {
     return "A confirmação de senha não confere.";

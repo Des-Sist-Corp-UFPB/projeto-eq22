@@ -156,6 +156,22 @@ class RegistrationServiceTest {
         verifyNoInteractions(userRepository, credentialRepository, tenantRepository, membershipRepository, personaRepository);
     }
 
+    // Codex P2 (round 6, #149): a password over PasswordPolicy.MAX_UTF8_BYTES must fail the same
+    // stable WEAK_PASSWORD path, before bcrypt or any write — see PasswordPolicyTest for the exact
+    // byte-boundary coverage.
+    @Test
+    void senhaAcimaDoLimiteDeBytesUtf8FalhaAntesDeQualquerEscritaOuBcrypt() {
+        String tooLong = "a1" + "b".repeat(71); // 73 UTF-8 bytes
+        RegisterRequest request = new RegisterRequest("Nova", "nova@iwrite.local", tooLong, tooLong, "WRITER", "America/Sao_Paulo");
+        lenient().when(timeZoneValidator.validate("America/Sao_Paulo")).thenReturn(ZoneId.of("America/Sao_Paulo"));
+
+        assertThatThrownBy(() -> service.register(request))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessage(RegistrationMessages.WEAK_PASSWORD);
+
+        verifyNoInteractions(userRepository, credentialRepository, tenantRepository, membershipRepository, personaRepository, passwordEncoder);
+    }
+
     @Test
     void personaInvalidaFalhaAntesDeQualquerEscritaNoBanco() {
         RegisterRequest request = new RegisterRequest("Nova", "nova@iwrite.local", RAW_PASSWORD, RAW_PASSWORD, "PROTAGONISTA", "America/Sao_Paulo");
@@ -380,20 +396,21 @@ class RegistrationServiceTest {
         verifyNoInteractions(userRepository, credentialRepository, tenantRepository, membershipRepository, personaRepository, timeZoneValidator);
     }
 
-    // The control-character check must reject exactly Cc, never a plain accented email that the
-    // policy already accepts today — same intent as displayNameComEmojiEZwjContinuaAceito below,
-    // applied to the email field instead.
+    // ASCII-only policy (#149 review, see EmailNormalizer): Java's toLowerCase(Locale.ROOT) and
+    // PostgreSQL's lower() are not guaranteed to canonicalize every Unicode code point identically,
+    // so this slice restricts account emails to ASCII outright rather than risk that divergence.
+    // A non-ASCII email must be rejected the same way as any other malformed email — before any
+    // lookup, bcrypt call or write — never accepted as it would have been pre-review.
     @Test
-    void emailUnicodeSemCaracteresDeControleContinuaAceito() {
-        stubHappyPathCollaborators();
+    void emailUnicodeSemCaracteresDeControleEhRecusadoPelaPoliticaAsciiSomente() {
         String email = "usuária@iwrite.local";
         RegisterRequest request = new RegisterRequest("Nova Autora", email, RAW_PASSWORD, RAW_PASSWORD, "writer", "America/Sao_Paulo");
 
-        service.register(request);
+        assertThatThrownBy(() -> service.register(request))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessage(RegistrationMessages.INVALID_EMAIL);
 
-        ArgumentCaptor<User> userCaptor = ArgumentCaptor.forClass(User.class);
-        verify(userRepository).saveAndFlush(userCaptor.capture());
-        assertThat(userCaptor.getValue().getEmail()).isEqualTo(email);
+        verifyNoInteractions(userRepository, credentialRepository, tenantRepository, membershipRepository, personaRepository, timeZoneValidator);
     }
 
     // Codex P3 (round 5): same reasoning, applied to displayName ahead of the users.display_name

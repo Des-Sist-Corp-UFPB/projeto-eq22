@@ -14,9 +14,29 @@
 --
 -- Not editing V32 in place: it may already be applied against local and test databases, and Flyway
 -- treats a change to an already-applied migration's content as a checksum mismatch, not a fix.
+--
+-- #149 review: this slice also restricts account emails to ASCII (see EmailNormalizer's class doc).
+-- V32 (as amended by that same review) already refuses to run past a non-ASCII legacy email, so in
+-- the normal upgrade path no such row can reach this point. This guard is only reachable by a
+-- database that already applied V32 *before* that amendment (requiring a documented `flyway repair`
+-- to accept the new checksum, never run automatically) — mirrored here as defense in depth, exactly
+-- like the collision guard below mirrors V32's.
 
 alter table users
     drop constraint chk_users_email_normalized;
+
+do $$
+declare
+    non_ascii_emails integer;
+begin
+    select count(*) into non_ascii_emails
+    from users
+    where email ~ '[^\x00-\x7F]';
+
+    if non_ascii_emails > 0 then
+        raise exception 'V33 aborted: % existing user(s) have a non-ASCII email; this slice only supports ASCII account emails. Resolve each account manually (confirm and update its email) before re-running this migration', non_ascii_emails;
+    end if;
+end $$;
 
 -- Fails the whole migration, before anything is altered, if two existing rows would collapse to the
 -- same canonical email — a real duplicate-account conflict a human has to resolve, not something a
@@ -48,3 +68,10 @@ where email <> lower(regexp_replace(email, '^[\x01-\x20]+|[\x01-\x20]+$', '', 'g
 alter table users
     add constraint chk_users_email_normalized
         check (email = lower(regexp_replace(email, '^[\x01-\x20]+|[\x01-\x20]+$', '', 'g')));
+
+-- #149 review: closes the ASCII-only policy at the database level, the same way
+-- chk_users_email_normalized closes the case/padding one above — no future write (application bug,
+-- manual SQL, another migration) can introduce a non-ASCII users.email row again. Every existing row
+-- already passed the guard above, so this can never fail against pre-existing data.
+alter table users
+    add constraint chk_users_email_ascii check (email ~ '^[\x00-\x7F]*$');
