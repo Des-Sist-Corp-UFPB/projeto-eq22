@@ -506,7 +506,13 @@ export default function (data) {
   }
   const revision = sceneRes.json('contentRevision');
 
-  const contentText = `LOADTEST conteúdo sintético VU${__VU} iter${__ITER} ${Date.now()}`;
+  // Alterna a contagem de palavras entre iterações pares/ímpares da mesma VU:
+  // sem isso, todo save após o primeiro tem a mesma contagem do anterior,
+  // então SceneService.updateContent() sempre calcula wordCountDelta=0 e
+  // WordCountEventService.shouldUpdateDailyRollup() nunca atualiza o
+  // progresso diário — o caminho real de save nunca é exercitado sob carga.
+  const extraWord = __ITER % 2 === 0 ? ' progresso' : '';
+  const contentText = `LOADTEST conteúdo sintético VU ${__VU} iteração ${__ITER}${extraWord}`;
   const saveRes = http.patch(
     `${BASE}/api/scenes/${sceneId}/content`,
     JSON.stringify({
