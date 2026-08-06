@@ -1,5 +1,5 @@
 import http from 'k6/http';
-import { check } from 'k6';
+import { check, sleep } from 'k6';
 import { Rate } from 'k6/metrics';
 import exec from 'k6/execution';
 
@@ -192,6 +192,15 @@ const STEADY_MS = k6DurationToMs(STEADY_DURATION);
 const SETUP_TIMEOUT = validateK6Duration(__ENV.SETUP_TIMEOUT || '10m', 'SETUP_TIMEOUT');
 const TEARDOWN_TIMEOUT = validateK6Duration(__ENV.TEARDOWN_TIMEOUT || '10m', 'TEARDOWN_TIMEOUT');
 
+// Janela e intervalo de poll da recuperação de livros órfãos (ver
+// recoverOrphanedBookIds()): um POST /api/books que deu timeout pode
+// persistir no servidor alguns instantes depois da resposta se perder — a
+// varredura precisa continuar tentando por essa janela, não parar na
+// primeira consulta vazia. Fixo (não configurável por env): é um detalhe
+// interno do caminho de erro do setup(), não um parâmetro de carga.
+const ORPHAN_RECOVERY_WINDOW_MS = 5000;
+const ORPHAN_RECOVERY_POLL_INTERVAL_S = 0.5;
+
 export const options = {
   setupTimeout: SETUP_TIMEOUT,
   teardownTimeout: TEARDOWN_TIMEOUT,
@@ -232,6 +241,19 @@ export const options = {
     // Refetch do outline que o frontend real dispara (invalidateQueries) após
     // um save_scene bem-sucedido — ver ensureVuAuthenticated()/default().
     'http_req_duration{operation:refresh_outline_after_save,phase:steady}': ['p(95)<500'],
+    // Erro por operação, restrito à fase estável: os thresholds globais
+    // (http_req_failed/checks acima) diluem falhas concentradas numa única
+    // operação entre as demais requisições da iteração — com 5 operações por
+    // iteração, uma falha isolada em save_scene também derruba o
+    // refresh_outline_after_save correspondente (ver default()), mas ainda
+    // assim fica abaixo de 1% no total das ~5 operações. Cada operação
+    // principal precisa da própria taxa de erro para que uma operação
+    // degradada não passe escondida atrás das outras quatro saudáveis.
+    'http_req_failed{operation:list_books,phase:steady}': ['rate<0.01'],
+    'http_req_failed{operation:load_outline,phase:steady}': ['rate<0.01'],
+    'http_req_failed{operation:load_scene,phase:steady}': ['rate<0.01'],
+    'http_req_failed{operation:save_scene,phase:steady}': ['rate<0.01'],
+    'http_req_failed{operation:refresh_outline_after_save,phase:steady}': ['rate<0.01'],
     // Autenticação/setup/teardown: fora do loop medido (rodam 1x, ou VUS
     // vezes já que cada VU também autentica sozinho e setup() cria um livro
     // por VU), orçamento mais folgado só para pegar uma chamada realmente
@@ -388,24 +410,46 @@ function ensureVuAuthenticated() {
  * e não pode ser tocada por esta limpeza. Funciona mesmo quando
  * createdBookIds está vazio (a própria primeira criação de livro é que ficou
  * ambígua).
+ *
+ * Uma única consulta imediata não basta: se o handler Spring do POST que deu
+ * timeout ainda estiver terminando sua transação, essa consulta roda ANTES
+ * do commit e não vê o livro — ele só aparece no servidor um instante
+ * depois, sem teardown() para removê-lo. Por isso a varredura repete a
+ * consulta em intervalos curtos (ORPHAN_RECOVERY_POLL_INTERVAL_S) por uma
+ * janela limitada (ORPHAN_RECOVERY_WINDOW_MS), acumulando IDs sem duplicar
+ * (Set), mesmo que alguma consulta no meio do caminho volte vazia — e faz
+ * uma última consulta ao final da janela antes de desistir. A janela é
+ * limitada por tempo (Date.now() >= deadline), nunca por uma condição que
+ * dependa da resposta do servidor, então o loop sempre termina.
  */
 function recoverOrphanedBookIds(jar, runId, createdBookIds) {
   const marker = `LOADTEST-${runId}-vu`;
-  const listRes = http.get(`${BASE}/api/books`, {
-    jar,
-    headers: jsonHeaders(jar),
-    tags: { operation: 'setup_recover_books', name: 'GET /api/books' },
-  });
-  if (listRes.status !== 200) {
-    console.error(`Recuperação de órfãos: GET /api/books retornou ${listRes.status}; não foi possível varrer livros deste runId além dos já rastreados.`);
-    return createdBookIds;
-  }
   const recovered = new Set(createdBookIds);
-  (listRes.json() || []).forEach((book) => {
-    if (book && typeof book.title === 'string' && book.title.indexOf(marker) === 0) {
-      recovered.add(book.id);
+
+  function scanOnce() {
+    const listRes = http.get(`${BASE}/api/books`, {
+      jar,
+      headers: jsonHeaders(jar),
+      tags: { operation: 'setup_recover_books', name: 'GET /api/books' },
+    });
+    if (listRes.status !== 200) {
+      console.error(`Recuperação de órfãos (runId ${runId}): GET /api/books retornou ${listRes.status}.`);
+      return;
     }
-  });
+    (listRes.json() || []).forEach((book) => {
+      if (book && typeof book.title === 'string' && book.title.indexOf(marker) === 0) {
+        recovered.add(book.id);
+      }
+    });
+  }
+
+  const deadline = Date.now() + ORPHAN_RECOVERY_WINDOW_MS;
+  scanOnce();
+  while (Date.now() < deadline) {
+    sleep(ORPHAN_RECOVERY_POLL_INTERVAL_S);
+    scanOnce();
+  }
+
   return Array.from(recovered);
 }
 
@@ -419,8 +463,8 @@ function recoverOrphanedBookIds(jar, runId, createdBookIds) {
  * limpeza manual pontual em vez de exigir varrer tudo que casa com
  * LOADTEST-.
  */
-function cleanupBooks(jar, bookIds, originalError) {
-  console.error(`setup() falhou após criar ${bookIds.length} livro(s) sintético(s): ${originalError.message}`);
+function cleanupBooks(jar, runId, bookIds, originalError) {
+  console.error(`setup() falhou (runId ${runId}) após criar ${bookIds.length} livro(s) sintético(s): ${originalError.message}`);
   const failedCleanups = [];
   bookIds.forEach((bookId) => {
     const cleanupRes = http.del(`${BASE}/api/books/${bookId}`, null, {
@@ -467,6 +511,10 @@ export function setup() {
   login(jar);
 
   const runId = `${Date.now().toString(36)}${Math.floor(Math.random() * 1e6).toString(36)}`;
+  // Impresso ANTES do primeiro POST /api/books: se o setup() falhar mais
+  // adiante (mesmo antes de criar qualquer livro), o runId já está no log
+  // para permitir limpeza manual escopada (ver loadtest/README.md §5).
+  console.log(`runId desta execução: ${runId}`);
 
   // Um livro por VU (nunca compartilhado): cada VU edita seu próprio
   // livro/seção/capítulo/cena, como sessões independentes do mesmo autor.
@@ -488,7 +536,7 @@ export function setup() {
         { jar, headers: jsonHeaders(jar), tags: { operation: 'setup_create_book', name: 'POST /api/books' } }
       );
       if (bookRes.status !== 201) {
-        throw new Error(`Criação do livro sintético ${i + 1}/${VUS} falhou com status ${bookRes.status}.`);
+        throw new Error(`Criação do livro sintético ${i + 1}/${VUS} falhou com status ${bookRes.status} (runId ${runId}).`);
       }
       const bookId = bookRes.json('id');
       createdBookIds.push(bookId);
@@ -499,7 +547,7 @@ export function setup() {
         { jar, headers: jsonHeaders(jar), tags: { operation: 'setup_create_section', name: 'POST /api/books/{bookId}/sections' } }
       );
       if (sectionRes.status !== 201) {
-        throw new Error(`Criação da seção sintética ${i + 1}/${VUS} falhou com status ${sectionRes.status}.`);
+        throw new Error(`Criação da seção sintética ${i + 1}/${VUS} falhou com status ${sectionRes.status} (runId ${runId}).`);
       }
       const sectionId = sectionRes.json('id');
 
@@ -509,7 +557,7 @@ export function setup() {
         { jar, headers: jsonHeaders(jar), tags: { operation: 'setup_create_chapter', name: 'POST /api/sections/{sectionId}/chapters' } }
       );
       if (chapterRes.status !== 201) {
-        throw new Error(`Criação do capítulo sintético ${i + 1}/${VUS} falhou com status ${chapterRes.status}.`);
+        throw new Error(`Criação do capítulo sintético ${i + 1}/${VUS} falhou com status ${chapterRes.status} (runId ${runId}).`);
       }
       const chapterId = chapterRes.json('id');
 
@@ -519,13 +567,13 @@ export function setup() {
         { jar, headers: jsonHeaders(jar), tags: { operation: 'setup_create_scene', name: 'POST /api/chapters/{chapterId}/scenes' } }
       );
       if (sceneRes.status !== 201) {
-        throw new Error(`Criação da cena sintética ${i + 1}/${VUS} falhou com status ${sceneRes.status}.`);
+        throw new Error(`Criação da cena sintética ${i + 1}/${VUS} falhou com status ${sceneRes.status} (runId ${runId}).`);
       }
 
       resources.push({ bookId, sceneId: sceneRes.json('id') });
     }
   } catch (err) {
-    cleanupBooks(jar, recoverOrphanedBookIds(jar, runId, createdBookIds), err);
+    cleanupBooks(jar, runId, recoverOrphanedBookIds(jar, runId, createdBookIds), err);
   }
 
   console.log(`Setup concluído: ${resources.length} livro(s) sintético(s) (1 por VU, runId ${runId}).`);
