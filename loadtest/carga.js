@@ -110,8 +110,30 @@ const VUS = Number(__ENV.VUS || 10);
 const LOGIN_EMAIL = __ENV.LOAD_TEST_EMAIL || 'autor-a@iwrite.local';
 const LOGIN_PASSWORD = __ENV.LOAD_TEST_PASSWORD;
 
-const THINK_TIME_MIN_S = Number(__ENV.THINK_TIME_MIN_S || 0.3);
-const THINK_TIME_MAX_S = Number(__ENV.THINK_TIME_MAX_S || 1);
+/**
+ * Valida um think time (THINK_TIME_MIN_S/THINK_TIME_MAX_S) antes de montar
+ * `options` ou disparar qualquer requisição: um valor não numérico ou
+ * negativo faria thinkTime() sortear um delay inválido/zero silenciosamente,
+ * inflando a taxa de requisições da VU sem que nada nas métricas explicasse
+ * por quê.
+ */
+function validateThinkTime(raw, value, name) {
+  if (!Number.isFinite(value)) {
+    throw new Error(`${name} inválido: "${raw}" não é um número finito.`);
+  }
+  if (value < 0) {
+    throw new Error(`${name} inválido: "${raw}" é negativo.`);
+  }
+  return value;
+}
+
+const THINK_TIME_MIN_S_RAW = __ENV.THINK_TIME_MIN_S || '0.3';
+const THINK_TIME_MAX_S_RAW = __ENV.THINK_TIME_MAX_S || '1';
+const THINK_TIME_MIN_S = validateThinkTime(THINK_TIME_MIN_S_RAW, Number(THINK_TIME_MIN_S_RAW), 'THINK_TIME_MIN_S');
+const THINK_TIME_MAX_S = validateThinkTime(THINK_TIME_MAX_S_RAW, Number(THINK_TIME_MAX_S_RAW), 'THINK_TIME_MAX_S');
+if (THINK_TIME_MIN_S > THINK_TIME_MAX_S) {
+  throw new Error(`THINK_TIME_MIN_S (${THINK_TIME_MIN_S}s) não pode ser maior que THINK_TIME_MAX_S (${THINK_TIME_MAX_S}s).`);
+}
 
 // Um único par (número, unidade) do formato de duração do k6 (Go duration:
 // ms/s/m/h, parte fracionária opcional) — fonte única reaproveitada tanto
@@ -355,12 +377,47 @@ function ensureVuAuthenticated() {
 }
 
 /**
+ * Recupera livros possivelmente órfãos quando a resposta de um POST
+ * /api/books se perdeu (timeout, erro de rede) antes de
+ * createdBookIds.push(bookId) — o livro pode ter sido persistido no servidor
+ * mesmo assim, e como teardown() nunca roda depois de setup() lançar, esse
+ * ID nunca apareceria em lugar nenhum sem esta varredura. Lista os livros da
+ * conta e casa só pelo marcador EXATO desta execução (prefixo
+ * `LOADTEST-${runId}-vu`) — nunca por `LOADTEST-` genérico, porque outra
+ * execução com outro runId pode estar rodando ao mesmo tempo na mesma conta
+ * e não pode ser tocada por esta limpeza. Funciona mesmo quando
+ * createdBookIds está vazio (a própria primeira criação de livro é que ficou
+ * ambígua).
+ */
+function recoverOrphanedBookIds(jar, runId, createdBookIds) {
+  const marker = `LOADTEST-${runId}-vu`;
+  const listRes = http.get(`${BASE}/api/books`, {
+    jar,
+    headers: jsonHeaders(jar),
+    tags: { operation: 'setup_recover_books', name: 'GET /api/books' },
+  });
+  if (listRes.status !== 200) {
+    console.error(`Recuperação de órfãos: GET /api/books retornou ${listRes.status}; não foi possível varrer livros deste runId além dos já rastreados.`);
+    return createdBookIds;
+  }
+  const recovered = new Set(createdBookIds);
+  (listRes.json() || []).forEach((book) => {
+    if (book && typeof book.title === 'string' && book.title.indexOf(marker) === 0) {
+      recovered.add(book.id);
+    }
+  });
+  return Array.from(recovered);
+}
+
+/**
  * Remove todos os livros já criados nesta execução de setup() antes de
  * relançar o erro original — teardown() nunca roda quando setup() lança, e
  * agora há até VUS livros órfãos possíveis (um por VU já provisionada), não
- * só um. Loga quais limpezas falharam (só bookId + status HTTP, nunca
- * sessão/CSRF) para permitir limpeza manual pontual em vez de exigir varrer
- * tudo que casa com LOADTEST-.
+ * só um. `bookIds` já inclui qualquer órfão recuperado por
+ * recoverOrphanedBookIds() antes desta chamada. Loga quais limpezas
+ * falharam (só bookId + status HTTP, nunca sessão/CSRF) para permitir
+ * limpeza manual pontual em vez de exigir varrer tudo que casa com
+ * LOADTEST-.
  */
 function cleanupBooks(jar, bookIds, originalError) {
   console.error(`setup() falhou após criar ${bookIds.length} livro(s) sintético(s): ${originalError.message}`);
@@ -468,7 +525,7 @@ export function setup() {
       resources.push({ bookId, sceneId: sceneRes.json('id') });
     }
   } catch (err) {
-    cleanupBooks(jar, createdBookIds, err);
+    cleanupBooks(jar, recoverOrphanedBookIds(jar, runId, createdBookIds), err);
   }
 
   console.log(`Setup concluído: ${resources.length} livro(s) sintético(s) (1 por VU, runId ${runId}).`);
