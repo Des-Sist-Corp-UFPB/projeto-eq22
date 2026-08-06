@@ -1,154 +1,159 @@
 {
   "resumo_comparativo": {
-    "measured_code_commit": "884701abde423b9ffa117a09b660c12e0d83e7e5",
+    "measured_code_commit": "2838fe0fd66568d333fbe19941fdb38017baa43c",
     "evidence_commit": "ver a descrição da PR #141 — o commit que versiona este arquivo não pode conter o próprio hash sem autorreferência",
-    "nota_commits": "measured_code_commit é o commit de loadtest/carga.js exatamente como executado para gerar os números abaixo (working tree limpo, nenhuma mudança de código depois). evidence_commit é o commit posterior que só versiona este resumo e os JSONs brutos — não contém nenhuma mudança de comportamento do script. Os commits 16d2ef6/c206b29 (medição anterior, sem refresh_outline_after_save) permanecem só como evidência histórica — não são mais a medição final desta PR.",
-    "data_execucao": "2026-08-05T18:42:00Z a 2026-08-05T18:50:00Z",
+    "nota_commits": "measured_code_commit é o commit de loadtest/carga.js exatamente como executado para gerar os números abaixo (working tree limpo, nenhuma mudança de código depois). evidence_commit é o commit posterior que só versiona este resumo e os JSONs brutos — não contém nenhuma mudança de comportamento do script. O commit 884701a (medição anterior) permanece só como evidência histórica — não é mais a medição final desta PR.",
+    "data_execucao": "2026-08-06T01:54:00Z a 2026-08-06T02:04:00Z",
     "k6_version": "k6.exe v2.1.0 (commit/83a87a41e2, go1.26.4, windows/amd64)",
-    "motivo_da_remedicao": "3 findings do Codex sobre 884701a mudam o tráfego medido: (1) novo GET /api/books/{bookId}/outline (operation=refresh_outline_after_save) após cada save_scene bem-sucedido, espelhando o invalidateQueries do frontend real; (2) vu_auth_success com threshold rate==1 (não muda tráfego, só reprova o run em falha de login); (3) validateK6Duration aceita fracionário (não muda tráfego). Por (1) adicionar uma requisição por iteração bem-sucedida, os números de 16d2ef6/c206b29 deixam de ser a medição final — refeitos aqui sob o mesmo método (stages 30s/2m/30s, VUS=10 e VUS=30).",
+    "motivo_da_remedicao": "1 finding do Codex sobre 884701a muda o tráfego medido: o contentText/contentJson enviado em save_scene era um template fixo (só o timestamp mudava), então todo save após o primeiro de uma VU tinha a MESMA contagem de palavras do anterior — SceneService.updateContent() sempre calculava wordCountDelta=0, e WordCountEventService.shouldUpdateDailyRollup() nunca atualizava o progresso diário. O benchmark nunca exercitava esse caminho real de escrita sob carga. Cada VU agora alterna, por __ITER par/ímpar, entre um texto com uma palavra a mais e um com uma a menos, garantindo estruturalmente wordCountDelta != 0 (alternando sinal) a partir do segundo save da mesma VU. Refeito aqui sob o mesmo método (stages 30s/2m/30s, VUS=10 e VUS=30), em host isolado (crm-marketing-backend, responsável pela contenção da medição anterior, foi parado antes de rodar).",
     "ambiente": {
-      "descricao": "Stack Docker isolada dedicada só a este teste (docker compose -p iwrite-k6smoke, container_name e portas remapeados via overlay não versionado, para não colidir com outro worktree do IWrite já em uso na mesma máquina de desenvolvimento).",
+      "descricao": "Stack Docker isolada dedicada só a este teste (docker compose -p iwrite-k6smoke, container_name e portas remapeados via docker-compose.k6.local.yml não versionado, para não colidir com outro worktree do IWrite já em uso na mesma máquina de desenvolvimento).",
       "backend_containers": "db + backend + frontend (profile demo), sem OTel habilitado",
-      "hardware": "não dedicado — máquina de desenvolvimento compartilhada com outro worktree do IWrite (stack dev completa, iwrite-db) e com um projeto não relacionado (crm-marketing, cujo backend chegou a ~200% de CPU durante a execução de 30 VUs) rodando simultaneamente"
+      "hardware": "máquina de desenvolvimento compartilhada, mas com o container que causou a contenção documentada na medição anterior (crm-marketing-backend, ~200% de CPU) parado antes de rodar. Um container Postgres de outro worktree do IWrite (iwrite-db, porta 5435) permaneceu ativo mas ocioso durante a execução — não é uma stack backend/frontend completa concorrendo, só um Postgres parado à espera; impacto esperado bem menor que a contenção anterior, mas o host segue não sendo hardware dedicado."
     },
     "cenario": [
       "GET /api/books (list_books)",
       "GET /api/books/{bookId}/outline (load_outline)",
       "GET /api/scenes/{sceneId} (load_scene)",
-      "PATCH /api/scenes/{sceneId}/content (save_scene) — contentText + contentJson (documento ProseMirror no mesmo formato do editor real)",
-      "GET /api/books/{bookId}/outline (refresh_outline_after_save) — só quando save_scene retornou 200; NOVO nesta medição, espelha queryClient.invalidateQueries() disparado por contentMutation.mutateAsync() no BookWorkspace real"
+      "PATCH /api/scenes/{sceneId}/content (save_scene) — contentText + contentJson (documento ProseMirror no mesmo formato do editor real), alternando contagem de palavras entre iterações pares/ímpares da mesma VU",
+      "GET /api/books/{bookId}/outline (refresh_outline_after_save) — só quando save_scene retornou 200"
     ],
     "mudanca_de_cenario_desde_a_ultima_medicao": [
-      "Nova operação refresh_outline_after_save: um GET /api/books/{bookId}/outline adicional após cada save_scene bem-sucedido, na própria tag (nunca agregado em load_outline) — aumenta o número de requisições por iteração de 4 para 5 (+25%) e adiciona carga real de leitura sobre o outline, que já era a operação mais sensível ao crescimento de VUS.",
-      "vu_auth_success (threshold rate==1, sem tolerância) reprova o run inteiro diante de qualquer falha de login de VU — não muda o tráfego gerado, só o critério de aprovação.",
-      "1 livro por VU e sessão própria por VU (mudança já vigente desde a medição anterior, 16d2ef6) — mantidos sem alteração nesta rodada."
+      "save_scene agora envia texto com contagem de palavras alternada (__ITER par soma uma palavra extra, ímpar não) — wordCountDelta calculado por SceneService.updateContent() alterna entre positivo e negativo, nunca mais fica em 0 a partir do segundo save da mesma VU. Isso faz WordCountEventService.shouldUpdateDailyRollup() atualizar o rollup diário de progresso em (praticamente) toda iteração, em vez de pular esse trabalho quando o delta era 0 — save_scene agora mede o caminho de escrita completo, não uma versão parcial dele.",
+      "Nenhuma outra mudança de comportamento do script desde 0157cc1/884701a — 1 livro por VU, sessão própria por VU, refresh_outline_after_save e vu_auth_success (rate==1) seguem como na medição anterior."
     ],
     "notas_de_metodologia": [
       "list_books, load_outline e load_scene são pré-requisitos sequenciais: a iteração encerra imediatamente (com think time) se qualquer um retornar status inesperado, então nenhum PATCH é enviado atrás de uma leitura que falhou.",
-      "refresh_outline_after_save só executa e só é checado quando save_scene retornou 200 — confirmado nos dois runs: contagem de checks 'save_scene status 200' e 'refresh_outline_after_save status 200' idêntica (1889/1889 em 10 VUs, 2591/2591 em 30 VUs), zero falhas nas duas.",
+      "refresh_outline_after_save só executa e só é checado quando save_scene retornou 200 — confirmado nos dois runs: contagem de checks 'save_scene status 200' e 'refresh_outline_after_save status 200' idêntica (1606/1606 em 10 VUs, 2273/2273 em 30 VUs), zero falhas nas duas.",
       "vu_auth_success confirma exatamente uma autenticação bem-sucedida por VU nas duas execuções: passes=10/fails=0 (10 VUs) e passes=30/fails=0 (30 VUs) — nenhuma VU operou sem sessão própria.",
-      "Tags exportadas por requisição: 'operation' (dimensão funcional) e 'name' (rota normalizada, ex. 'GET /api/scenes/{sceneId}'). A tag automática 'url' do k6 foi desabilitada via systemTags — nenhuma tag carrega bookId, sceneId, runId, título, conteúdo, usuário ou tenant.",
+      "Alternância de wordCountDelta verificada diretamente no banco (book_word_count_events.manuscript_word_delta) numa execução de controle isolada (VUS=1, fora dos números abaixo): sequência real observada 8, -1, +1, -1, +1, -1, ... — nunca 0 a partir do segundo save, confirmando o comportamento estrutural do script.",
+      "Tags exportadas por requisição: 'operation' (dimensão funcional) e 'name' (rota normalizada). A tag automática 'url' do k6 permanece desabilitada via systemTags.",
       "http_req_duration_global (RPS, p50-p99 agregados) inclui TODAS as requisições da execução: smoke, auth (VUS+2 logins: setup + 1/VU + teardown), setup de VUS livros/seções/capítulos/cenas, as 5 operações principais sob carga, e o teardown de VUS livros. Não é a latência do loop principal — para isso, ver operacoes_principais.",
-      "auth_login já não é dominado por cold start: com VUS+2 amostras por execução, só a primeira tende a carregar o custo de JIT/warmup da JVM — o p95/avg reportados abaixo são o custo típico de bcrypt já com backend aquecido."
+      "Zero resíduo 'LOADTEST-' após as duas execuções (confirmado via SELECT count(*) FROM books WHERE title LIKE 'LOADTEST-%') e zero resposta 429 em qualquer uma delas (http_req_failed=0% nas duas)."
     ],
     "execucoes": {
       "10_vus": {
         "execucao_completa": {
           "vus": 10,
           "duracao": "3m (30s aquecimento / 2m carga estável / 30s desaceleração)",
-          "requests_totais": 9520,
-          "rps_global": 51.97,
-          "http_req_duration_global": { "p50": 16.8, "p90": 66.7, "p95": 87.9, "p99": 145.5, "max": 419.8, "unidade": "ms" },
-          "erros": { "http_req_failed_rate": 0, "http_req_failed_total": 0, "de": 9520 },
-          "checks": { "rate": 1, "passes": 9445, "fails": 0 },
+          "requests_totais": 8105,
+          "rps_global": 43.37,
+          "http_req_duration_global": { "p50": 39.5, "p90": 125.7, "p95": 152.7, "p99": 219.4, "max": 2167.8, "unidade": "ms" },
+          "erros": { "http_req_failed_rate": 0, "http_req_failed_total": 0, "de": 8105 },
+          "checks": { "rate": 1, "passes": 8030, "fails": 0 },
           "vu_auth_success": { "rate": 1, "passes": 10, "fails": 0 },
           "thresholds_globais": {
             "http_req_failed<1%": "passou",
             "checks>99%": "passou",
             "vu_auth_success==100%": "passou",
-            "http_req_duration_global_p95<500ms": "passou (87.9ms)"
+            "http_req_duration_global_p95<500ms": "passou (152.7ms)"
           }
         },
         "operacoes_principais": {
-          "descricao": "Medidas sob carga, dentro do loop de VUs. Percentis individuais por operação — não existe um agregado único (misturaria séries com perfis de latência bem diferentes). refresh_outline_after_save é NOVA nesta medição.",
-          "iterations": 1889,
-          "list_books": { "p50": 44.2, "p90": 77.0, "p95": 91.2, "p99": 134.2, "max": 419.8, "threshold_p95<500ms": "passou" },
-          "load_outline": { "p50": 11.5, "p90": 20.4, "p95": 25.1, "p99": 39.1, "max": 170.5, "threshold_p95<500ms": "passou" },
-          "load_scene": { "p50": 10.5, "p90": 18.7, "p95": 23.4, "p99": 37.4, "max": 135.7, "threshold_p95<500ms": "passou" },
-          "save_scene": { "p50": 53.0, "p90": 109.2, "p95": 139.6, "p99": 179.6, "max": 379.5, "threshold_p95<500ms": "passou" },
-          "refresh_outline_after_save": { "p50": 11.9, "p90": 20.4, "p95": 24.7, "p99": 44.0, "max": 160.1, "threshold_p95<500ms": "passou" }
+          "descricao": "Medidas sob carga, dentro do loop de VUs. Percentis individuais por operação — não existe um agregado único (misturaria séries com perfis de latência bem diferentes).",
+          "iterations": 1606,
+          "list_books": { "p50": 105.8, "p90": 166.6, "p95": 191.4, "p99": 265.4, "max": 449.7, "threshold_p95<500ms": "passou" },
+          "load_outline": { "p50": 25.6, "p90": 49.2, "p95": 61.6, "p99": 100.2, "max": 200.9, "threshold_p95<500ms": "passou" },
+          "load_scene": { "p50": 21.5, "p90": 45.3, "p95": 58.1, "p99": 83.7, "max": 185.7, "threshold_p95<500ms": "passou" },
+          "save_scene": { "p50": 81.4, "p90": 145.8, "p95": 178.3, "p99": 250.2, "max": 374.4, "threshold_p95<500ms": "passou" },
+          "refresh_outline_after_save": { "p50": 25.5, "p90": 50.1, "p95": 62.4, "p99": 92.4, "max": 194.9, "threshold_p95<500ms": "passou" }
         },
         "auth_setup_teardown": {
           "descricao": "Fora do loop medido: auth roda VUS+2 vezes (setup + 1 por VU + teardown); setup_create_book/section/chapter/scene rodam VUS vezes cada (1 livro por VU); teardown_delete_book roda VUS vezes.",
-          "auth_csrf_avg_ms": 7.5,
-          "auth_csrf_p95_ms": 11.9,
-          "auth_login_avg_ms": 109.2,
-          "auth_login_p95_ms": 133.2,
-          "setup_create_book_avg_ms": 62.5,
-          "setup_create_book_p95_ms": 72.0,
-          "setup_create_section_avg_ms": 40.2,
-          "setup_create_section_p95_ms": 57.4,
-          "setup_create_chapter_avg_ms": 46.6,
-          "setup_create_chapter_p95_ms": 60.5,
-          "setup_create_scene_avg_ms": 69.0,
-          "setup_create_scene_p95_ms": 91.0,
-          "teardown_delete_book_avg_ms": 52.1,
-          "teardown_delete_book_p95_ms": 67.1
+          "auth_csrf_avg_ms": 15.8,
+          "auth_csrf_p95_ms": 36.2,
+          "auth_login_avg_ms": 392.3,
+          "auth_login_p95_ms": 1154.9,
+          "setup_create_book_avg_ms": 105.6,
+          "setup_create_book_p95_ms": 294.2,
+          "setup_create_section_avg_ms": 44.9,
+          "setup_create_section_p95_ms": 87.9,
+          "setup_create_chapter_avg_ms": 50.1,
+          "setup_create_chapter_p95_ms": 71.9,
+          "setup_create_scene_avg_ms": 71.8,
+          "setup_create_scene_p95_ms": 103.2,
+          "teardown_delete_book_avg_ms": 76.0,
+          "teardown_delete_book_p95_ms": 102.3
         }
       },
       "30_vus": {
         "execucao_completa": {
           "vus": 30,
           "duracao": "3m (30s aquecimento / 2m carga estável / 30s desaceleração)",
-          "requests_totais": 13170,
-          "rps_global": 70.34,
-          "http_req_duration_global": { "p50": 154.3, "p90": 488.6, "p95": 666.9, "p99": 1044.3, "max": 1807.2, "unidade": "ms" },
-          "erros": { "http_req_failed_rate": 0, "http_req_failed_total": 0, "de": 13170 },
-          "checks": { "rate": 1, "passes": 12955, "fails": 0 },
+          "requests_totais": 11580,
+          "rps_global": 61.48,
+          "http_req_duration_global": { "p50": 198.4, "p90": 584.0, "p95": 739.9, "p99": 1048.1, "max": 1695.3, "unidade": "ms" },
+          "erros": { "http_req_failed_rate": 0, "http_req_failed_total": 0, "de": 11580 },
+          "checks": { "rate": 1, "passes": 11365, "fails": 0 },
           "vu_auth_success": { "rate": 1, "passes": 30, "fails": 0 },
           "thresholds_globais": {
             "http_req_failed<1%": "passou",
             "checks>99%": "passou",
             "vu_auth_success==100%": "passou",
-            "http_req_duration_global_p95<500ms": "FALHOU (666.9ms)"
+            "http_req_duration_global_p95<500ms": "FALHOU (739.9ms)"
           }
         },
         "operacoes_principais": {
-          "descricao": "Medidas sob carga, dentro do loop de VUs. Percentis individuais por operação. refresh_outline_after_save é NOVA nesta medição.",
-          "iterations": 2591,
-          "list_books": { "p50": 284.3, "p90": 745.4, "p95": 958.5, "p99": 1308.6, "max": 1679.4, "threshold_p95<500ms": "FALHOU" },
-          "load_outline": { "p50": 151.7, "p90": 521.3, "p95": 692.4, "p99": 990.0, "max": 1537.5, "threshold_p95<500ms": "FALHOU" },
-          "load_scene": { "p50": 125.5, "p90": 357.9, "p95": 498.2, "p99": 843.2, "max": 1532.0, "threshold_p95<500ms": "passou (498.2ms, margem mínima)" },
-          "save_scene": { "p50": 190.0, "p90": 463.5, "p95": 609.8, "p99": 1010.7, "max": 1807.2, "threshold_p95<500ms": "FALHOU" },
-          "refresh_outline_after_save": { "p50": 63.2, "p90": 219.6, "p95": 298.4, "p99": 592.6, "max": 869.8, "threshold_p95<500ms": "passou" }
+          "descricao": "Medidas sob carga, dentro do loop de VUs. Percentis individuais por operação.",
+          "iterations": 2273,
+          "list_books": { "p50": 372.8, "p90": 791.5, "p95": 933.5, "p99": 1233.5, "max": 1695.3, "threshold_p95<500ms": "FALHOU" },
+          "load_outline": { "p50": 236.7, "p90": 579.6, "p95": 726.7, "p99": 968.4, "max": 1636.6, "threshold_p95<500ms": "FALHOU" },
+          "load_scene": { "p50": 167.6, "p90": 475.1, "p95": 571.6, "p99": 849.6, "max": 1422.3, "threshold_p95<500ms": "FALHOU" },
+          "save_scene": { "p50": 259.6, "p90": 567.8, "p95": 733.3, "p99": 1083.8, "max": 1637.8, "threshold_p95<500ms": "FALHOU" },
+          "refresh_outline_after_save": { "p50": 80.4, "p90": 205.7, "p95": 263.1, "p99": 566.2, "max": 1049.6, "threshold_p95<500ms": "passou" }
         },
         "auth_setup_teardown": {
           "descricao": "Fora do loop medido: auth roda VUS+2 vezes (setup + 1 por VU + teardown); setup_create_book/section/chapter/scene rodam VUS vezes cada (1 livro por VU); teardown_delete_book roda VUS vezes.",
-          "auth_csrf_avg_ms": 9.0,
-          "auth_csrf_p95_ms": 15.4,
-          "auth_login_avg_ms": 176.7,
-          "auth_login_p95_ms": 369.1,
-          "setup_create_book_avg_ms": 43.2,
-          "setup_create_book_p95_ms": 65.4,
-          "setup_create_section_avg_ms": 19.9,
-          "setup_create_section_p95_ms": 33.6,
-          "setup_create_chapter_avg_ms": 23.2,
-          "setup_create_chapter_p95_ms": 34.7,
-          "setup_create_scene_avg_ms": 43.4,
-          "setup_create_scene_p95_ms": 61.0,
-          "teardown_delete_book_avg_ms": 89.1,
-          "teardown_delete_book_p95_ms": 138.3
+          "auth_csrf_avg_ms": 12.9,
+          "auth_csrf_p95_ms": 24.9,
+          "auth_login_avg_ms": 297.8,
+          "auth_login_p95_ms": 786.9,
+          "setup_create_book_avg_ms": 59.7,
+          "setup_create_book_p95_ms": 88.6,
+          "setup_create_section_avg_ms": 32.1,
+          "setup_create_section_p95_ms": 55.2,
+          "setup_create_chapter_avg_ms": 36.4,
+          "setup_create_chapter_p95_ms": 57.8,
+          "setup_create_scene_avg_ms": 64.8,
+          "setup_create_scene_p95_ms": 91.6,
+          "teardown_delete_book_avg_ms": 60.4,
+          "teardown_delete_book_p95_ms": 88.1
         }
       }
     },
-    "comparacao_com_medicao_anterior_16d2ef6": {
-      "aviso": "Cenários diferentes (4 vs. 5 operações por iteração) — comparação é qualitativa, não uma linha de base direta.",
+    "comparacao_com_medicao_anterior_884701a": {
+      "aviso": "Mesmo cenário de 5 operações por iteração que 884701a — a diferença é só o conteúdo enviado em save_scene (contagem de palavras agora alternada em vez de fixa). O host também mudou: crm-marketing-backend, que dominava a contenção da medição de 884701a em 30 VUs, foi parado antes desta rodada.",
       "10_vus": {
-        "requests_totais": "7587 → 9520 (+25.5%, esperado: +1 requisição/iteração bem-sucedida)",
-        "rps_global": "41.11 → 51.97 (+26.4%)",
-        "http_req_duration_global_p95": "110.92ms → 87.9ms (melhora — ver nota de contenção de host abaixo; não é um efeito do código)",
-        "save_scene_p95": "125.1ms → 139.6ms (levemente maior, dentro da variação normal entre execuções no mesmo host compartilhado)",
+        "requests_totais": "9520 → 8105 (-14.9%)",
+        "rps_global": "51.97 → 43.37 (-16.5%)",
+        "iterations": "1889 → 1606 (-15.0%)",
+        "http_req_duration_global_p95": "87.9ms → 152.7ms (+73.7%, pior)",
+        "save_scene_p95": "139.6ms → 178.3ms (+27.7%, pior — esperado: wordCountDelta nunca mais é 0, então WordCountEventService.shouldUpdateDailyRollup() faz trabalho real de escrita/rollup em praticamente toda iteração, em vez de ser pulado quando o delta era 0)",
         "todos_os_thresholds": "passaram nas duas medições"
       },
       "30_vus": {
-        "requests_totais": "17667 → 13170 (menor apesar de mais operações: throughput reduzido pela contenção de host nesta execução — ver limitacoes)",
-        "rps_global": "96.15 → 70.34 (-26.9% — atribuído à contenção de host, não ao código: crm-marketing-backend em ~200% de CPU durante esta execução, ausente na medição anterior)",
-        "http_req_duration_global_p95": "302.72ms → 666.9ms (piora — combinação de (a) +1 requisição/iteração via refresh_outline_after_save e (b) contenção de host mais forte nesta execução)",
-        "list_books_p95": "405.45ms → 958.5ms (list_books já era a operação mais sensível a VUS antes desta mudança; a piora aqui é predominantemente contenção de host, não o novo refresh_outline_after_save, que é uma tag separada)",
-        "save_scene_p95": "313.81ms → 609.8ms (mesma leitura: contenção de host, não o cenário)",
-        "todos_os_thresholds": "3 de 6 thresholds de operação principal falharam nesta execução (list_books, load_outline, save_scene) — ver limitacoes; load_scene passou com margem mínima (498.2ms)"
+        "requests_totais": "13170 → 11580 (-12.1%)",
+        "rps_global": "70.34 → 61.48 (-12.6%)",
+        "iterations": "2591 → 2273 (-12.3%)",
+        "http_req_duration_global_p95": "666.9ms → 739.9ms (+10.9%, pior)",
+        "list_books_p95": "958.5ms → 933.5ms (-2.6%, dentro da variação normal entre execuções)",
+        "load_outline_p95": "692.4ms → 726.7ms (+5.0%)",
+        "load_scene_p95": "498.2ms → 571.6ms (+14.7% — passava por margem mínima antes, agora também rompe o teto de 500ms)",
+        "save_scene_p95": "609.8ms → 733.3ms (+20.3%, pior — mesma causa do save_scene em 10 VUs: rollup de progresso diário agora roda em praticamente toda iteração)",
+        "refresh_outline_after_save_p95": "298.4ms → 263.1ms (-11.8%, melhor — dentro da variação normal, menos iterações concorrentes completadas no mesmo intervalo)",
+        "todos_os_thresholds": "4 de 5 thresholds de operação principal falharam nesta execução (list_books, load_outline, load_scene, save_scene; só refresh_outline_after_save passou) — antes eram 3 de 5, com load_scene passando por margem mínima (498.2ms); agora load_scene também rompe o teto"
       }
     },
-    "gargalo_identificado": "Em 10 VUs, todas as 5 operações principais têm folga confortável frente ao teto de 500ms. Em 30 VUs, list_books continua sendo a operação mais perto/acima do teto (como já identificado na medição anterior, 16d2ef6) — cresce com o tamanho da coleção de livros do tenant, que aumenta com VUS por construção do cenário. Nesta execução específica, load_outline e save_scene também romperam o teto, e o gargalo aparente é dominado pela contenção de host desta rodada (crm-marketing-backend a ~200% CPU, ver ambiente/limitacoes) somada ao +1 requisição/iteração do refresh_outline_after_save — não dá para separar quanto de cada piora vem do código novo vs. da contenção do host nesta única execução. A próxima ação recomendada trata disso.",
+    "gargalo_identificado": "Em 10 VUs, todas as 5 operações principais têm folga confortável frente ao teto de 500ms, apesar do save_scene mais lento que na medição anterior. Em 30 VUs, list_books continua sendo a operação mais perto/acima do teto (cresce com o tamanho da coleção de livros do tenant, que aumenta com VUS por construção do cenário) — mas agora save_scene e load_scene também rompem o teto de forma mais clara que na medição anterior. A causa dominante da piora de save_scene (em ambos VUS) é a própria correção desta rodada: wordCountDelta nunca mais é 0, então WordCountEventService.shouldUpdateDailyRollup() faz trabalho real de rollup em praticamente toda escrita — antes a maioria das iterações pulava esse trabalho por ter delta=0. list_books/load_outline seguem dominados pelo crescimento da coleção do tenant com VUS, não pela mudança desta rodada.",
     "limitacoes": [
-      "Execução na mesma máquina de desenvolvimento concorrendo com outro worktree do IWrite (stack dev completa, iwrite-db) e com um container Docker não relacionado (crm-marketing, cujo backend chegou a ~200% de CPU durante a execução de 30 VUs) — não é hardware dedicado; os números absolutos, especialmente em 30 VUs, variam com a contenção do host no momento da execução mais do que na medição anterior (16d2ef6), que não teve essa contenção adicional.",
+      "Execução na mesma máquina de desenvolvimento; o container que dominava a contenção da medição anterior (crm-marketing-backend, ~200% de CPU) foi parado antes de rodar, mas um Postgres de outro worktree do IWrite (iwrite-db, porta 5435) permaneceu ativo e ocioso durante a execução — não é hardware dedicado.",
       "Backend, Postgres e k6 rodam na mesma máquina, sem separação de rede/CPU entre gerador de carga e alvo — parte da latência medida pode ser contenção local, não custo real de rede.",
-      "list_books cresce com VUS por construção do próprio cenário (1 livro por VU no tenant do autor de teste) — em execuções com VUS muito maior que 30, o custo de listar/serializar a coleção de livros pode se tornar o novo fator dominante antes mesmo de qualquer contenção real de escrita.",
-      "refresh_outline_after_save adiciona uma leitura de outline por iteração bem-sucedida — em VUS alto, isso soma-se ao mesmo custo de list/serialize que já pressiona list_books/load_outline; não foi isolado quanto desse aumento é esperado vs. atribuível à contenção do host nesta execução específica.",
-      "Sem OTel habilitado durante a execução (evita overhead de instrumentação na medição); a decomposição do custo de save_scene/list_books/load_outline entre suas etapas internas não foi feita neste PR.",
-      "contentJson sintético é um único parágrafo curto — não representa uma cena longa de verdade. save_scene sob um payload realisticamente maior tende a ser mais lento ainda que o medido aqui.",
-      "IWRITE_LOADTEST_LOGIN_RATE_LIMIT (docker-compose.loadtest.yml, versionado) foi mantido no default (1000) nesta execução — cobre folgadamente VUS até 998; os defaults de produção em application.yml/.env.example não foram alterados; ver loadtest/README.md §2."
+      "list_books cresce com VUS por construção do próprio cenário (1 livro por VU no tenant do autor de teste) — em execuções com VUS muito maior que 30, o custo de listar/serializar a coleção de livros pode se tornar o novo fator dominante antes mesmo de qualquer contenção real de escrita. Não investigado neste PR.",
+      "A piora de save_scene (10 e 30 VUs) não foi decomposta entre custo de INSERT em book_word_count_events, cálculo do rollup diário e a escrita da própria cena — só o efeito agregado foi medido.",
+      "Sem OTel habilitado durante a execução (evita overhead de instrumentação na medição); a decomposição de custo entre as etapas internas de save_scene/list_books/load_outline não foi feita neste PR.",
+      "contentJson sintético é um único parágrafo curto (agora com 7-8 palavras) — não representa uma cena longa de verdade. save_scene sob um payload realisticamente maior tende a ser mais lento ainda que o medido aqui.",
+      "IWRITE_LOADTEST_LOGIN_RATE_LIMIT (docker-compose.loadtest.yml, versionado) foi mantido no default (1000) nesta execução — cobre folgadamente VUS até 998; os defaults de produção em application.yml/.env.example não foram alterados — ver loadtest/README.md §2."
     ],
-    "proxima_acao_recomendada": "Repetir 10/30 VUs em hardware não compartilhado (sem outro worktree do IWrite nem crm-marketing concorrendo) para isolar quanto da piora em 30 VUs vem do refresh_outline_after_save vs. da contenção de host desta execução específica. Investigar o crescimento de list_books/load_outline com o tamanho da coleção de livros do tenant (paginação? índice? projeção mais enxuta na listagem?) antes de rodar com VUS bem maior que 30. Rodar o teste com OTel habilitado (docker-compose.observability.yml) e usar os traces correlacionados de scene_content_save, list_books e load_outline para decompor os três custos."
+    "proxima_acao_recomendada": "Rodar o teste com OTel habilitado (docker-compose.observability.yml) e usar os traces correlacionados de scene_content_save para decompor quanto da piora de save_scene vem do INSERT em book_word_count_events/rollup diário vs. da própria escrita de conteúdo da cena — a mudança desta PR tornou esse custo visível pela primeira vez sob carga. Repetir 30 VUs em hardware totalmente dedicado (sem nenhum outro container Docker ativo na máquina) para confirmar se list_books/load_outline continuam rompendo o teto de 500ms fora de qualquer contenção residual. Investigar o crescimento de list_books/load_outline com o tamanho da coleção de livros do tenant antes de rodar com VUS bem maior que 30."
   }
 }
