@@ -289,6 +289,56 @@ describe("RegisterForm", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
+  // Codex P3 (round 9, #149): javaTrim, not displayName.trim() — the value validated (and sent) must
+  // be exactly what RegistrationService computes with Java's String.trim(), which strips every
+  // leading/trailing code point <= U+0020 only. U+00A0 (no-break space) is Unicode whitespace that
+  // JavaScript's own trim() strips but Java's does not — it must survive untouched here too.
+  test("mantém U+00A0 nas bordas do nome de exibição, diferente de trim() do JavaScript", async () => {
+    const nbsp = String.fromCharCode(0x00a0);
+    const displayName = nbsp + "Ana Silva" + nbsp;
+    renderWithClient(<RegisterForm />);
+    fillForm({ displayName });
+
+    submit();
+
+    await waitFor(() => expect(authApi.register).toHaveBeenCalledWith(expect.objectContaining({ displayName })));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  // With the old displayName.trim(), the trailing U+00A0 below would have been stripped, leaving
+  // exactly 255 code points and passing; javaTrim retains it, so this is really 256 and must be
+  // rejected, matching what RegistrationService#validateDisplayName sees on the backend.
+  test("recusa nome de exibição com 255 caracteres seguidos de U+00A0, contado como 256", async () => {
+    const displayName = "A".repeat(255) + String.fromCharCode(0x00a0);
+    renderWithClient(<RegisterForm />);
+    fillForm({ displayName });
+
+    submit();
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "O nome de exibição deve ter no máximo 255 caracteres.",
+    );
+    expect(authApi.register).not.toHaveBeenCalled();
+  });
+
+  // Mixed case pinning javaTrim's exact boundary: only the outer ASCII spaces are stripped, and the
+  // U+00A0 immediately inside them survives — the payload must carry exactly that validated value,
+  // never the raw input.
+  test("remove espaço/TAB/CR/LF ASCII nas bordas do nome de exibição, preservando U+00A0 mais interno", async () => {
+    const nbsp = String.fromCharCode(0x00a0);
+    renderWithClient(<RegisterForm />);
+    fillForm({ displayName: ` \t\r\n${nbsp}Ana Silva${nbsp} \t\r\n` });
+
+    submit();
+
+    await waitFor(() =>
+      expect(authApi.register).toHaveBeenCalledWith(
+        expect.objectContaining({ displayName: `${nbsp}Ana Silva${nbsp}` }),
+      ),
+    );
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
   // Same mirroring as displayName, applied to email: containsControlCharacter must catch it before
   // the "@" check, on the client, with the same message the backend returns for an invalid email.
   test("recusa email com NUL embutido no cliente", async () => {
@@ -318,6 +368,20 @@ describe("RegisterForm", () => {
   test("recusa email com letra acentuada (política ASCII-somente)", async () => {
     renderWithClient(<RegisterForm />);
     fillForm({ email: "usuária@iwrite.local" });
+
+    submit();
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Informe um email válido.");
+    expect(authApi.register).not.toHaveBeenCalled();
+  });
+
+  // Codex P3 (round 9, #149): the client never lowercases email at all — isAsciiOnly runs on the
+  // javaTrim'd raw value — so it must already reject U+212A KELVIN SIGN outright, the same code
+  // point the backend's EmailNormalizer had to special-case (it lowercases to plain ASCII 'k' under
+  // Locale.ROOT). Pins that no silent Unicode-to-ASCII coercion happens on either side.
+  test("recusa email com U+212A KELVIN SIGN, sem convertê-lo silenciosamente para ASCII", async () => {
+    renderWithClient(<RegisterForm />);
+    fillForm({ email: "user@K.example" });
 
     submit();
 

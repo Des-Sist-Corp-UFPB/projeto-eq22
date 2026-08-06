@@ -431,6 +431,23 @@ class RegistrationServiceTest {
         verifyNoInteractions(userRepository, credentialRepository, tenantRepository, membershipRepository, personaRepository, timeZoneValidator);
     }
 
+    // #149 review, round 9: U+212A KELVIN SIGN lowercases to plain ASCII 'k' under Locale.ROOT.
+    // EmailNormalizer.normalize used to lowercase before checking isAscii, so this code point would
+    // sail through disguised as ASCII and register as if it were the ordinary "user@k.example" — the
+    // fixed order must reject it before any lookup, bcrypt call or write, same as any other non-ASCII
+    // email.
+    @Test
+    void emailComKelvinSignEhRecusadoAntesDeQualquerLookupOuEscrita() {
+        String email = "user@K.example";
+        RegisterRequest request = new RegisterRequest("Nova Autora", email, RAW_PASSWORD, RAW_PASSWORD, "writer", "America/Sao_Paulo");
+
+        assertThatThrownBy(() -> service.register(request))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessage(RegistrationMessages.INVALID_EMAIL);
+
+        verifyNoInteractions(userRepository, credentialRepository, tenantRepository, membershipRepository, personaRepository, timeZoneValidator);
+    }
+
     // Codex P3 (round 5): same reasoning, applied to displayName ahead of the users.display_name
     // insert. The finding's own example (trailing NUL) is actually stripped by
     // RegistrationService#register's displayName.trim() before validateDisplayName ever sees it —

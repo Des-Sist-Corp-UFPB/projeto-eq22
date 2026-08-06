@@ -123,4 +123,26 @@ class CredentialProvisioningRunnerTest {
 
         verifyNoInteractions(userRepository, credentialRepository, passwordEncoder);
     }
+
+    // #149 review, round 9: U+212A KELVIN SIGN lowercases to plain ASCII 'k' under Locale.ROOT.
+    // EmailNormalizer.normalize used to lowercase before requireAsciiEmail ever ran, so a configured
+    // email containing it would sail through disguised as ASCII. run() must still fail safely — no
+    // lookup, no encode, and the configured value never echoed — before either repository or the
+    // password encoder is ever touched.
+    @Test
+    void runComEmailConfiguradoComKelvinSignFalhaAntesDeQualquerLookupOuEncode() {
+        UserRepository userRepository = mock(UserRepository.class);
+        UserCredentialRepository credentialRepository = mock(UserCredentialRepository.class);
+        PasswordEncoder passwordEncoder = mock(PasswordEncoder.class);
+        String kelvinEmail = "user@" + 'K' + ".example";
+        CredentialProvisioningRunner runner = new CredentialProvisioningRunner(
+                userRepository, credentialRepository, passwordEncoder, kelvinEmail, PASSWORD);
+
+        assertThatThrownBy(() -> runner.run(null))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("IWRITE_CREDENTIAL_PROVISIONING_EMAIL")
+                .hasMessageNotContaining(kelvinEmail);
+
+        verifyNoInteractions(userRepository, credentialRepository, passwordEncoder);
+    }
 }

@@ -1,7 +1,10 @@
 package com.iwrite.auth;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.iwrite.auth.dto.AuthenticatedUserResponse;
 import com.iwrite.support.TestDatabaseInitializer;
+import com.iwrite.tenant.repository.TenantMembershipRepository;
+import com.iwrite.user.repository.UserCredentialRepository;
 import com.iwrite.user.repository.UserRepository;
 import jakarta.servlet.http.Cookie;
 import org.junit.jupiter.api.AfterEach;
@@ -21,8 +24,6 @@ import org.springframework.security.authentication.ProviderManager;
 import org.springframework.security.authentication.dao.DaoAuthenticationProvider;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.crypto.password.PasswordEncoder;
-import org.springframework.security.web.authentication.session.ChangeSessionIdAuthenticationStrategy;
-import org.springframework.security.web.authentication.session.SessionAuthenticationStrategy;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
@@ -31,6 +32,7 @@ import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilde
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -56,8 +58,14 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * <ul>
  *   <li>{@link RaceConfig#racyAuthenticationManager} pauses (and can fail) registration's own
  *       re-authentication call, before {@link AuthController#establishSession} ever runs — scenario A.</li>
- *   <li>{@link RaceConfig#racySessionAuthenticationStrategy} pauses (and can fail) immediately after
- *       the real session id rotation — after the mutation, before it commits — scenario C.</li>
+ *   <li>{@link RaceConfig#racyAuthSessionService} pauses (and can fail) inside {@code revalidate},
+ *       strictly after {@link AuthController#establishSession} has fully mutated the session and
+ *       released its lock (round 9, #149 review) — after the mutation, before the transaction
+ *       commits — scenario C. Round 8 injected this fault mid-{@code establishSession} instead (right
+ *       after the real session id rotation); round 9 widened {@code establishSession}'s own lock to
+ *       cover its entire body, which would make that injection point deadlock against a concurrent
+ *       login sharing the same lock, so the fault moved to the one place guaranteed to run after the
+ *       lock is released.</li>
  * </ul>
  *
  * <p>Scenario B (registration mutates and is the sole, later cause of an invalidated session) is
@@ -166,18 +174,19 @@ class RegistrationSessionOwnershipRaceIntegrationTest {
     }
 
     /**
-     * Scenario C: registration mutates the session (its own token is written, the id is really
-     * rotated) and only then does a concurrent login on that same session complete and take
-     * ownership; registration's transaction still fails afterward (simulating a late failure, after
-     * the mutation, that is not itself a session/authentication problem — the same shape the class
-     * Javadoc calls out: "the commit itself still fails"). The rollback must preserve the login, not
-     * the registration's own now-superseded mutation.
+     * Scenario C: registration's own {@code establishSession} fully mutates the session (token
+     * written, id really rotated) and releases its lock; only then, inside {@code revalidate} — after
+     * the lock is gone (round 9, #149 review) — does a concurrent login on that same session get the
+     * chance to complete and take ownership, before registration's own transaction still fails
+     * (simulating a late failure that is not itself a session/authentication problem — the same shape
+     * the class Javadoc calls out: "the commit itself still fails"). The rollback must preserve the
+     * login, not the registration's own now-superseded mutation.
      */
     @Test
     void loginQueConcluiDepoisDeCadastroMutarASessaoAssumeAPropriedadeERollbackDoCadastroPreservaOLogin() throws Exception {
         String existingEmail = registerNewAccount();
         String racingEmail = uniqueEmail();
-        // An anonymous session has to exist beforehand: ChangeSessionIdAuthenticationStrategy is a
+        // An anonymous session has to exist beforehand: the real session-authentication strategy is a
         // no-op when there is none, so without this the fault would fire before anything real ever
         // mutated (same reasoning as RegistrationWhileAuthenticatedIntegrationTest's own fault-after-
         // mutation test).
@@ -197,7 +206,7 @@ class RegistrationSessionOwnershipRaceIntegrationTest {
                             .andReturn());
 
             assertThat(registrationReachedSessionMutation.await(10, TimeUnit.SECONDS))
-                    .as("registration reached the point right after its own real session mutation")
+                    .as("registration reached revalidate, strictly after establishSession released its lock")
                     .isTrue();
 
             mockMvc.perform(withCsrf(post("/api/auth/login")).session(sharedSession)
@@ -297,30 +306,36 @@ class RegistrationSessionOwnershipRaceIntegrationTest {
             };
         }
 
-        /** Runs the real strategy first — a real session id rotation, with the ownership token
-         *  already written to the session by {@link AuthController#establishSession} before this
-         *  call — then pauses (and can fail) only for the one email under test, so the fault fires
-         *  strictly after a real mutation. A concurrent login's own call, for a different email,
-         *  passes straight through to the real delegate untouched, both before and after. */
+        /** Delegates every read to the real {@link AuthSessionService}, then pauses (and can fail)
+         *  only for the one principal under test, right inside {@code revalidate} — the one call
+         *  {@link AuthController#currentSession} makes strictly after {@code establishSession} has
+         *  released its lock (round 9, #149 review), so the pause can never block a concurrent flow
+         *  sharing that same lock. A concurrent login's own call, for a different principal, passes
+         *  straight through to the real delegate untouched, both before and after. */
         @Bean
         @Primary
-        SessionAuthenticationStrategy racySessionAuthenticationStrategy() {
-            SessionAuthenticationStrategy delegate = new ChangeSessionIdAuthenticationStrategy();
-            return (authentication, request, response) -> {
-                delegate.onAuthentication(authentication, request, response);
-                String principalEmail = authentication.getName();
-                if (principalEmail.equals(emailToPauseAfterSessionMutation)) {
-                    registrationReachedSessionMutation.countDown();
-                    awaitQuietly(loginCompletedForSessionMutation);
-                    if (failAfterSessionMutationPause) {
-                        // Deliberately not a SessionAuthenticationException: GlobalExceptionHandler's
-                        // handleInvalidSession unconditionally invalidates whatever session currently
-                        // exists on the request, which would defeat this exact scenario (the
-                        // concurrent login's session must survive). A plain unchecked exception here
-                        // stands in for the class Javadoc's "the commit itself still fails" case,
-                        // which is not a session/authentication failure at all.
-                        throw new IllegalStateException("Injected failure for session-ownership race test (scenario C)");
+        AuthSessionService racyAuthSessionService(
+                UserRepository userRepository,
+                UserCredentialRepository credentialRepository,
+                TenantMembershipRepository membershipRepository
+        ) {
+            return new AuthSessionService(userRepository, credentialRepository, membershipRepository) {
+                @Override
+                public Optional<AuthenticatedUserResponse> revalidate(IWriteUserDetails principal) {
+                    if (principal.getUsername().equals(emailToPauseAfterSessionMutation)) {
+                        registrationReachedSessionMutation.countDown();
+                        awaitQuietly(loginCompletedForSessionMutation);
+                        if (failAfterSessionMutationPause) {
+                            // Deliberately not a SessionAuthenticationException: GlobalExceptionHandler's
+                            // handleInvalidSession unconditionally invalidates whatever session currently
+                            // exists on the request, which would defeat this exact scenario (the
+                            // concurrent login's session must survive). A plain unchecked exception here
+                            // stands in for the class Javadoc's "the commit itself still fails" case,
+                            // which is not a session/authentication failure at all.
+                            throw new IllegalStateException("Injected failure for session-ownership race test (scenario C)");
+                        }
                     }
+                    return super.revalidate(principal);
                 }
             };
         }

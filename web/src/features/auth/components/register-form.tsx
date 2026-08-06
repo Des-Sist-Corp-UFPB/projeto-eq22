@@ -56,6 +56,7 @@ export function RegisterForm() {
       return;
     }
 
+    const normalizedDisplayName = javaTrim(displayName);
     const normalizedEmail = javaTrim(email);
     const validation = validate(displayName, email, password, passwordConfirmation);
     setValidationError(validation);
@@ -64,7 +65,7 @@ export function RegisterForm() {
     }
 
     registerMutation.mutate({
-      displayName,
+      displayName: normalizedDisplayName,
       email: normalizedEmail,
       password,
       passwordConfirmation,
@@ -259,7 +260,12 @@ function hasUnpairedSurrogate(value: string): boolean {
 }
 
 function validate(displayName: string, email: string, password: string, passwordConfirmation: string) {
-  const trimmedDisplayName = displayName.trim();
+  // javaTrim, not displayName.trim() (#149 review): the value validated here — and sent in the
+  // payload — must be exactly the value the backend will see (RegistrationService#validateDisplayName
+  // trims with Java's String.trim() first). JavaScript's trim() strips a different, Unicode-
+  // whitespace-based set — e.g. it leaves U+00A0 (no-break space) in place, which Java's trim() does
+  // not, so a name only over length once that trailing U+00A0 survives would pass here but fail there.
+  const trimmedDisplayName = javaTrim(displayName);
   if (!trimmedDisplayName) {
     return "Informe seu nome de exibição.";
   }

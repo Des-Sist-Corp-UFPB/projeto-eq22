@@ -52,29 +52,33 @@ public class AuthController {
     private static final String SESSION_OWNER_TOKEN_ATTRIBUTE = "iwrite.auth.session-owner-token";
 
     /**
-     * One mutex per pre-existing session (#149 review, round 8): every read or write of {@link
-     * #SESSION_OWNER_TOKEN_ATTRIBUTE} for a given session — {@link #markSessionOwnerIfSessionExists},
-     * the reassertion inside {@link #establishSession}, {@link #releaseSessionOwnerIfStillOwned}, and
-     * the ownership read together with {@code invalidate()} inside {@link #discardPartialSession} —
-     * runs inside a {@code synchronized} block on the object {@link #sessionLock} returns for that
-     * session, each such block as short as the one operation it guards. Without this, a registration
-     * rollback could read its own token as still current, then a concurrent login writes its own token
-     * in the gap before the rollback's own {@code invalidate()} runs — destroying a session a
-     * concurrent flow had already, legitimately, taken over.
+     * One mutex per pre-existing session (#149 review, round 8; widened round 9). {@link
+     * #establishSession} holds it for its *entire* critical section — the initial ownership marker,
+     * {@code sessionAuthenticationStrategy.onAuthentication}, the {@link SecurityContext} creation and
+     * {@code saveContext}, and the final ownership reassertion — as one atomic unit, and {@link
+     * #discardPartialSession}'s ownership read together with its {@code invalidate()} runs under the
+     * same lock. Round 8 released the lock between those steps, guarding only the token writes
+     * themselves; that let a login pause after marking its token but before {@code onAuthentication},
+     * a concurrent registration finish establishing its own session and later roll back, and the
+     * rollback's {@code invalidate()} destroy the session the login was still in the middle of
+     * completing. Making the whole operation one critical section per lock removes that window: two
+     * flows sharing a session are fully serialized through {@link #establishSession}/{@link
+     * #discardPartialSession}, never interleaved partway through either.
      *
-     * <p>Deliberately not held across the rest of {@link #establishSession} (session id rotation,
-     * {@code saveContext}, the database round trip in {@link #currentSession}): only the token
-     * attribute itself needs cross-flow atomicity, and holding a session's lock across a database call
-     * would needlessly block unrelated requests, and risks a deadlock with any other code path that
-     * ever needs this same lock and a database connection in the other order.
+     * <p>Deliberately not held across the database round trip in {@link #currentSession} — that runs
+     * after {@link #establishSession} has already released the lock, once the session is fully
+     * established: only the establishment (and its rollback) need cross-flow atomicity, and holding a
+     * session's lock across a database call would needlessly block unrelated requests.
      *
      * <p>The lock is the {@link HttpSession} object itself (see {@link #sessionLock}) — not its id, and
      * not a session-keyed registry that would need its own eviction. A servlet container hands back the
      * exact same {@code HttpSession} instance to every request presenting the same session, and mutates
      * that instance's id in place on rotation rather than replacing it (confirmed against both real
-     * Tomcat sessions and {@code MockHttpSession}, which the round-8 concurrent tests below run
-     * against) — so two concurrent requests that share a session keep sharing the same monitor even
-     * across a rotation triggered by either one of them, with no registry to leak or evict.
+     * Tomcat sessions and {@code MockHttpSession}, which the concurrent tests below run against) — so
+     * two concurrent requests that share a session keep sharing the same monitor even across a
+     * rotation triggered by either one of them, with no registry to leak or evict. {@code synchronized}
+     * is reentrant per thread, so a container operation that itself locks on this same session object
+     * (e.g. a real session-id change) cannot deadlock against the lock this thread already holds.
      */
     static Object sessionLock(HttpSession preexistingSession) {
         return preexistingSession != null ? preexistingSession : new Object();
@@ -199,12 +203,13 @@ public class AuthController {
      * mutation, so whichever flow's {@code establishSession} call ran last is whichever token is
      * still on the session when this one's rollback callback runs.
      *
-     * <p>That comparison and {@code invalidate()} form one critical section (#149 review, round 8):
-     * every touch of the ownership token for this session — here, in {@link #login}, and inside
-     * {@link #discardPartialSession}/{@link #releaseSessionOwnerIfStillOwned} — runs under the same
-     * {@link #sessionLock}, so a concurrent login can never write its own token (or finish saving its
-     * {@link SecurityContext}) in the gap between this method's read of the token and its decision to
-     * invalidate.
+     * <p>That comparison and {@code invalidate()} form one critical section (#149 review, round 8),
+     * and so does the entirety of {@link #establishSession} (round 9) — every touch of the ownership
+     * token or the session it mutates, here, in {@link #login}, and inside {@link
+     * #discardPartialSession}/{@link #releaseSessionOwnerIfStillOwned}, runs under the same {@link
+     * #sessionLock}. A concurrent login can therefore never write its own token, run {@code
+     * onAuthentication}, or save its {@link SecurityContext} partway through this method's own
+     * establishment or rollback decision — the two are fully serialized, not just their token writes.
      */
     @PostMapping("/register")
     @Transactional
@@ -280,11 +285,11 @@ public class AuthController {
      *
      * <p>The token read and {@code invalidate()} below run inside one {@code synchronized} block on
      * {@code lock} (#149 review, round 8) — the same object {@code sessionLock} returns for this
-     * pre-existing session, and the same object {@link #establishSession} and {@link
-     * #releaseSessionOwnerIfStillOwned} synchronize on for their own touches of the token. That is
-     * what makes the read and the invalidation decision atomic with respect to a concurrent flow's
-     * own write of that same attribute: it can only happen strictly before this block starts or
-     * strictly after it ends, never in the middle.
+     * pre-existing session, and the same object {@link #establishSession} (its entire critical
+     * section, round 9) and {@link #releaseSessionOwnerIfStillOwned} synchronize on for their own
+     * touches of the session. That is what makes the read and the invalidation decision atomic with
+     * respect to a concurrent flow's own establishment: it can only happen strictly before this block
+     * starts or strictly after it ends, never in the middle of it.
      */
     private void discardPartialSession(HttpServletRequest httpRequest, String preexistingSessionId, UUID registrationToken, Object lock) {
         synchronized (lock) {
@@ -334,10 +339,14 @@ public class AuthController {
      *
      * <p>{@code lock} must be the object {@code sessionLock} returns for the session that existed
      * before this call — the same one {@link #discardPartialSession} and {@link
-     * #releaseSessionOwnerIfStillOwned} synchronize on for this same session (#149 review, round 8).
-     * Only the two attribute touches below run inside it, each its own short block: the session id
-     * rotation, {@code saveContext} and the database round trip in {@link #currentSession} are
-     * deliberately outside, since only the token attribute itself needs cross-flow atomicity.
+     * #releaseSessionOwnerIfStillOwned} synchronize on for this same session. Round 8 held it only
+     * around each attribute touch; round 9 (#149 review) widened it to the whole method body below —
+     * the marker, {@code onAuthentication}, the {@link SecurityContext} creation and {@code
+     * saveContext}, and the final reassertion all run as one atomic unit, so no other flow sharing
+     * this session can observe or mutate it partway through. Only the database round trip in {@link
+     * #currentSession}, after the session is fully established and the lock released, is deliberately
+     * outside — it needs no cross-flow atomicity, and holding the lock across it would needlessly
+     * block unrelated requests.
      */
     private AuthenticatedUserResponse establishSession(
             Authentication authentication,
@@ -346,32 +355,29 @@ public class AuthController {
             HttpServletResponse httpResponse,
             Object lock
     ) {
-        markSessionOwnerIfSessionExists(httpRequest, ownershipToken, lock);
-        sessionAuthenticationStrategy.onAuthentication(authentication, httpRequest, httpResponse);
-
-        SecurityContext context = SecurityContextHolder.createEmptyContext();
-        context.setAuthentication(authentication);
-        SecurityContextHolder.setContext(context);
-        securityContextRepository.saveContext(context, httpRequest, httpResponse);
-        // Reasserted, not just written once above: saveContext (or the strategy call before it) may
-        // have created a brand-new session, or rotated the id of the one the first write landed on —
-        // either way, the marker must end up on whichever session this request is actually left with.
+        IWriteUserDetails principal;
         synchronized (lock) {
-            httpRequest.getSession(true).setAttribute(SESSION_OWNER_TOKEN_ATTRIBUTE, ownershipToken);
-        }
-
-        return currentSession((IWriteUserDetails) authentication.getPrincipal());
-    }
-
-    /** Synchronizes on {@code lock}, the same object every other touch of this session's ownership
-     *  token uses (#149 review, round 8). */
-    private void markSessionOwnerIfSessionExists(HttpServletRequest httpRequest, UUID ownershipToken, Object lock) {
-        synchronized (lock) {
-            HttpSession session = httpRequest.getSession(false);
-            if (session != null) {
-                session.setAttribute(SESSION_OWNER_TOKEN_ATTRIBUTE, ownershipToken);
+            HttpSession preexisting = httpRequest.getSession(false);
+            if (preexisting != null) {
+                preexisting.setAttribute(SESSION_OWNER_TOKEN_ATTRIBUTE, ownershipToken);
             }
+
+            sessionAuthenticationStrategy.onAuthentication(authentication, httpRequest, httpResponse);
+
+            SecurityContext context = SecurityContextHolder.createEmptyContext();
+            context.setAuthentication(authentication);
+            SecurityContextHolder.setContext(context);
+            securityContextRepository.saveContext(context, httpRequest, httpResponse);
+
+            // Reasserted, not just written once above: saveContext (or the strategy call before it)
+            // may have created a brand-new session, or rotated the id of the one the first write
+            // landed on — either way, the marker must end up on whichever session this request is
+            // actually left with.
+            httpRequest.getSession(true).setAttribute(SESSION_OWNER_TOKEN_ATTRIBUTE, ownershipToken);
+            principal = (IWriteUserDetails) authentication.getPrincipal();
         }
+
+        return currentSession(principal);
     }
 
     @GetMapping("/me")

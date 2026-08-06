@@ -199,6 +199,34 @@ class AuthenticationIntegrationTest extends PostgresIntegrationTest {
         login(prefixEmail, realPassword72Bytes).andExpect(status().isOk());
     }
 
+    // #149 review, round 9: U+212A KELVIN SIGN lowercases to plain ASCII 'k' under Locale.ROOT.
+    // EmailNormalizer.normalize used to lowercase before checking isAscii, so a login attempt using
+    // this code point in place of an ordinary 'k' would resolve to the exact same lookup key as the
+    // real, ASCII-only account — indistinguishable, at the database, from actually knowing that
+    // account's real email. The fixed order must never authenticate it: same generic failure as any
+    // other wrong email, and the real account itself must keep logging in normally afterward.
+    @Test
+    void loginComKelvinSignNoLugarDeKNuncaAutenticaAContaAsciiEquivalente() throws Exception {
+        String kelvinTargetEmail = "kelvin-" + UUID.randomUUID() + "@k.example";
+        UUID kelvinUserId = createUser(kelvinTargetEmail, "Alvo Kelvin", PASSWORD);
+        addMembership(kelvinUserId, createTenant("Espaço Alvo Kelvin").getId());
+
+        String withKelvinSign = kelvinTargetEmail.replaceFirst("@k\\.", "@K.");
+        assertThat(withKelvinSign).isNotEqualTo(kelvinTargetEmail);
+
+        String kelvinAttempt = messagesOf(login(withKelvinSign, PASSWORD)
+                .andExpect(status().isUnauthorized())
+                .andReturn());
+        String wrongPassword = messagesOf(login(kelvinTargetEmail, "senha-completamente-errada")
+                .andExpect(status().isUnauthorized())
+                .andReturn());
+
+        assertThat(kelvinAttempt).isEqualTo(wrongPassword);
+        assertThat(kelvinAttempt).contains(AuthMessages.INVALID_CREDENTIALS);
+        // The real account is unaffected and still logs in normally with its own, real address.
+        login(kelvinTargetEmail, PASSWORD).andExpect(status().isOk());
+    }
+
     @Test
     void loginIsRejectedWithoutCsrfToken() throws Exception {
         mockMvc.perform(post("/api/auth/login")
