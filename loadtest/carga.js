@@ -9,6 +9,16 @@ import exec from 'k6/execution';
 // VUS pretendido.
 const vuAuthSuccess = new Rate('vu_auth_success');
 
+// Contrato EXATO de status das 5 operações principais (ver checkExactStatus()
+// abaixo) — achado do Codex, PR #141, "Gate exact operation statuses instead
+// of HTTP failures": http_req_failed usa a classificação padrão do k6, que
+// trata qualquer resposta 200-399 como sucesso HTTP. Se save_scene regredisse
+// de 200 para, por exemplo, 204, http_req_failed{operation:save_scene}
+// continuaria em 0% (204 é "sucesso" para o k6) mesmo com o contrato do
+// cenário quebrado — só esta Rate, que exige o status EXATO esperado por
+// operação, capturaria a regressão.
+const operationStatusSuccess = new Rate('operation_status_success');
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Teste de carga realista — k6 (issue #129)
 //
@@ -33,6 +43,13 @@ const vuAuthSuccess = new Rate('vu_auth_success');
 // tradicional vira barreira da iteração seguinte sempre que for mais lento
 // que o think time — contrariando o fire-and-forget real do frontend
 // (confirmado empiricamente, não por leitura da documentação: ver PR #141).
+//
+// Autenticação roda ANTES de qualquer offset de ativação, numa janela de
+// preparação isolada (AUTH_PREPARE_MS) que nunca conta como ramp_up/steady/
+// ramp_down — ver loadStartAt() abaixo. Isso garante que a fase "steady"
+// só comece depois que toda VU já autenticou, em vez de misturar VUs ainda
+// autenticando com amostras rotuladas como carga de pico (achado do Codex,
+// PR #141, "Reach peak load before starting the steady phase").
 //
 // IMPORTANTE: NUNCA aponte para Render, produção ou o servidor acadêmico
 // compartilhado (ex.: https://eqNN.dsc.rodrigor.com) — o guard de host abaixo
@@ -225,13 +242,56 @@ const RAMPDOWN_MS = k6DurationToMs(RAMPDOWN_DURATION);
 const HTTP_REQUEST_TIMEOUT = validateK6Duration(__ENV.HTTP_REQUEST_TIMEOUT || '10s', 'HTTP_REQUEST_TIMEOUT');
 const HTTP_REQUEST_TIMEOUT_MS = k6DurationToMs(HTTP_REQUEST_TIMEOUT);
 
+// Janela de preparação (autenticação) ANTES do início da curva de carga
+// medida — achado do Codex, PR #141, "Reach peak load before starting the
+// steady phase": antes, cada VU esperava seu activationOffsetMs() (relativo
+// a exec.scenario.startTime) e só DEPOIS autenticava — a última VU só
+// começava o handshake (GET /api/auth/csrf + POST /api/auth/login) em
+// t=WARMUP_MS, exatamente quando currentPhase() já rotulava amostras como
+// "steady". Se autenticar for lento o bastante (o próprio
+// http_req_duration{operation:auth_login} tolera até 8s de p95, por bcrypt +
+// warmup de JVM), o início de steady é medido com menos que VUS VUs
+// realmente produzindo carga, diluindo os percentis.
+//
+// Correção: toda VU autentica IMEDIATAMENTE no início da sua (única)
+// iteração k6 — nunca depois de esperar seu offset de ativação — e só então
+// espera até seu instante absoluto de ativação, calculado a partir de um
+// novo relógio de carga (loadStartAt(), abaixo), não mais diretamente de
+// exec.scenario.startTime. Como login() agora usa HTTP_REQUEST_TIMEOUT em
+// cada uma das 2 requisições do handshake, o pior caso de UMA tentativa de
+// autenticação (sucesso ou falha terminal) é limitado a
+// 2×HTTP_REQUEST_TIMEOUT_MS — nunca mais que isso, nem quando o handshake
+// trava. AUTH_PREPARE_MS soma uma margem técnica a esse pior caso, e
+// loadStartAt() = exec.scenario.startTime + AUTH_PREPARE_MS garante por
+// construção que QUALQUER autenticação bem-sucedida termina antes de
+// loadStartAt() — logo antes do activationOffsetMs() de qualquer VU (que é
+// sempre >= 0 em relação a loadStartAt(), ver ambas funções abaixo) — sem
+// depender de nenhum agendamento observado, só do teto matemático do
+// timeout.
+const AUTH_PREPARE_MARGIN_MS = 2000; // margem técnica: agendamento de VUS logins ~simultâneos, GC do k6 — não modelado no teto de timeout acima
+const AUTH_PREPARE_MS = 2 * HTTP_REQUEST_TIMEOUT_MS + AUTH_PREPARE_MARGIN_MS;
+
+// Início da curva de carga MEDIDA (ramp_up/steady/ramp_down) — distinto de
+// exec.scenario.startTime, que é quando a VU começa a autenticar (ver
+// AUTH_PREPARE_MS acima). Todo deslocamento de ativação/desativação e toda
+// classificação de fase (currentPhase() abaixo) são relativos a ESTE
+// instante, nunca diretamente a exec.scenario.startTime — é isso que garante
+// que nenhuma operação principal seja despachada antes de todas as VUs
+// terem tido a janela de preparação inteira para autenticar.
+function loadStartAt() {
+  return exec.scenario.startTime + AUTH_PREPARE_MS;
+}
+
 // O executor per-vu-iterations (ver options.scenarios abaixo) inicia as VUS
 // VUs simultaneamente em exec.scenario.startTime — sem o escalonamento
 // automático de VU que options.stages/ramping-vus fazia. default() escalona
 // manualmente sua própria ativação (rampa de subida) e desativação (rampa de
-// descida) por VU, proporcional ao índice __VU (1..VUS): a k-ésima VU (por
-// índice, 1..VUS) entra em t=(k/VUS)×WARMUP_MS e sai em
-// t=WARMUP_MS+STEADY_MS+(k/VUS)×RAMPDOWN_MS.
+// descida) por VU, proporcional ao índice __VU (1..VUS), relativas a
+// loadStartAt() (não a exec.scenario.startTime): a k-ésima VU (por índice,
+// 1..VUS) entra em loadStartAt()+(k/VUS)×WARMUP_MS e sai em
+// loadStartAt()+WARMUP_MS+STEADY_MS+(k/VUS)×RAMPDOWN_MS — os dois offsets
+// abaixo permanecem só a PARTE relativa a loadStartAt(); ver default() para
+// onde loadStartAt() é somado.
 //
 // Essa é a discretização exata do alvo contínuo VUs_ativas(t)=VUS×t/WARMUP_MS
 // (rampa linear 0→VUS): o alvo contínuo cruza o inteiro k exatamente em
@@ -290,7 +350,11 @@ const MAIN_LOOP_GRACE_MS =
   THINK_TIME_MAX_S * 1000 +
   HTTP_REQUEST_TIMEOUT_MS + // drenagem do refresh_outline_after_save pendente
   MAIN_LOOP_MARGIN_MS;
-const MAIN_LOOP_MAX_DURATION = `${WARMUP_MS + STEADY_MS + RAMPDOWN_MS + MAIN_LOOP_GRACE_MS}ms`;
+// AUTH_PREPARE_MS soma-se ao orçamento total (nunca subtrai de
+// warmup/steady/rampdown/grace): a janela de preparação de autenticação
+// acontece ANTES de loadStartAt(), então o teto de maxDuration precisa cobrir
+// os dois trechos em sequência — preparação, depois a curva medida inteira.
+const MAIN_LOOP_MAX_DURATION = `${AUTH_PREPARE_MS + WARMUP_MS + STEADY_MS + RAMPDOWN_MS + MAIN_LOOP_GRACE_MS}ms`;
 
 // setup() cria 1 livro/seção/capítulo/cena por VU, em loop serial: o número
 // de requisições (e portanto o tempo de setup) cresce com VUS, então o
@@ -356,19 +420,27 @@ export const options = {
     // Refetch do outline que o frontend real dispara (invalidateQueries) após
     // um save_scene bem-sucedido, em fire-and-forget genuíno — ver runTurn().
     'http_req_duration{operation:refresh_outline_after_save,phase:steady}': ['p(95)<500'],
-    // Erro por operação, restrito à fase estável: os thresholds globais
-    // (http_req_failed/checks acima) diluem falhas concentradas numa única
-    // operação entre as demais requisições da iteração — com 5 operações por
-    // iteração, uma falha isolada em save_scene também derruba o
-    // refresh_outline_after_save correspondente (ver default()), mas ainda
-    // assim fica abaixo de 1% no total das ~5 operações. Cada operação
-    // principal precisa da própria taxa de erro para que uma operação
-    // degradada não passe escondida atrás das outras quatro saudáveis.
-    'http_req_failed{operation:list_books,phase:steady}': ['rate<0.01'],
-    'http_req_failed{operation:load_outline,phase:steady}': ['rate<0.01'],
-    'http_req_failed{operation:load_scene,phase:steady}': ['rate<0.01'],
-    'http_req_failed{operation:save_scene,phase:steady}': ['rate<0.01'],
-    'http_req_failed{operation:refresh_outline_after_save,phase:steady}': ['rate<0.01'],
+    // Contrato de status EXATO por operação, restrito à fase estável — achado
+    // do Codex, PR #141, "Gate exact operation statuses instead of HTTP
+    // failures": os thresholds globais (http_req_failed/checks acima) diluem
+    // falhas concentradas numa única operação entre as demais requisições da
+    // iteração, e além disso http_req_failed trata QUALQUER resposta
+    // 200-399 como sucesso — uma regressão funcional (ex.: save_scene
+    // passando a devolver 204 em vez de 200) não apareceria em
+    // http_req_failed nem em http_req_failed{operation:save_scene} de jeito
+    // nenhum, só em operationStatusSuccess (ver checkExactStatus() e o
+    // comentário de operationStatusSuccess no topo do arquivo), que exige o
+    // status EXATO que o contrato do cenário especifica (sempre 200 aqui).
+    // Estritamente mais forte que http_req_failed{operation:X} para este
+    // propósito: qualquer status fora do range 200-399 (que http_req_failed
+    // já pegaria) também reprova aqui, então os antigos thresholds
+    // http_req_failed{operation:X,phase:steady} foram removidos em vez de
+    // mantidos em paralelo como redundância.
+    'operation_status_success{operation:list_books,phase:steady}': ['rate>0.99'],
+    'operation_status_success{operation:load_outline,phase:steady}': ['rate>0.99'],
+    'operation_status_success{operation:load_scene,phase:steady}': ['rate>0.99'],
+    'operation_status_success{operation:save_scene,phase:steady}': ['rate>0.99'],
+    'operation_status_success{operation:refresh_outline_after_save,phase:steady}': ['rate>0.99'],
     // Autenticação/setup/teardown: fora do loop medido (rodam 1x, ou VUS
     // vezes já que cada VU também autentica sozinho e setup() cria um livro
     // por VU), orçamento mais folgado só para pegar uma chamada realmente
@@ -441,7 +513,7 @@ function jarCookie(jar, url, name) {
  * lê de volta do jar, no momento da requisição, via `authHeaders(jar)`.
  */
 function login(jar) {
-  const csrfRes = http.get(`${BASE}/api/auth/csrf`, { jar, tags: { operation: 'auth_csrf', name: 'GET /api/auth/csrf' } });
+  const csrfRes = http.get(`${BASE}/api/auth/csrf`, { jar, timeout: HTTP_REQUEST_TIMEOUT, tags: { operation: 'auth_csrf', name: 'GET /api/auth/csrf' } });
   if (csrfRes.status !== 204) {
     throw new Error(`GET /api/auth/csrf retornou ${csrfRes.status}, esperado 204.`);
   }
@@ -455,6 +527,7 @@ function login(jar) {
     JSON.stringify({ email: LOGIN_EMAIL, password: LOGIN_PASSWORD }),
     {
       jar,
+      timeout: HTTP_REQUEST_TIMEOUT,
       headers: { 'Content-Type': 'application/json', 'X-XSRF-TOKEN': csrfToken },
       tags: { operation: 'auth_login', name: 'POST /api/auth/login' },
     }
@@ -712,8 +785,13 @@ function delay(seconds) {
 /**
  * Fase do estágio no instante da chamada: ramp_up (WARMUP_DURATION),
  * steady (STEADY_DURATION) ou ramp_down (RAMPDOWN_DURATION), pelo tempo
- * decorrido desde o início do cenário. Chamada de novo a cada requisição, no
- * momento exato do dispatch (list_books/load_outline/load_scene/save_scene/
+ * decorrido desde loadStartAt() — NUNCA desde exec.scenario.startTime
+ * diretamente (achado do Codex, PR #141, "Reach peak load before starting
+ * the steady phase": medir a partir de exec.scenario.startTime rotulava
+ * amostras como "steady" a partir de WARMUP_MS mesmo que uma VU ainda
+ * estivesse autenticando naquele instante — ver AUTH_PREPARE_MS/
+ * loadStartAt() acima). Chamada de novo a cada requisição, no momento exato
+ * do dispatch (list_books/load_outline/load_scene/save_scene/
  * refresh_outline_after_save) — NUNCA capturada uma vez só e reutilizada para
  * as demais. Antes (uma única `const phase = currentPhase()` no topo do
  * turno) uma iteração que começasse perto de uma borda de fase carregava essa
@@ -726,7 +804,7 @@ function delay(seconds) {
  * elimina essa contaminação por construção.
  */
 function currentPhase() {
-  const elapsedMs = Date.now() - exec.scenario.startTime;
+  const elapsedMs = Date.now() - loadStartAt();
   if (elapsedMs < WARMUP_MS) {
     return 'ramp_up';
   }
@@ -734,6 +812,25 @@ function currentPhase() {
     return 'steady';
   }
   return 'ramp_down';
+}
+
+/**
+ * Roda o check() de status EXATO de uma operação (mesmo nome de check de
+ * sempre, ex. "list_books status 200") e espelha o mesmo booleano na Rate
+ * customizada operationStatusSuccess, tagueada por operation+phase — ver o
+ * comentário de operationStatusSuccess no topo do arquivo para o porquê de
+ * http_req_failed sozinho não bastar. `phase` é sempre recebida como
+ * parâmetro (nunca chamada aqui dentro): o chamador já capturou
+ * currentPhase() no instante do dispatch para tanto a tag da requisição
+ * quanto esta chamada usarem exatamente o mesmo valor — crítico para
+ * refresh_outline_after_save, cujo status só é conhecido bem depois do
+ * dispatch (ver runTurn()).
+ */
+function checkExactStatus(res, checkName, expectedStatus, operation, phase) {
+  const ok = res.status === expectedStatus;
+  check(res, { [checkName]: () => ok });
+  operationStatusSuccess.add(ok, { operation, phase });
+  return ok;
 }
 
 /**
@@ -763,24 +860,26 @@ function currentPhase() {
 async function runTurn(jar, resource, turn) {
   const { bookId, sceneId } = resource;
 
+  const listPhase = currentPhase();
   const listRes = http.get(`${BASE}/api/books`, {
     jar,
     headers: jsonHeaders(jar),
     timeout: HTTP_REQUEST_TIMEOUT,
-    tags: { operation: 'list_books', name: 'GET /api/books', phase: currentPhase() },
+    tags: { operation: 'list_books', name: 'GET /api/books', phase: listPhase },
   });
-  if (!check(listRes, { 'list_books status 200': (r) => r.status === 200 })) {
+  if (!checkExactStatus(listRes, 'list_books status 200', 200, 'list_books', listPhase)) {
     await delay(thinkTime());
     return;
   }
 
+  const outlinePhase = currentPhase();
   const outlineRes = http.get(`${BASE}/api/books/${bookId}/outline`, {
     jar,
     headers: jsonHeaders(jar),
     timeout: HTTP_REQUEST_TIMEOUT,
-    tags: { operation: 'load_outline', name: 'GET /api/books/{bookId}/outline', phase: currentPhase() },
+    tags: { operation: 'load_outline', name: 'GET /api/books/{bookId}/outline', phase: outlinePhase },
   });
-  if (!check(outlineRes, { 'load_outline status 200': (r) => r.status === 200 })) {
+  if (!checkExactStatus(outlineRes, 'load_outline status 200', 200, 'load_outline', outlinePhase)) {
     await delay(thinkTime());
     return;
   }
@@ -789,13 +888,14 @@ async function runTurn(jar, resource, turn) {
   // falha ambígua no PATCH anterior (commitou no servidor mas a resposta se
   // perdeu, por exemplo) nunca produz uma sequência de conflitos de revisão
   // artificiais — a próxima escrita sempre parte do estado real do servidor.
+  const scenePhase = currentPhase();
   const sceneRes = http.get(`${BASE}/api/scenes/${sceneId}`, {
     jar,
     headers: jsonHeaders(jar),
     timeout: HTTP_REQUEST_TIMEOUT,
-    tags: { operation: 'load_scene', name: 'GET /api/scenes/{sceneId}', phase: currentPhase() },
+    tags: { operation: 'load_scene', name: 'GET /api/scenes/{sceneId}', phase: scenePhase },
   });
-  if (!check(sceneRes, { 'load_scene status 200': (r) => r.status === 200 })) {
+  if (!checkExactStatus(sceneRes, 'load_scene status 200', 200, 'load_scene', scenePhase)) {
     await delay(thinkTime());
     return;
   }
@@ -812,6 +912,7 @@ async function runTurn(jar, resource, turn) {
   // de avançar.
   await delay(AUTO_SAVE_DELAY_MS / 1000);
 
+  const savePhase = currentPhase();
   const saveRes = http.patch(
     `${BASE}/api/scenes/${sceneId}/content`,
     JSON.stringify({
@@ -824,9 +925,9 @@ async function runTurn(jar, resource, turn) {
       expectedContentRevision: revision,
       operationId: uuidv4(),
     }),
-    { jar, headers: jsonHeaders(jar), timeout: HTTP_REQUEST_TIMEOUT, tags: { operation: 'save_scene', name: 'PATCH /api/scenes/{sceneId}/content', phase: currentPhase() } }
+    { jar, headers: jsonHeaders(jar), timeout: HTTP_REQUEST_TIMEOUT, tags: { operation: 'save_scene', name: 'PATCH /api/scenes/{sceneId}/content', phase: savePhase } }
   );
-  const saveSucceeded = check(saveRes, { 'save_scene status 200': (r) => r.status === 200 });
+  const saveSucceeded = checkExactStatus(saveRes, 'save_scene status 200', 200, 'save_scene', savePhase);
 
   // Espelha o frontend real: BookWorkspace mantém a query do outline ativa e
   // contentMutation.mutateAsync() dispara `void queryClient.invalidateQueries(...)`
@@ -849,14 +950,23 @@ async function runTurn(jar, resource, turn) {
   // continuar em voo enquanto o próximo turno já está em andamento. status é
   // checado dentro do `.then()` (roda mesmo sem ninguém aguardar a Promise
   // diretamente) e `.catch()` evita qualquer rejeição não tratada.
+  //
+  // refreshPhase é capturada AQUI, antes do dispatch — nunca dentro do
+  // `.then()` — e reutilizada tanto na tag da requisição quanto na chamada
+  // de checkExactStatus() quando a Promise resolve: a fase relevante é a do
+  // INSTANTE EM QUE O REFRESH FOI DISPARADO, não a de quando a resposta
+  // chega bem mais tarde (achado do Codex, PR #141, "Gate exact operation
+  // statuses instead of HTTP failures" — mesmo raciocínio de
+  // "dispatch-time phase" já aplicado às 4 operações síncronas acima).
   if (saveSucceeded) {
+    const refreshPhase = currentPhase();
     http.asyncRequest('GET', `${BASE}/api/books/${bookId}/outline`, null, {
       jar,
       headers: jsonHeaders(jar),
       timeout: HTTP_REQUEST_TIMEOUT,
-      tags: { operation: 'refresh_outline_after_save', name: 'GET /api/books/{bookId}/outline', phase: currentPhase() },
+      tags: { operation: 'refresh_outline_after_save', name: 'GET /api/books/{bookId}/outline', phase: refreshPhase },
     }).then((refreshRes) => {
-      check(refreshRes, { 'refresh_outline_after_save status 200': (r) => r.status === 200 });
+      checkExactStatus(refreshRes, 'refresh_outline_after_save status 200', 200, 'refresh_outline_after_save', refreshPhase);
     }).catch((err) => {
       console.error(`VU ${__VU} turno ${turn}: refresh_outline_after_save falhou: ${err.message}`);
     });
@@ -870,20 +980,28 @@ async function runTurn(jar, resource, turn) {
  * per-vu-iterations) contendo um laço manual de turnos — ver o comentário
  * grande no topo do arquivo e o de runTurn() para o porquê. Cada VU
  * escalona sua própria ativação (rampa de subida) e desativação (rampa de
- * descida) via activationOffsetMs()/deactivationOffsetMs(), reproduzindo a
- * curva agregada de VUs ativas que options.stages/ramping-vus produzia.
+ * descida) via activationOffsetMs()/deactivationOffsetMs(), relativas a
+ * loadStartAt() — reproduzindo a curva agregada de VUs ativas que
+ * options.stages/ramping-vus produzia, mas só a partir do início da carga
+ * medida (ver loadStartAt()/AUTH_PREPARE_MS).
  *
- * Autenticação é tentada exatamente uma vez, sem retry (ver
- * authenticateVuOnce()) — uma falha encerra a VU inteira nesta única
- * iteração, sem gerar tráfego de retry artificial.
+ * Autenticação é a PRIMEIRA coisa que a VU faz, ANTES de esperar qualquer
+ * offset de ativação — nunca depois (achado do Codex, PR #141, "Reach peak
+ * load before starting the steady phase"). Tentada exatamente uma vez, sem
+ * retry (ver authenticateVuOnce()) — uma falha encerra a VU inteira nesta
+ * única iteração, sem gerar tráfego de retry artificial, e sem que nenhuma
+ * operação principal seja despachada. Só depois de autenticar com sucesso a
+ * VU espera até seu instante ABSOLUTO de ativação
+ * (loadStartAt()+activationOffsetMs(__VU)) — nunca um delay relativo à hora
+ * em que a autenticação terminou, o que faria uma autenticação lenta
+ * "empurrar" o início do tráfego principal em vez de simplesmente ficar mais
+ * perto do limite da janela de preparação.
  *
  * Cada VU opera exclusivamente sobre o livro/cena no índice correspondente
  * a __VU (`data[__VU - 1]`), criados 1:1 por setup() — nunca um recurso
  * compartilhado com outra VU.
  */
 export default async function (data) {
-  await delay(activationOffsetMs(__VU) / 1000);
-
   const jar = authenticateVuOnce();
   if (!jar) {
     return;
@@ -895,9 +1013,12 @@ export default async function (data) {
     return;
   }
 
-  const deactivateAt = deactivationOffsetMs(__VU);
+  const activateAt = loadStartAt() + activationOffsetMs(__VU);
+  await delay(Math.max(0, activateAt - Date.now()) / 1000);
+
+  const deactivateAt = loadStartAt() + deactivationOffsetMs(__VU);
   let turn = 0;
-  while (Date.now() - exec.scenario.startTime < deactivateAt) {
+  while (Date.now() < deactivateAt) {
     await runTurn(jar, resource, turn);
     turn++;
   }
