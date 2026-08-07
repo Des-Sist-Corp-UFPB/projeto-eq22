@@ -363,6 +363,7 @@ const MAIN_LOOP_MAX_DURATION = `${AUTH_PREPARE_MS + WARMUP_MS + STEADY_MS + RAMP
 // local; suba SETUP_TIMEOUT/TEARDOWN_TIMEOUT explicitamente para VUS maior.
 const SETUP_TIMEOUT = validateK6Duration(__ENV.SETUP_TIMEOUT || '10m', 'SETUP_TIMEOUT');
 const TEARDOWN_TIMEOUT = validateK6Duration(__ENV.TEARDOWN_TIMEOUT || '10m', 'TEARDOWN_TIMEOUT');
+const SETUP_TIMEOUT_MS = k6DurationToMs(SETUP_TIMEOUT);
 
 // Janela e intervalo de poll da recuperação de livros órfãos (ver
 // recoverOrphanedBookIds()): um POST /api/books que deu timeout pode
@@ -372,6 +373,70 @@ const TEARDOWN_TIMEOUT = validateK6Duration(__ENV.TEARDOWN_TIMEOUT || '10m', 'TE
 // interno do caminho de erro do setup(), não um parâmetro de carga.
 const ORPHAN_RECOVERY_WINDOW_MS = 5000;
 const ORPHAN_RECOVERY_POLL_INTERVAL_S = 0.5;
+
+// Timeout individual de cada GET de recuperação (achado do Codex, PR #141,
+// "Bound each orphan-recovery request"): sem um teto por requisição MENOR
+// que a própria janela, uma única consulta lenta podia sozinha consumir (ou
+// ultrapassar) ORPHAN_RECOVERY_WINDOW_MS inteiro sem que o loop `while
+// (Date.now() < deadline)` de recoverOrphanedBookIds() tivesse chance de
+// reagir — "a recuperação dura no máximo 5s" era falso na prática. Nunca o
+// HTTP_REQUEST_TIMEOUT cheio (pensado para o loop principal, e tipicamente
+// >= a janela de recuperação inteira com os defaults de ambos) — sempre
+// limitado também pelo teto da própria janela.
+const ORPHAN_RECOVERY_REQUEST_TIMEOUT_MS = Math.min(HTTP_REQUEST_TIMEOUT_MS, ORPHAN_RECOVERY_WINDOW_MS);
+
+// Mesmo timeout do loop principal para o DELETE de limpeza de setup() —
+// reaproveita HTTP_REQUEST_TIMEOUT (já dimensionado para ambiente local) em
+// vez de inventar um terceiro valor. É EXATAMENTE este número (nunca outro
+// escolhido só no comentário) que entra em cleanupBudgetMs() abaixo, para
+// que o cálculo de reserva de orçamento e o timeout de fato aplicado ao
+// DELETE nunca divirjam.
+const CLEANUP_DELETE_TIMEOUT_MS = HTTP_REQUEST_TIMEOUT_MS;
+
+// Margem técnica da reserva de cleanup: agendamento de request, parsing de
+// JSON, GC do k6 — não modelada nos termos de cleanupBudgetMs()/
+// MIN_SETUP_BUDGET_MS abaixo.
+const CLEANUP_BUDGET_MARGIN_MS = 2000;
+
+/**
+ * Pior caso de cleanup sequencial de até `knownBookCount` livros (nunca mais
+ * que VUS: um livro por VU é o máximo que setup() pode ter criado) mais a
+ * margem técnica — orçamento que TEM que sobrar dentro de SETUP_TIMEOUT
+ * depois de qualquer falha de provisionamento, para que cleanupBooks()
+ * sempre termine de rodar antes do k6 matar setup() externamente por
+ * SETUP_TIMEOUT (achado do Codex, PR #141, "Bound each orphan-recovery
+ * request" — a reserva de cleanup é o ponto central do achado, não só o
+ * timeout do GET). Usada tanto na validação fail-fast de SETUP_TIMEOUT logo
+ * abaixo quanto, dentro de setup(), antes de cada tentativa de
+ * provisionamento e no cálculo da janela de recuperação depois de uma falha.
+ */
+function cleanupBudgetMs(knownBookCount) {
+  return Math.min(knownBookCount, VUS) * CLEANUP_DELETE_TIMEOUT_MS + CLEANUP_BUDGET_MARGIN_MS;
+}
+
+/**
+ * Orçamento mínimo matematicamente necessário para SETUP_TIMEOUT cobrir,
+ * partindo do pior caso de UMA falha na última VU (i = VUS-1, já com VUS-1
+ * livros conhecidos): a request de provisionamento potencialmente em
+ * andamento no momento da falha (`HTTP_REQUEST_TIMEOUT_MS`, nunca mais que
+ * isso porque todo POST de setup() agora usa esse timeout explícito — ver
+ * setup()) + a janela de recuperação de órfãos inteira
+ * (`ORPHAN_RECOVERY_WINDOW_MS`) + o cleanup sequencial de até `VUS` livros
+ * (`cleanupBudgetMs(VUS)`, que já inclui a margem técnica). Validado UMA
+ * única vez, no carregamento do script — antes de setup() criar qualquer
+ * dado — porque o orçamento necessário cresce com `VUS` (achado do Codex, PR
+ * #141): rejeitar cedo com uma mensagem que já sugere o valor mínimo é
+ * melhor que deixar `setup()` entrar num estado impossível de limpar depois
+ * de já ter criado livros.
+ */
+const MIN_SETUP_BUDGET_MS = HTTP_REQUEST_TIMEOUT_MS + ORPHAN_RECOVERY_WINDOW_MS + cleanupBudgetMs(VUS);
+if (SETUP_TIMEOUT_MS < MIN_SETUP_BUDGET_MS) {
+  throw new Error(
+    `SETUP_TIMEOUT (${SETUP_TIMEOUT}) é insuficiente para VUS=${VUS}: o pior caso de request-em-` +
+    `andamento + recuperação de órfãos + cleanup sequencial de até ${VUS} livro(s) exige pelo menos ` +
+    `${MIN_SETUP_BUDGET_MS}ms. Aumente SETUP_TIMEOUT (ex.: "${Math.ceil(MIN_SETUP_BUDGET_MS / 1000)}s" ou mais).`
+  );
+}
 
 export const options = {
   setupTimeout: SETUP_TIMEOUT,
@@ -602,20 +667,44 @@ function authenticateVuOnce() {
  * do commit e não vê o livro — ele só aparece no servidor um instante
  * depois, sem teardown() para removê-lo. Por isso a varredura repete a
  * consulta em intervalos curtos (ORPHAN_RECOVERY_POLL_INTERVAL_S) por uma
- * janela limitada (ORPHAN_RECOVERY_WINDOW_MS), acumulando IDs sem duplicar
- * (Set), mesmo que alguma consulta no meio do caminho volte vazia — e faz
- * uma última consulta ao final da janela antes de desistir. A janela é
- * limitada por tempo (Date.now() >= deadline), nunca por uma condição que
- * dependa da resposta do servidor, então o loop sempre termina.
+ * janela limitada (`windowMs`, calculada pelo chamador — nunca mais que
+ * ORPHAN_RECOVERY_WINDOW_MS, e possivelmente menos se o orçamento de
+ * SETUP_TIMEOUT restante for mais apertado, ver setup()), acumulando IDs sem
+ * duplicar (Set), mesmo que alguma consulta no meio do caminho volte vazia —
+ * e faz uma última consulta ao final da janela antes de desistir.
+ *
+ * Bounded em três níveis (achado do Codex, PR #141, "Bound each
+ * orphan-recovery request"): o timeout de CADA GET nunca excede o tempo que
+ * ainda resta até o deadline desta janela (`ORPHAN_RECOVERY_REQUEST_TIMEOUT_MS`
+ * como teto, encolhido perto do fim); o `sleep()` entre consultas nunca
+ * ultrapassa o deadline (dorme só o que resta, ou nem dorme, se não sobrar
+ * nada); e a própria janela (`deadline`) é sempre por tempo de parede
+ * (`Date.now() >= deadline`), nunca por uma condição que dependa da resposta
+ * do servidor — então o loop sempre termina, e nunca depois do deadline
+ * (salvo jitter mínimo de scheduling). `windowMs <= 0` pula a varredura por
+ * completo (sem orçamento restante para reconciliar).
  */
-function recoverOrphanedBookIds(jar, runId, createdBookIds) {
+function recoverOrphanedBookIds(jar, runId, createdBookIds, windowMs) {
   const marker = `LOADTEST-${runId}-vu`;
   const recovered = new Set(createdBookIds);
 
+  if (windowMs <= 0) {
+    console.error(`Recuperação de órfãos (runId ${runId}): pulada — sem orçamento de SETUP_TIMEOUT restante para reconciliar antes do cleanup.`);
+    return Array.from(recovered);
+  }
+
+  const deadline = Date.now() + windowMs;
+
   function scanOnce() {
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) {
+      return;
+    }
+    const requestTimeoutMs = Math.min(ORPHAN_RECOVERY_REQUEST_TIMEOUT_MS, remainingMs);
     const listRes = http.get(`${BASE}/api/books`, {
       jar,
       headers: jsonHeaders(jar),
+      timeout: `${requestTimeoutMs}ms`,
       tags: { operation: 'setup_recover_books', name: 'GET /api/books' },
     });
     if (listRes.status !== 200) {
@@ -629,10 +718,16 @@ function recoverOrphanedBookIds(jar, runId, createdBookIds) {
     });
   }
 
-  const deadline = Date.now() + ORPHAN_RECOVERY_WINDOW_MS;
   scanOnce();
   while (Date.now() < deadline) {
-    sleep(ORPHAN_RECOVERY_POLL_INTERVAL_S);
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) {
+      break;
+    }
+    sleep(Math.min(ORPHAN_RECOVERY_POLL_INTERVAL_S, remainingMs / 1000));
+    if (Date.now() >= deadline) {
+      break;
+    }
     scanOnce();
   }
 
@@ -656,6 +751,7 @@ function cleanupBooks(jar, runId, bookIds, originalError) {
     const cleanupRes = http.del(`${BASE}/api/books/${bookId}`, null, {
       jar,
       headers: jsonHeaders(jar),
+      timeout: `${CLEANUP_DELETE_TIMEOUT_MS}ms`,
       tags: { operation: 'setup_cleanup_book', name: 'DELETE /api/books/{bookId}' },
     });
     if (cleanupRes.status !== 204) {
@@ -710,16 +806,44 @@ export function setup() {
   // BookRepository.findByIdAndTenantIdForUpdate), medindo contenção do
   // harness, não latência real de escritas concorrentes de usuários
   // diferentes.
+  // Deadline absoluto de setup() (ver MIN_SETUP_BUDGET_MS acima para a
+  // validação fail-fast de que SETUP_TIMEOUT_MS já é matematicamente
+  // suficiente para VUS). Checado no topo de cada iteração — nunca no meio
+  // do provisionamento de uma VU — porque só o POST /api/books pode gerar um
+  // órfão que precise de recoverOrphanedBookIds(); uma falha em
+  // seção/capítulo/cena já sabe o bookId (createdBookIds já o contém) e vai
+  // direto para cleanupBooks().
+  const setupDeadlineAt = Date.now() + SETUP_TIMEOUT_MS;
+
   const createdBookIds = [];
   const resources = [];
   try {
     for (let i = 0; i < VUS; i++) {
+      // Não inicia mais um livro se, no pior caso (esta request ficar
+      // pendurada até HTTP_REQUEST_TIMEOUT_MS e resultar ambígua), não
+      // sobrar orçamento de SETUP_TIMEOUT para reconciliar (janela de
+      // recuperação inteira) E limpar os livros já conhecidos + este que
+      // está prestes a começar — falha controlada aqui, preservando o erro
+      // original, em vez de esperar o k6 matar setup() de fora (achado do
+      // Codex, PR #141, "Bound each orphan-recovery request").
+      const remainingSetupMs = setupDeadlineAt - Date.now();
+      const requiredForSafeAttemptMs =
+        HTTP_REQUEST_TIMEOUT_MS + ORPHAN_RECOVERY_WINDOW_MS + cleanupBudgetMs(createdBookIds.length + 1);
+      if (remainingSetupMs < requiredForSafeAttemptMs) {
+        throw new Error(
+          `Orçamento de SETUP_TIMEOUT insuficiente para provisionar com segurança o livro ${i + 1}/${VUS} ` +
+          `(restam ${remainingSetupMs}ms, precisa de pelo menos ${requiredForSafeAttemptMs}ms para tentar mais uma ` +
+          `operação e ainda garantir recuperação/cleanup dos ${createdBookIds.length} livro(s) já criado(s), runId ${runId}). ` +
+          `Aumente SETUP_TIMEOUT.`
+        );
+      }
+
       const marker = `LOADTEST-${runId}-vu${i + 1}`;
 
       const bookRes = http.post(
         `${BASE}/api/books`,
         JSON.stringify({ title: marker, status: 'WRITING', targetWordCount: 1000 }),
-        { jar, headers: jsonHeaders(jar), tags: { operation: 'setup_create_book', name: 'POST /api/books' } }
+        { jar, headers: jsonHeaders(jar), timeout: HTTP_REQUEST_TIMEOUT, tags: { operation: 'setup_create_book', name: 'POST /api/books' } }
       );
       if (bookRes.status !== 201) {
         throw new Error(`Criação do livro sintético ${i + 1}/${VUS} falhou com status ${bookRes.status} (runId ${runId}).`);
@@ -730,7 +854,7 @@ export function setup() {
       const sectionRes = http.post(
         `${BASE}/api/books/${bookId}/sections`,
         JSON.stringify({ title: `${marker}-section`, type: 'PART', sortOrder: 0 }),
-        { jar, headers: jsonHeaders(jar), tags: { operation: 'setup_create_section', name: 'POST /api/books/{bookId}/sections' } }
+        { jar, headers: jsonHeaders(jar), timeout: HTTP_REQUEST_TIMEOUT, tags: { operation: 'setup_create_section', name: 'POST /api/books/{bookId}/sections' } }
       );
       if (sectionRes.status !== 201) {
         throw new Error(`Criação da seção sintética ${i + 1}/${VUS} falhou com status ${sectionRes.status} (runId ${runId}).`);
@@ -740,7 +864,7 @@ export function setup() {
       const chapterRes = http.post(
         `${BASE}/api/sections/${sectionId}/chapters`,
         JSON.stringify({ title: `${marker}-chapter`, sortOrder: 0 }),
-        { jar, headers: jsonHeaders(jar), tags: { operation: 'setup_create_chapter', name: 'POST /api/sections/{sectionId}/chapters' } }
+        { jar, headers: jsonHeaders(jar), timeout: HTTP_REQUEST_TIMEOUT, tags: { operation: 'setup_create_chapter', name: 'POST /api/sections/{sectionId}/chapters' } }
       );
       if (chapterRes.status !== 201) {
         throw new Error(`Criação do capítulo sintético ${i + 1}/${VUS} falhou com status ${chapterRes.status} (runId ${runId}).`);
@@ -750,7 +874,7 @@ export function setup() {
       const sceneRes = http.post(
         `${BASE}/api/chapters/${chapterId}/scenes`,
         JSON.stringify({ title: `${marker}-scene`, sortOrder: 0 }),
-        { jar, headers: jsonHeaders(jar), tags: { operation: 'setup_create_scene', name: 'POST /api/chapters/{chapterId}/scenes' } }
+        { jar, headers: jsonHeaders(jar), timeout: HTTP_REQUEST_TIMEOUT, tags: { operation: 'setup_create_scene', name: 'POST /api/chapters/{chapterId}/scenes' } }
       );
       if (sceneRes.status !== 201) {
         throw new Error(`Criação da cena sintética ${i + 1}/${VUS} falhou com status ${sceneRes.status} (runId ${runId}).`);
@@ -759,7 +883,17 @@ export function setup() {
       resources.push({ bookId, sceneId: sceneRes.json('id') });
     }
   } catch (err) {
-    cleanupBooks(jar, runId, recoverOrphanedBookIds(jar, runId, createdBookIds), err);
+    // Janela de recuperação efetivamente disponível: nunca mais que
+    // ORPHAN_RECOVERY_WINDOW_MS, e encolhida se o que resta de SETUP_TIMEOUT
+    // não cobrir a janela cheia mais o cleanup de até createdBookIds.length+1
+    // livros (o +1 cobre o livro cuja criação pode ter ficado ambígua) —
+    // nunca negativa (Math.max com 0), e recoverOrphanedBookIds() trata
+    // 0 como "pular a varredura, ir direto para o cleanup do que já se sabe".
+    const remainingSetupMs = setupDeadlineAt - Date.now();
+    const cleanupReserveMs = cleanupBudgetMs(createdBookIds.length + 1);
+    const recoveryWindowMs = Math.max(0, Math.min(ORPHAN_RECOVERY_WINDOW_MS, remainingSetupMs - cleanupReserveMs));
+    const bookIds = recoverOrphanedBookIds(jar, runId, createdBookIds, recoveryWindowMs);
+    cleanupBooks(jar, runId, bookIds, err);
   }
 
   console.log(`Setup concluído: ${resources.length} livro(s) sintético(s) (1 por VU, runId ${runId}).`);
