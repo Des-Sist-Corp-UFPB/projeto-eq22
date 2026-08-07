@@ -1,8 +1,15 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
-import { fetchSession, login, logout } from "@/features/auth/api/auth-api";
+import {
+  fetchSession,
+  login,
+  logout,
+  register,
+  type AuthenticatedSession,
+  type RegisterInput,
+} from "@/features/auth/api/auth-api";
 import { markReconciliationStart, purgeAuthenticatedCaches } from "@/features/auth/session-cache";
 import { announceSessionChanged } from "@/features/auth/session-sync";
 import { SESSION_QUERY_KEY } from "@/features/auth/session-query-key";
@@ -23,6 +30,27 @@ export function useSession() {
   });
 }
 
+/**
+ * Shared by {@link useLogin} and {@link useRegister}: both end with a brand-new, freshly
+ * authenticated session that must replace whatever the client had cached before, exactly the same
+ * way in both cases — everything cached belongs to the previous tenant (even a login/register as
+ * the same account, since the client has no trustworthy tenantId to prove otherwise). Cancel
+ * in-flight work first so a stale response can't repopulate the cache after the purge below, purge,
+ * then advance the reconciliation generation so any straggler mutation still in flight recognizes
+ * itself as stale (session-cache.ts) — all of it before the new session is ever stored, so no
+ * content from the old tenant can exist between storing the new session and the library's first
+ * render under it.
+ */
+async function applyNewSession(queryClient: QueryClient, router: ReturnType<typeof useRouter>, session: AuthenticatedSession) {
+  await queryClient.cancelQueries();
+  purgeAuthenticatedCaches(queryClient);
+  markReconciliationStart(queryClient);
+
+  queryClient.setQueryData(SESSION_QUERY_KEY, session);
+  announceSessionChanged();
+  router.replace("/library");
+}
+
 export function useLogin() {
   const queryClient = useQueryClient();
   const router = useRouter();
@@ -34,22 +62,20 @@ export function useLogin() {
     // mistyped-password attempt to switch accounts never ends (or announces the end of) a session that
     // is still valid on the server.
     meta: { ignoreGlobalSessionExpiry: true },
-    onSuccess: async (session) => {
-      // Everything cached belongs to the previous tenant — even a login as the same account, since
-      // the client has no trustworthy tenantId to prove it is safe to keep anything. Cancel in-flight
-      // work first so a stale response can't repopulate the cache after the purge below, purge, then
-      // advance the reconciliation generation so any straggler mutation still in flight recognizes
-      // itself as stale (session-cache.ts) — all of it before the new session is ever stored, so no
-      // content from the old tenant can exist between storing the new session and the library's first
-      // render under it.
-      await queryClient.cancelQueries();
-      purgeAuthenticatedCaches(queryClient);
-      markReconciliationStart(queryClient);
+    onSuccess: (session) => applyNewSession(queryClient, router, session),
+  });
+}
 
-      queryClient.setQueryData(SESSION_QUERY_KEY, session);
-      announceSessionChanged();
-      router.replace("/library");
-    },
+export function useRegister() {
+  const queryClient = useQueryClient();
+  const router = useRouter();
+
+  return useMutation({
+    mutationFn: (input: RegisterInput) => register(input),
+    // Same rationale as useLogin: an email-already-used (409) or a validation failure (400) from
+    // this mutation is a local form error, never a revoked session.
+    meta: { ignoreGlobalSessionExpiry: true },
+    onSuccess: (session) => applyNewSession(queryClient, router, session),
   });
 }
 

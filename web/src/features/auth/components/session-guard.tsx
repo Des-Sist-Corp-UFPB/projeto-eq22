@@ -10,7 +10,11 @@ import { useSession } from "@/features/auth/session";
 import { useSessionReconciliation } from "@/features/auth/session-sync";
 
 const LOGIN_ROUTE = "/login";
+const REGISTER_ROUTE = "/register";
 const LIBRARY_ROUTE = "/library";
+/** Public, unauthenticated destinations: render immediately, no session required, and whoever
+ *  already has one is bounced to the library instead of staying on either. */
+const PUBLIC_AUTH_ROUTES = [LOGIN_ROUTE, REGISTER_ROUTE];
 
 /**
  * Convenience, not authorization. The backend refuses every unauthenticated request on its own;
@@ -24,7 +28,7 @@ export function SessionGuard({ children }: { children: ReactNode }) {
   // Mounted unconditionally (not just on protected routes) so a login in another tab is still
   // picked up while this tab happens to be sitting on /login.
   const isReconciling = useSessionReconciliation();
-  const isLoginRoute = pathname === LOGIN_ROUTE;
+  const isPublicAuthRoute = PUBLIC_AUTH_ROUTES.includes(pathname);
   const hadSession = useRef(false);
 
   useEffect(() => {
@@ -34,22 +38,23 @@ export function SessionGuard({ children }: { children: ReactNode }) {
 
     if (session) {
       hadSession.current = true;
-      if (isLoginRoute) {
+      if (isPublicAuthRoute) {
         router.replace(LIBRARY_ROUTE);
       }
       return;
     }
 
-    if (!isLoginRoute) {
+    if (!isPublicAuthRoute) {
       // Having held a session in this session of the app means it ended rather than never existed,
       // which is the difference between "your session expired" and a plain login screen.
       router.replace(hadSession.current ? `${LOGIN_ROUTE}?reason=expired` : LOGIN_ROUTE);
     }
-  }, [isPending, isError, session, isLoginRoute, router]);
+  }, [isPending, isError, session, isPublicAuthRoute, router]);
 
-  // The login screen renders whatever the session says: it is the destination of every redirect,
-  // and gating it on a resolved session would leave a logged-out reader looking at a spinner.
-  if (isLoginRoute) {
+  // Login and register render whatever the session says: they are the destination of every
+  // redirect, and gating them on a resolved session would leave a logged-out reader looking at a
+  // spinner.
+  if (isPublicAuthRoute) {
     return <>{children}</>;
   }
 

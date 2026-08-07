@@ -111,6 +111,10 @@ iwrite:
       enabled: ${IWRITE_CREDENTIAL_PROVISIONING_ENABLED:false}
       email: ${IWRITE_CREDENTIAL_PROVISIONING_EMAIL:}
       password: ${IWRITE_CREDENTIAL_PROVISIONING_PASSWORD:}
+      # Off by default: an existing credential is left untouched. Set to true only for the one boot
+      # that rotates it (see CredentialProvisioningRunner's class doc for the upgrade procedure), and
+      # unset again afterward with the other three variables.
+      replace-existing: ${IWRITE_CREDENTIAL_PROVISIONING_REPLACE_EXISTING:false}
     # Peers allowed to supply X-Forwarded-For/Forwarded for the login rate limiter's origin
     # dimension; see ClientAddressResolver. Comma-separated IPs, CIDRs, or hostnames (resolved by
     # DNS on every check). Empty by default: no peer is trusted and the TCP peer address is always
@@ -124,6 +128,13 @@ iwrite:
       max-attempts-per-account: ${IWRITE_LOGIN_RATE_LIMIT_MAX_PER_ACCOUNT:8}
       max-tracked-keys: ${IWRITE_LOGIN_RATE_LIMIT_MAX_TRACKED_KEYS:10000}
       window: ${IWRITE_LOGIN_RATE_LIMIT_WINDOW:1m}
+    # Own budget for POST /api/auth/register; see RegistrationRateLimiter. Origin only — a
+    # registration always targets a brand-new email, so an account dimension would not add
+    # protection an origin dimension does not already provide.
+    registration-rate-limit:
+      max-attempts-per-origin: ${IWRITE_REGISTRATION_RATE_LIMIT_MAX_PER_ORIGIN:10}
+      max-tracked-keys: ${IWRITE_REGISTRATION_RATE_LIMIT_MAX_TRACKED_KEYS:10000}
+      window: ${IWRITE_REGISTRATION_RATE_LIMIT_WINDOW:1m}
   current-user:
     development:
       enabled: ${IWRITE_DEVELOPMENT_CURRENT_USER_ENABLED:false}

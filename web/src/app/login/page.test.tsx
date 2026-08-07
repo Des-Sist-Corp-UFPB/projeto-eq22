@@ -35,6 +35,13 @@ describe("página de login", () => {
     expect(buttons.join(" ")).not.toMatch(/Google|Apple|SSO|Criar conta|Cadastr|Esqueci/i);
   });
 
+  test("oferece uma ação visível para criar conta, levando a /register", async () => {
+    await renderLoginPage();
+
+    const createAccount = screen.getByRole("link", { name: "Criar conta" });
+    expect(createAccount).toHaveAttribute("href", "/register");
+  });
+
   test("prioriza o formulário no mobile e esconde a arte decorativa", async () => {
     const { container } = await renderLoginPage();
 

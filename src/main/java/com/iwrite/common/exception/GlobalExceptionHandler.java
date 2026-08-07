@@ -2,6 +2,8 @@ package com.iwrite.common.exception;
 
 import com.iwrite.auth.AuthMessages;
 import com.iwrite.auth.LoginRateLimitExceededException;
+import com.iwrite.auth.RegistrationMessages;
+import com.iwrite.auth.RegistrationRateLimitExceededException;
 import com.iwrite.llm.gateway.LlmExecutionException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpSession;
@@ -68,13 +70,21 @@ public class GlobalExceptionHandler {
      * {@code /api/auth/me}. Otherwise a session revoked on a tenant-scoped endpoint like
      * {@code /api/books} would keep answering 401 without ever being destroyed, and recreating the
      * same membership would silently re-authorize the old cookie without a new login.
+     *
+     * <p>{@code invalidate} can race {@code AuthController#discardPartialSession}, which invalidates
+     * the same session on a rolled-back registration before this handler ever runs — the second
+     * caller finds it already gone, which is fine, not a state to fail on.
      */
     @ExceptionHandler(SessionAuthenticationException.class)
     public ResponseEntity<ApiErrorResponse> handleInvalidSession(
             SessionAuthenticationException exception, HttpServletRequest request) {
         HttpSession session = request.getSession(false);
         if (session != null) {
-            session.invalidate();
+            try {
+                session.invalidate();
+            } catch (IllegalStateException alreadyInvalidated) {
+                // Already invalidated by the other cleanup path; nothing left to do.
+            }
         }
         SecurityContextHolder.clearContext();
         return buildResponse(HttpStatus.UNAUTHORIZED, List.of(AuthMessages.SESSION_EXPIRED));
@@ -94,6 +104,12 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(LoginRateLimitExceededException.class)
     public ResponseEntity<ApiErrorResponse> handleLoginRateLimited(LoginRateLimitExceededException exception) {
         return buildResponse(HttpStatus.TOO_MANY_REQUESTS, List.of(AuthMessages.TOO_MANY_LOGIN_ATTEMPTS));
+    }
+
+    /** Registration's own budget, tracked separately from {@link #handleLoginRateLimited}. */
+    @ExceptionHandler(RegistrationRateLimitExceededException.class)
+    public ResponseEntity<ApiErrorResponse> handleRegistrationRateLimited(RegistrationRateLimitExceededException exception) {
+        return buildResponse(HttpStatus.TOO_MANY_REQUESTS, List.of(RegistrationMessages.TOO_MANY_REGISTRATION_ATTEMPTS));
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
