@@ -22,20 +22,25 @@ lê/escreve o livro/cena no índice correspondente ao seu `__VU`.
 
 Cada VU roda uma única iteração k6 (`options.scenarios.default`, executor
 `per-vu-iterations`) contendo um laço interno manual de turnos — não uma
-iteração k6 por turno (`options.stages`/`ramping-vus`, usado antes). Cada VU
-escalona sua própria rampa de subida/descida (`activationOffsetMs()`/
-`deactivationOffsetMs()` em `carga.js`): a k-ésima VU (por índice, 1..`VUS`)
-entra em `t=(k/VUS)×WARMUP_DURATION` e sai em
-`t=WARMUP_DURATION+STEADY_DURATION+(k/VUS)×RAMPDOWN_DURATION` — a
-discretização exata do alvo contínuo `VUs_ativas(t)=VUS×t/WARMUP_DURATION`
+iteração k6 por turno (`options.stages`/`ramping-vus`, usado antes). Antes
+de qualquer tráfego principal, a VU autentica (ver [§3](#3-autenticação)) e
+só então espera até seu instante absoluto de ativação, relativo ao início
+da curva de carga MEDIDA — `loadStartAt()`, que começa depois de uma janela
+de preparação de autenticação, não em `exec.scenario.startTime` diretamente
+(ver [§3](#3-autenticação)). A partir daí, cada VU escalona sua própria
+rampa de subida/descida (`activationOffsetMs()`/`deactivationOffsetMs()` em
+`carga.js`): a k-ésima VU (por índice, 1..`VUS`) entra em
+`loadStartAt()+(k/VUS)×WARMUP_DURATION` e sai em
+`loadStartAt()+WARMUP_DURATION+STEADY_DURATION+(k/VUS)×RAMPDOWN_DURATION` —
+a discretização exata do alvo contínuo `VUs_ativas(t)=VUS×t/WARMUP_DURATION`
 (rampa linear 0→VUS), garantindo que a última VU cubra o extremo exato de
 cada rampa, sem cauda ociosa (achado do Codex, PR #141 — "Cover the full ramp
 interval with VU offsets"; ver o comentário de `activationOffsetMs()` em
 `carga.js` para a tabela de verificação). É uma **aproximação discreta
 equivalente ao `ramping-vus` só nesses pontos de ativação/desativação** — não
 uma cópia bit-a-bit do algoritmo interno do executor; a ordem exata de qual
-VU entra/sai primeiro pode diferir. Motivo: é a única
-forma de o passo 6 abaixo (`refresh_outline_after_save`) rodar em
+VU entra/sai primeiro pode diferir. Motivo da iteração única por VU: é a
+única forma de o passo 6 abaixo (`refresh_outline_after_save`) rodar em
 fire-and-forget genuíno no k6 v2.1.0 — confirmado empiricamente que o k6
 sempre drena todas as Promises pendentes de uma iteração, mesmo as nunca
 aguardadas, antes de considerá-la concluída, então qualquer Promise
@@ -82,8 +87,10 @@ Fluxo por VU, a cada turno do laço interno:
 
 Cada requisição das 5 operações acima também carrega uma tag `phase`
 (`ramp_up`/`steady`/`ramp_down`), calculada a cada dispatch de requisição
-(não mais uma vez por turno) a partir de `exec.scenario.startTime`
-(k6/execution) e das durações configuradas
+(não mais uma vez por turno) a partir de `loadStartAt()` — o início da curva
+medida, depois da janela de preparação de autenticação (ver
+[§3](#3-autenticação)), não diretamente de `exec.scenario.startTime` — e das
+durações configuradas
 (`WARMUP_DURATION`/`STEADY_DURATION`/`RAMPDOWN_DURATION`) — ver
 [§7](#7-thresholds) para por que isso importa para os thresholds.
 
@@ -260,17 +267,42 @@ faz o próprio handshake, no seu próprio cookie jar isolado do k6:
    o token a ninguém — só `[{ bookId, sceneId }, ...]` (ver
    [§5](#5-dados-sintéticos-e-limpeza)).
 
+**Autenticação roda ANTES de qualquer offset de ativação, numa janela de
+preparação isolada** (achado do Codex, PR #141, "Reach peak load before
+starting the steady phase"). Antes, cada VU esperava seu
+`activationOffsetMs()` e só DEPOIS autenticava — a última VU só começava o
+handshake em `t=WARMUP_MS`, exatamente quando `currentPhase()` já rotulava
+amostras como `steady`; se autenticar fosse lento (o próprio
+`http_req_duration{operation:auth_login}` tolera até `8s` de p95), o início
+de `steady` era medido com menos que `VUS` VUs realmente produzindo carga.
+Agora toda VU autentica **imediatamente** no início da sua iteração k6, e
+`login()` usa `HTTP_REQUEST_TIMEOUT` ([§6](#6-executando)) em cada uma das 2
+requisições do handshake — o pior caso de uma tentativa de autenticação
+(sucesso ou falha terminal) é limitado a `2×HTTP_REQUEST_TIMEOUT_MS`. Um
+novo relógio de carga, `loadStartAt() = exec.scenario.startTime +
+AUTH_PREPARE_MS` (`AUTH_PREPARE_MS = 2×HTTP_REQUEST_TIMEOUT_MS + margem`),
+garante por construção que toda autenticação bem-sucedida termina antes de
+`loadStartAt()` — logo antes do instante de ativação de qualquer VU, que é
+sempre `loadStartAt()+activationOffsetMs(vuIndex)` (nunca antes). Só depois
+de autenticar com sucesso a VU espera até esse instante absoluto — nunca um
+delay relativo ao momento em que a autenticação terminou, o que faria uma
+autenticação lenta "empurrar" o início do tráfego principal em vez de
+simplesmente consumir mais da margem da janela de preparação. Ver "Prova da
+janela de preparação de autenticação" em [§9](#9-resultados-obtidos) para a
+validação empírica (`VUS=1/2/10`, inclusive com login artificialmente lento).
+
 **Nenhuma falha de login de VU é tolerada — e nenhuma gera retry.** Cada
 autenticação bem/mal sucedida incrementa a métrica `vu_auth_success`
 (`k6/metrics.Rate`) exatamente uma vez por VU, com threshold `rate==1` sem
 tolerância ([§7](#7-thresholds)) — uma única falha reprova o `k6 run` inteiro
-ao final. Como `authenticateVuOnce()` só roda uma vez (default() agora só tem
-uma iteração k6 por VU — ver [§1](#1-o-que-o-teste-faz)), uma falha aqui é
-terminal por construção: não existe "próxima iteração" desta VU para
-retentar. Antes (quando `default()` era chamada de novo a cada iteração k6),
-uma falha persistente virava uma tempestade de retries — cada iteração
-subsequente da mesma VU tentava o handshake de novo após só 0.3-1s de think
-time, consumindo o orçamento de rate-limit de login da conta/origem e podendo
+ao final, e nenhuma operação principal é despachada por essa VU. Como
+`authenticateVuOnce()` só roda uma vez (default() agora só tem uma iteração
+k6 por VU — ver [§1](#1-o-que-o-teste-faz)), uma falha aqui é terminal por
+construção: não existe "próxima iteração" desta VU para retentar. Antes
+(quando `default()` era chamada de novo a cada iteração k6), uma falha
+persistente virava uma tempestade de retries — cada iteração subsequente da
+mesma VU tentava o handshake de novo após só 0.3-1s de think time,
+consumindo o orçamento de rate-limit de login da conta/origem e podendo
 impedir até o login de `teardown()` (achado do Codex, PR #141, ver
 [§9](#9-resultados-obtidos)). Sem retry, esse orçamento fica preservado para
 `teardown()` limpar os livros sintéticos das outras VUs mesmo quando alguma
@@ -501,6 +533,27 @@ deadline individual (o instante em que cada um foi disparado +
 vários. Com os defaults (`HTTP_REQUEST_TIMEOUT=10s`, `AUTO_SAVE_DELAY_MS=1200`,
 `THINK_TIME_MAX_S=1`), a folga é `4×10s + 1.2s + 1s + 10s + 5s = 57.2s`.
 
+**Janela de preparação de autenticação (achado do Codex, PR #141 — "Reach
+peak load before starting the steady phase"):** antes de `WARMUP_DURATION`
+começar a contar, `maxDuration` soma mais `AUTH_PREPARE_MS` — a janela em
+que toda VU autentica antes de esperar seu offset de ativação (ver
+[§3](#3-autenticação)):
+
+```
+AUTH_PREPARE_MS = 2×HTTP_REQUEST_TIMEOUT   // as 2 requisições do handshake (csrf + login)
+                 + 2000ms                  // margem técnica: VUS logins ~simultâneos, GC do k6
+```
+
+Com o default (`HTTP_REQUEST_TIMEOUT=10s`), `AUTH_PREPARE_MS = 22s`. O
+orçamento total de `maxDuration` passa a ser:
+
+```
+AUTH_PREPARE_MS + WARMUP_DURATION + STEADY_DURATION + RAMPDOWN_DURATION + <folga acima>
+```
+
+nunca reduzindo warmup/steady/rampdown/grace — com os defaults completos,
+`22s + 30s + 2m + 30s + 57.2s = 4m19.2s`.
+
 `SETUP_TIMEOUT`/`TEARDOWN_TIMEOUT` são validados antes de rodar (regex de
 duração do k6: unidades `ms`/`s`/`m`/`h` encadeadas, cada uma com parte
 fracionária opcional — `10m`, `90s`, `1h30m`, `0.5m`, `1.5s` são todos
@@ -633,7 +686,7 @@ checks                       > 99%
 vu_auth_success               == 100%   (zero tolerância — ver §3)
 http_req_duration p(95)      < 500ms   (global — todas as fases, todas as requisições)
 http_req_duration p(95)      < 500ms   (por operação principal, SÓ fase estável: list_books, load_outline, load_scene, save_scene, refresh_outline_after_save — tag phase:steady)
-http_req_failed  rate        < 1%      (por operação principal, SÓ fase estável — as mesmas 5 operações acima)
+operation_status_success rate > 99%    (por operação principal, SÓ fase estável — status EXATO esperado, não a classificação HTTP 200-399 padrão do k6, ver abaixo)
 http_req_duration p(95)      < 2000ms  (auth/setup/teardown — fora do loop medido)
 http_req_duration p(95)      < 8000ms  (auth_login — bcrypt + cold start da JVM, ver §9)
 ```
@@ -648,19 +701,26 @@ rodam 1x ou `VUS` vezes por execução, nunca sob a carga em regime.
 única falha de login de VU nunca pode "passar" reduzindo a carga
 silenciosamente — ver [§3](#3-autenticação).
 
-**Por que thresholds de erro por operação, além do `http_req_failed` global:**
-o global dilui uma falha concentrada numa única operação entre as outras
-quatro requisições do mesmo turno — 4% de falha isolada em `save_scene`
-ainda fica bem abaixo de 1% no total agregado de 5 operações, então o `k6
-run` passaria mesmo com 1 em cada 25 saves quebrado. Os 5 thresholds
-`http_req_failed{operation:X,phase:steady}` (`rate<0.01`) avaliam a taxa de
-erro de cada operação isoladamente, restrita à fase estável pelo mesmo
-motivo do parágrafo acima. Validado com fault injection concentrada em
-`save_scene` (ver [§9](#9-resultados-obtidos)): `http_req_failed` global
-ficou em 0.68% (passou) enquanto
-`http_req_failed{operation:save_scene,phase:steady}` ficou em 3.61%
-(rompeu) — o `k6 run` saiu com código diferente de zero só por causa do
-threshold por operação.
+**Por que `operation_status_success`, e não `http_req_failed{operation:X}`,
+por operação:** `http_req_failed` global dilui uma falha concentrada numa
+única operação entre as outras quatro requisições do mesmo turno — 4% de
+falha isolada em `save_scene` ainda fica bem abaixo de 1% no total agregado
+de 5 operações. Além disso, `http_req_failed` usa a classificação padrão do
+k6, que trata **qualquer resposta 200-399 como sucesso HTTP** — mas o
+contrato deste cenário exige especificamente `200`. Uma regressão funcional
+(ex.: `save_scene` passando a devolver `204` em vez de `200`) não apareceria
+em `http_req_failed` nem em `http_req_failed{operation:save_scene}` de jeito
+nenhum, porque `204` também é "sucesso" para essa classificação — só
+`operation_status_success` (Rate customizada, tag `operation`+`phase`,
+alimentada por `checkExactStatus()` com o status EXATO esperado) captura
+essa regressão (achado do Codex, PR #141, "Gate exact operation statuses
+instead of HTTP failures"). Validado com fault injection (servidor local
+regredindo `4%` dos `PATCH` de `200` para `204`, ver
+[§9](#9-resultados-obtidos)): `http_req_failed` global e
+`http_req_failed{operation:save_scene}` ficaram em `0.00%` (ambos
+passariam) enquanto `operation_status_success{operation:save_scene,
+phase:steady}` caiu para `96.00%` e reprovou o threshold — o `k6 run` saiu
+com código diferente de zero só por causa do gate de status exato.
 
 **Por que `phase:steady` e não a operação sem filtro:** os estágios de
 `WARMUP_DURATION`/`RAMPDOWN_DURATION` rodam com menos VUs que o pico
@@ -668,7 +728,8 @@ threshold por operação.
 que os 2 minutos de `STEADY_DURATION` dilui o percentil — um threshold podia
 "passar" mesmo que a carga em regime, sozinha, já rompesse o teto. A fase é
 recalculada a cada dispatch de requisição (`currentPhase()` em `carga.js`,
-via `exec.scenario.startTime` do módulo `k6/execution` e as durações
+via `loadStartAt()` — o início da curva medida, depois da janela de
+preparação de autenticação, ver [§3](#3-autenticação) — e as durações
 configuradas, convertidas para ms por `k6DurationToMs()`) — **não** mais uma
 vez só no topo do turno: um turno que atravesse uma borda de fase durante o
 debounce de `AUTO_SAVE_DELAY_MS` (1200ms) pode legitimamente ter
@@ -818,8 +879,58 @@ antes dele; o efeito só aparece quando o outline está degradado — ver
 
 Os achados 1 e 3 alteram `loadtest/carga.js` e por isso exigiram nova
 medição completa (novo `measured_code_commit`, novo blob, novo SHA-256,
-smoke/10 VUs/30 VUs remedidos) — ver "Resultados desta rodada" abaixo. Os
-achados 2 e 4 são só de documentação/leitura dos dados já coletados.
+smoke/10 VUs/30 VUs remedidos naquela rodada). Os achados 2 e 4 são só de
+documentação/leitura dos dados já coletados.
+
+### Rodada seguinte — 2 novos P2 do Codex sobre `f98275a` (código medido anterior: `fbd98db`)
+
+1. **"Reach peak load before starting the steady phase".** Cada VU esperava
+   seu `activationOffsetMs()` (relativo a `exec.scenario.startTime`) e só
+   DEPOIS autenticava — a última VU só começava o handshake (`GET
+   /api/auth/csrf` + `POST /api/auth/login`) em `t=WARMUP_MS`, exatamente
+   quando `currentPhase()` já rotulava amostras como `steady`. Se autenticar
+   fosse lento o bastante (o próprio `http_req_duration{operation:
+   auth_login}` tolera até `8s` de p95, por bcrypt + warmup de JVM), o
+   início de `steady` era medido com menos que `VUS` VUs realmente
+   produzindo carga, diluindo os percentis. Corrigido separando autenticação
+   da curva medida: toda VU autentica **imediatamente** no início da sua
+   iteração k6 (antes de qualquer espera), `login()` passou a usar
+   `HTTP_REQUEST_TIMEOUT` em cada uma das 2 requisições do handshake, e um
+   novo relógio de carga `loadStartAt() = exec.scenario.startTime +
+   AUTH_PREPARE_MS` (`AUTH_PREPARE_MS = 2×HTTP_REQUEST_TIMEOUT_MS + margem`)
+   garante por construção que toda autenticação bem-sucedida termina antes
+   de `loadStartAt()` — logo antes do `activationOffsetMs()` de qualquer VU,
+   que passou a ser relativo a `loadStartAt()`, nunca mais a
+   `exec.scenario.startTime` diretamente. `currentPhase()` também passou a
+   medir a partir de `loadStartAt()`. `maxDuration` passou a somar
+   `AUTH_PREPARE_MS` ao orçamento total, sem reduzir
+   warmup/steady/rampdown/grace — ver [§6](#6-executando) para a fórmula e
+   "Prova da janela de preparação de autenticação" abaixo para a validação
+   empírica.
+2. **"Gate exact operation statuses instead of HTTP failures".** Os 5
+   thresholds de erro por operação usavam `http_req_failed`, cuja
+   classificação padrão trata qualquer resposta `200-399` como sucesso —
+   mas o contrato deste cenário exige especificamente `200`. Se, por
+   exemplo, `4%` das respostas `save_scene` regredissem de `200` para
+   `204`, `http_req_failed{operation:save_scene}` continuaria em `0%`
+   (`204` é "sucesso HTTP" para o k6) e as falhas ficariam diluídas entre os
+   demais checks — o contrato quebrado passaria despercebido. Corrigido com
+   uma `Rate` customizada (`operation_status_success`, tag `operation`+
+   `phase`) alimentada pelo mesmo booleano do `check()` de status exato via
+   `checkExactStatus()` — substituindo os 5
+   `http_req_failed{operation:X,phase:steady}` por 5
+   `operation_status_success{operation:X,phase:steady}: ['rate>0.99']`,
+   estritamente mais fortes para este propósito (qualquer status fora do
+   range `200-399` que `http_req_failed` já pegaria também reprova aqui, daí
+   a remoção dos thresholds antigos em vez de mantê-los em paralelo como
+   redundância). `phase` é capturada uma única vez por requisição — inclusive
+   antes do `http.asyncRequest()` do refresh, nunca dentro do `.then()` — e
+   reutilizada tanto na tag quanto na chamada de `checkExactStatus()`, mesmo
+   raciocínio de "dispatch-time phase" já usado nas rodadas anteriores. Ver
+   "Prova do contrato de status exato" abaixo para a fault injection.
+
+Os dois achados alteram `loadtest/carga.js` e exigiram nova medição
+completa. Ver "Resultados desta rodada" abaixo para os números atuais.
 
 **Hierarquia de confiança pós-squash** (achado do Codex, PR #141: um squash
 anterior nesta mesma PR — `e8ffa7b`, único pai `c9921c9` — já provou que
@@ -827,17 +938,17 @@ anterior nesta mesma PR — `e8ffa7b`, único pai `c9921c9` — já provou que
 onde a medição rodou pode deixar de ser alcançável assim que a branch de
 desenvolvimento for removida):
 
-- **`measured_code_commit`**: `fbd98dbdfa9cf6fb2487204c69fc6c4e26be0e9b` — o
+- **`measured_code_commit`**: `56b9303e53a5087dbc744a03eea7fe48f11a5efa` — o
   commit de `loadtest/carga.js` exatamente como executado para gerar os
   números abaixo, working tree limpo, sem nenhuma mudança de código depois.
   **Só serve como proveniência histórica de desenvolvimento** — não é o
   mecanismo de reprodutibilidade pós-squash. Depois que esta PR for
   squash-merged e a branch `feature/k6-realistic-baseline` removida, um
   clone novo não tem garantia de conseguir rodar `git checkout
-  fbd98dbdfa9cf6fb2487204c69fc6c4e26be0e9b -- loadtest/carga.js` — o commit
+  56b9303e53a5087dbc744a03eea7fe48f11a5efa -- loadtest/carga.js` — o commit
   pode não estar mais alcançável a partir de `master`.
 - **`measured_script_path`**: `loadtest/carga.js`.
-- **`measured_script_git_blob`**: `58355c7ab53ee581dfb41bc02964d6b4bf9c6f68`
+- **`measured_script_git_blob`**: `91fc59f76227f95139054e15ce00125436172550`
   — a âncora **estável** de reprodutibilidade, que sobrevive ao squash desde
   que o conteúdo de `loadtest/carga.js` no commit final seja byte-a-byte
   igual ao medido aqui (é o caso: nenhum commit de evidência depois deste
@@ -847,23 +958,23 @@ desenvolvimento for removida):
   ```bash
   # no commit que você quer auditar (ex.: HEAD de master, depois do merge):
   git rev-parse HEAD:loadtest/carga.js
-  # deve imprimir exatamente 58355c7ab53ee581dfb41bc02964d6b4bf9c6f68 —
+  # deve imprimir exatamente 91fc59f76227f95139054e15ce00125436172550 —
   # se imprimir outro valor, loadtest/carga.js mudou desde a medição.
   ```
   Reconstrua o arquivo medido diretamente do objeto Git (o blob sobrevive
   independente de qual commit o referencia):
   ```bash
-  git cat-file blob 58355c7ab53ee581dfb41bc02964d6b4bf9c6f68 > carga-medida.js
+  git cat-file blob 91fc59f76227f95139054e15ce00125436172550 > carga-medida.js
   ```
 - **`measured_script_sha256`**:
-  `1d5a19129f221a4078b0675c431cd081d9a409df3f4639365763ac46cd0b8d65` — SHA-256
+  `3d2023d4b39c04969955056fdf4b7091820f5a115f9522cc06dee45efa02e81d` — SHA-256
   dos bytes do blob acima, calculado com:
   ```bash
-  python -c "import hashlib,subprocess; d=subprocess.check_output(['git','cat-file','blob','58355c7ab53ee581dfb41bc02964d6b4bf9c6f68']); print(hashlib.sha256(d).hexdigest())"
+  python -c "import hashlib,subprocess; d=subprocess.check_output(['git','cat-file','blob','91fc59f76227f95139054e15ce00125436172550']); print(hashlib.sha256(d).hexdigest())"
   ```
   ou, direto do blob, sem Python:
   ```bash
-  git cat-file blob 58355c7ab53ee581dfb41bc02964d6b4bf9c6f68 | sha256sum
+  git cat-file blob 91fc59f76227f95139054e15ce00125436172550 | sha256sum
   ```
   **Não** use `sha256sum loadtest/carga.js` nem `Get-FileHash` sobre o
   arquivo já checked-out como prova — mesma ressalva de CRLF/LF de rodadas
@@ -911,7 +1022,77 @@ registradas abaixo rodaram em sequência, sem esse padrão de cauda e sem
 outra carga de trabalho pesada ativa na máquina. O JSON bruto da tentativa
 descartada não foi versionado.
 
-### Prova de drenagem e timeout (achado 1 desta rodada) — fault injection não versionada
+### Ambiente da rodada seguinte (`56b9303`)
+
+A mesma stack concorrente de outro worktree (`iwrite-backend-1`/
+`iwrite-db-1`/`iwrite-frontend-1`, portas padrão) voltou a ficar ativa antes
+desta rodada. Diferente da vez anterior (só pausada), desta vez os
+containers foram **parados por completo** (`docker ps` não os lista mais,
+não só `docker stats` mostrando CPU ociosa) antes das três execuções
+registradas em "Resultados desta rodada" abaixo — energia AC confirmada
+`Online` antes e depois, `crm-marketing-*` parado. Nenhuma tentativa foi
+descartada nesta rodada.
+
+### Prova da janela de preparação de autenticação (achado 1 desta rodada) — instrumentação temporária + fault injection
+
+Cópia throwaway de `carga.js` logando `auth_start`/`auth_end` (relativos a
+`exec.scenario.startTime`) e o instante real de ativação de cada VU,
+contra o stack k6 isolado real:
+
+1. **Linha de base (`VUS=1`/`2`/`10`, sem latência artificial):** todas as
+   autenticações terminaram em `~70-98ms` — muitíssimo abaixo de
+   `load_start=22000ms` (`AUTH_PREPARE_MS` com os defaults). A última VU
+   ativou-se sempre exatamente em `load_start+WARMUP_MS` (`steady_start`),
+   confirmando `activation_real == activation_expected` em todos os casos
+   (`VUS=10`: primeira VU ativa em `22300ms`, última em `25000ms == steady_start`).
+2. **Login artificialmente lento, abaixo do timeout** (`VUS=3`,
+   `FI_LOGIN_LATENCY_S=5`, `HTTP_REQUEST_TIMEOUT=10s` default): as 3
+   autenticações terminaram em `~5091-5093ms` — ainda **muito** abaixo de
+   `load_start=22000ms`. As 3 VUs continuaram ativando exatamente nos
+   instantes esperados (`23000ms`/`24000ms`/`25000ms`, a última batendo
+   com `steady_start=25000ms`), `checks: 100%`, todos os thresholds
+   passaram.
+3. **Falha terminal de autenticação** (`VUS=3`, senha deliberadamente
+   errada só em `authenticateVuOnce()` — `setup()`/`teardown()` continuam
+   com a senha real): as 3 VUs falharam com `401` em `~98ms`, sem retry
+   (um único log de falha por VU). `checks: 0/0` — **nenhuma operação
+   principal foi despachada** por nenhuma das 3 VUs. `vu_auth_success`
+   reprovou o run (`rate==1` cruzado), mas `teardown()` ainda autenticou
+   com sucesso e removeu os 3 livros sintéticos — confirmado zero resíduo
+   `LOADTEST-` no Postgres do stack isolado depois.
+
+Em todos os casos, `max(auth_end)` ficou ordens de grandeza abaixo de
+`load_start`, e nenhuma operação principal foi observada antes de
+`load_start` — a garantia matemática do achado (autenticação limitada a
+`2×HTTP_REQUEST_TIMEOUT_MS`, `load_start` com margem sobre esse teto) se
+confirmou empiricamente nos três cenários.
+
+### Prova do contrato de status exato (achado 2 desta rodada) — fault injection não versionada
+
+Servidor HTTP local mínimo (`status204_server.py`, poucas linhas) que
+responde `200` a `96%` dos `PATCH` recebidos e `204` aos outros `4%`
+(a cada 25ª requisição), e um script k6 throwaway replicando
+`checkExactStatus()`/`operation_status_success` de `carga.js` contra esse
+servidor (100 iterações, tag `operation:save_scene,phase:steady`):
+
+```
+http_req_failed                                    ✓ 'rate<0.01' rate=0.00%
+  {operation:save_scene}                           ✓ 'rate<0.01' rate=0.00%
+operation_status_success{operation:save_scene,phase:steady}
+                                                     ✗ 'rate>0.99' rate=96.00%
+```
+
+`http_req_failed` global e `http_req_failed{operation:save_scene}`
+ficaram em `0.00%` — **ambos passando** — porque o k6 trata `204` como
+sucesso HTTP. `operation_status_success{operation:save_scene,phase:steady}`
+caiu para `96.00%` e **reprovou** o threshold (`k6 run` saiu com código
+`99`) — exatamente a lacuna que o achado descreveu: uma regressão de
+contrato que os gates antigos não veriam, capturada pela Rate de status
+exato. Uma execução saudável (sem o servidor de 204) confirma `100%` de
+`operation_status_success` nas 5 operações — ver "Resultados desta rodada"
+abaixo.
+
+### Prova de drenagem e timeout (achado 1 da rodada anterior) — fault injection não versionada
 
 Duas provas separadas, não commitadas:
 
@@ -936,7 +1117,7 @@ Duas provas separadas, não commitadas:
    count(*) FROM books WHERE title LIKE 'LOADTEST-%'` no Postgres do stack
    isolado.
 
-### Prova da cobertura de rampa (achado 3 desta rodada) — instrumentação temporária
+### Prova da cobertura de rampa (achado 3 da rodada anterior) — instrumentação temporária
 
 Script k6 mínimo (sem HTTP — só a lógica de escalonamento de
 `activationOffsetMs()`/`deactivationOffsetMs()` copiada pós-correção),
@@ -1018,36 +1199,38 @@ e teardown — `http_req_duration` **sem** tag `phase`:
 
 | | VUs | Duração | Requests | RPS global | p50 (ms) | p90 (ms) | p95 (ms) | p99 (ms) | Erros | Checks | `vu_auth_success` | `turnos_execucao_total` |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
-| Baseline | 10 | maxDuration 3m57.2s (30s/2m/30s + folga) | 4020 | 22.2 | 6.4 | 35.7 | 41.6 | 58.5 | 0% (0/4020) | 100% (3945/3945) | 100% (10/10) | 789 |
-| Carga ampliada | 30 | maxDuration 3m57.2s (30s/2m/30s + folga) | 11945 | 64.1 | 7.0 | 40.4 | 52.1 | 103.4 | 0% (0/11945) | 100% (11730/11730) | 100% (30/30) | 2346 |
+| Baseline | 10 | maxDuration 4m19.2s (22s auth-prepare + 30s/2m/30s + folga) | 4080 | 20.0 | 5.1 | 20.8 | 26.2 | 40.1 | 0% (0/4080) | 100% (4005/4005) | 100% (10/10) | 801 |
+| Carga ampliada | 30 | maxDuration 4m19.2s (22s auth-prepare + 30s/2m/30s + folga) | 12020 | 58.9 | 6.3 | 35.5 | 47.7 | 76.8 | 0% (0/12020) | 100% (11805/11805) | 100% (30/30) | 2361 |
 
 `vu_auth_success` confirma exatamente uma autenticação bem-sucedida por VU
 nas duas execuções. Estes percentis incluem auth/setup/teardown **e**
 warmup/rampdown — não são a fase estável isolada; para isso, a seção
 seguinte. `turnos_execucao_total` é a contagem exata de `root_group.checks
 ['save_scene status 200'].passes` no summary bruto — todas as fases, ver
-`resultado.json` (achado "Report steady-state turn counts from steady
-samples" — não confunda com `turnos_steady` abaixo). Nenhuma VU foi
-interrompida por `maxDuration` nas duas execuções (todas terminaram bem
-antes do teto de `3m57.2s`).
+`resultado.json`. Nenhuma VU foi interrompida por `maxDuration` nas duas
+execuções (todas terminaram bem antes do teto de `4m19.2s`, que agora inclui
+os `22s` da janela de preparação de autenticação — ver "Prova da janela de
+preparação de autenticação" acima).
 
 ### Fase estável (`phase:steady`) — só as operações principais, só os 2 minutos com VUS constante no pico
 
 | Operação | 10 VUs count | 10 VUs p50 | 10 VUs p90 | 10 VUs p95 | 10 VUs p99 | 10 VUs max | 30 VUs count | 30 VUs p50 | 30 VUs p90 | 30 VUs p95 | 30 VUs p99 | 30 VUs max |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
-| `list_books` | 627 | 15.3 | 23.0 | 29.4 | 43.6 | 64.1 | 1876 | 30.2 | 56.7 | 72.6 | 96.5 | 132.9 |
-| `load_outline` | 627 | 3.6 | 7.1 | 8.7 | 13.3 | 29.7 | 1875 | 4.1 | 7.2 | 8.9 | 14.1 | 47.1 |
-| `load_scene` | 627 | 3.2 | 6.4 | 7.6 | 10.9 | 28.9 | 1875 | 3.6 | 6.4 | 7.8 | 11.7 | 34.4 |
-| `save_scene` | 628 | 35.1 | 49.3 | 56.2 | 76.1 | 105.9 | 1873 | 30.5 | 43.6 | 49.7 | 69.7 | 113.7 |
-| `refresh_outline_after_save` | 627 | 5.2 | 8.6 | 10.7 | 15.3 | 29.6 | 1873 | 5.0 | 9.4 | 11.2 | 15.2 | 32.4 |
+| `list_books` | 635 | 12.4 | 19.9 | 24.4 | 32.3 | 40.1 | 1880 | 31.7 | 65.1 | 75.8 | 93.8 | 146.0 |
+| `load_outline` | 635 | 3.8 | 5.9 | 6.7 | 9.4 | 11.5 | 1881 | 4.0 | 7.0 | 8.2 | 11.7 | 62.6 |
+| `load_scene` | 634 | 3.2 | 5.2 | 5.8 | 8.9 | 14.9 | 1881 | 3.6 | 6.3 | 7.3 | 9.9 | 26.1 |
+| `save_scene` | 636 | 18.7 | 32.9 | 37.5 | 48.3 | 67.9 | 1881 | 19.3 | 35.4 | 41.4 | 56.4 | 82.5 |
+| `refresh_outline_after_save` | 636 | 3.9 | 6.1 | 7.2 | 10.5 | 14.9 | 1881 | 4.7 | 8.8 | 10.4 | 13.9 | 34.1 |
 
 **Todos os 10 thresholds de latência `p95<500ms` (5 operações × 2 execuções)
-passaram**, com folga larga. **Os 10 thresholds de erro `rate<0.01` (5
-operações × 2 execuções) também passaram — 0% de erro em todas as operações,
+passaram**, com folga larga. **Os 10 thresholds de contrato de status exato
+`operation_status_success{operation:X,phase:steady}: rate>0.99` (achado
+"Gate exact operation statuses instead of HTTP failures", 5 operações × 2
+execuções) também passaram — 100% de status exato em todas as operações,
 nas duas cargas.** `checks` (100%) e `http_req_failed` global (0%) passaram
 nas duas execuções — nenhuma requisição falhou.
 
-Os `count` por operação diferem levemente entre si (ex.: `627` vs `628` em
+Os `count` por operação diferem levemente entre si (ex.: `634` vs `636` em
 10 VUs) — `currentPhase()` é recalculada a cada dispatch, então um turno
 iniciado perto de uma borda de fase pode ter `list_books`/`load_outline`/
 `load_scene` tagueadas numa fase enquanto `save_scene`, despachada depois do
@@ -1057,42 +1240,50 @@ inconsistência.
 
 **`turnos_steady`** (número de `save_scene` despachados com
 `phase:steady` — lido diretamente do `count` da `Trend`
-`http_req_duration{operation:save_scene,phase:steady}`, ver achado "Report
-steady-state turn counts from steady samples"): **628 em 10 VUs, 1873 em 30
-VUs** — bem abaixo de `turnos_execucao_total` (789/2346, todas as fases),
-como esperado: os `turnos_execucao_total` incluem os turnos de `ramp_up` e
-`ramp_down`, que rodam com menos VUs que o pico.
+`http_req_duration{operation:save_scene,phase:steady}`): **636 em 10 VUs,
+1881 em 30 VUs** — bem abaixo de `turnos_execucao_total` (801/2361, todas as
+fases), como esperado: os `turnos_execucao_total` incluem os turnos de
+`ramp_up` e `ramp_down`, que rodam com menos VUs que o pico.
 
 Como o refresh é fire-and-forget genuíno, a propriedade que importa não é
 "a próxima requisição espera o refresh" — é "todo save bem-sucedido dispara
 exatamente um refresh, e todos os refreshes são observados/concluídos até o
 fim do run". Em cada execução, a contagem whole-run do check
 `refresh_outline_after_save status 200` bate exatamente com `save_scene
-status 200` (789/789 em 10 VUs, 2346/2346 em 30 VUs, zero falhas) —
+status 200` (801/801 em 10 VUs, 2361/2361 em 30 VUs, zero falhas) —
 confirmando que nenhum refresh foi descartado silenciosamente pelo
 fire-and-forget.
 
 `iterations` (métrica nativa do k6) conta VUs (sempre `== VUS`, uma única
 iteração k6 por VU) — não turnos. A contagem de turnos vive em
 `resultado.json` (`turnos_execucao_total` em `execucao_completa`,
-`turnos_steady` em `operacoes_principais` — ver achado "Report steady-state
-turn counts from steady samples" acima).
+`turnos_steady` em `operacoes_principais`).
 
 ### Auth/setup/teardown (fora do loop medido)
 
-`auth_csrf`/`auth_login` rodam `VUS+2` vezes (setup + 1/VU + teardown);
+`auth_csrf`/`auth_login` rodam `VUS+2` vezes (setup + 1/VU + teardown, desde
+esta rodada todas as VUs em rajada simultânea no início da janela de
+preparação — ver "Prova da janela de preparação de autenticação" acima);
 `setup_create_book/section/chapter/scene` e `teardown_delete_book` rodam
 `VUS` vezes, um livro por VU:
 
 | Operação | 10 VUs avg | 10 VUs p95 | 30 VUs avg | 30 VUs p95 |
 |---|---|---|---|---|
-| `auth_csrf` | 6.8ms | 16.1ms | 6.2ms | 17.7ms |
-| `auth_login` | 65.2ms | 77.3ms | 71.5ms | 87.5ms |
-| `setup_create_book` | 12.7ms | 24.5ms | 10.5ms | 23.9ms |
-| `setup_create_section` | 5.5ms | 7.3ms | 5.0ms | 7.2ms |
-| `setup_create_chapter` | 6.2ms | 7.6ms | 5.2ms | 6.7ms |
-| `setup_create_scene` | 9.5ms | 11.0ms | 8.3ms | 13.5ms |
-| `teardown_delete_book` | 14.0ms | 28.9ms | 94.4ms | 180.5ms |
+| `auth_csrf` | 5.6ms | 8.5ms | 30.6ms | 63.7ms |
+| `auth_login` | 77.7ms | 82.4ms | 138.8ms | 181.9ms |
+| `setup_create_book` | 11.2ms | 20.2ms | 10.4ms | 24.3ms |
+| `setup_create_section` | 5.2ms | 7.2ms | 5.4ms | 7.9ms |
+| `setup_create_chapter` | 6.4ms | 8.6ms | 5.5ms | 7.8ms |
+| `setup_create_scene` | 9.0ms | 10.3ms | 9.8ms | 12.5ms |
+| `teardown_delete_book` | 25.0ms | 41.6ms | 13.7ms | 26.5ms |
+
+`auth_csrf`/`auth_login` ficam sensivelmente mais lentos em `30 VUs` que na
+rodada anterior (p95 `17.7ms`→`63.7ms` / `87.5ms`→`181.9ms`) — efeito
+esperado da rajada de autenticação simultânea introduzida pelo achado
+"Reach peak load before starting the steady phase" (antes, os logins de VU
+se escalonavam ao longo do `WARMUP_DURATION`; agora todos disparam quase ao
+mesmo tempo). Ainda muito abaixo dos thresholds auxiliares (`p95<2000ms`/
+`p95<8000ms`).
 
 ### Debounce do AUTO_SAVE — teste dedicado (herdado de `dece9f3`)
 
@@ -1110,14 +1301,42 @@ Não re-testados nesta rodada porque nenhuma das três correções toca
 `loadtest/README.md` na revisão `8023b2d` (histórico) para os logs originais
 desses achados.
 
-### Comparação com a rodada anterior (`3bb79ce`)
+### Comparação com a rodada anterior (`fbd98db`)
+
+**Não leia isto como melhoria/regressão de throughput cru.** O relógio da
+carga mudou nesta rodada (achado "Reach peak load before starting the
+steady phase" — a curva medida só começa depois de uma janela de `22s` de
+preparação de autenticação), então a duração total do processo aumenta sem
+que a duração da carga medida em si tenha mudado. `rps_global` cai porque
+seu denominador de tempo agora inclui os `22s` de preparação. A comparação
+abaixo é só factual:
+
+| | 10 VUs: `fbd98db` → `56b9303` | 30 VUs: `fbd98db` → `56b9303` |
+|---|---|---|
+| Requests totais | 4020 → 4080 (+1.5%) | 11945 → 12020 (+0.6%) |
+| RPS global | 22.2 → 20.0 (-9.8%, ver nota acima) | 64.1 → 58.9 (-8.1%, idem) |
+| `turnos_execucao_total` | 789 → 801 (+1.5%) | 2346 → 2361 (+0.6%) |
+| `turnos_steady` | 628 → 636 (+1.3%) | 1873 → 1881 (+0.4%) |
+| `save_scene` p95 (steady) | 56.2ms → 37.5ms | 49.7ms → 41.4ms |
+| `auth_login` p95 | 82.6ms → 82.4ms (10 VUs) | 87.5ms → 181.9ms (30 VUs, rajada simultânea) |
+| Thresholds de operação principal | 10/10 (latência + status exato) | 10/10 (latência + status exato) |
+
+Diferenças de throughput dentro da variação normal de execução a execução.
+`auth_login` p95 em `30 VUs` sobe visivelmente — efeito esperado da rajada
+de autenticação simultânea (ver "Auth/setup/teardown" acima), ainda muito
+abaixo do threshold auxiliar de `8000ms`. A rodada anterior já reportava
+`turnos_execucao_total`/`turnos_steady` separadamente (achado da rodada
+anterior a essa), então os dois números permanecem diretamente comparáveis
+aqui.
+
+### Comparação com a rodada anterior a essa (`3bb79ce`)
 
 **Não leia isto como melhoria/regressão de throughput cru.** A curva de
-ativação/desativação por VU mudou nesta rodada (achado "Cover the full ramp
-interval with VU offsets" — a última VU agora fica ativa até o fim exato de
-cada rampa, em vez de sair `RAMPDOWN_MS/VUS` mais cedo), então a carga
-temporal oferecida não é mais idêntica à da rodada anterior. A comparação
-abaixo é só factual:
+ativação/desativação por VU mudou naquela rodada (achado "Cover the full
+ramp interval with VU offsets" — a última VU passou a ficar ativa até o fim
+exato de cada rampa, em vez de sair `RAMPDOWN_MS/VUS` mais cedo), então a
+carga temporal oferecida não era mais idêntica à rodada anterior a ela. A
+comparação abaixo é só factual:
 
 | | 10 VUs: `3bb79ce` → `fbd98db` | 30 VUs: `3bb79ce` → `fbd98db` |
 |---|---|---|
@@ -1134,23 +1353,26 @@ conceitual corrigido pelo achado "Report steady-state turn counts from
 steady samples") — não há um número diretamente comparável para
 `turnos_steady=628`/`1873` desta rodada.
 
-**Gargalo principal:** nenhum — as 5 operações passam o teto de 500ms com
-folga. `list_books` continua sendo a operação relativamente mais lenta nas
-duas cargas (cresce com o tamanho da coleção de livros do tenant, que
-aumenta com `VUS` por construção do cenário), mas está longe do teto mesmo
-em 30 VUs.
+**Gargalo principal:** nenhum nas 5 operações principais — passam o teto de
+500ms com folga. `list_books` continua sendo a operação relativamente mais
+lenta nas duas cargas (cresce com o tamanho da coleção de livros do tenant,
+que aumenta com `VUS` por construção do cenário), mas está longe do teto
+mesmo em 30 VUs. `auth_login`/`auth_csrf` (fora do loop medido) passaram a
+ser o fator que mais cresce com `VUS` nesta rodada, por causa da rajada de
+autenticação simultânea — ainda muito abaixo dos thresholds auxiliares.
 
 **Limitações desta execução:**
-- Uma primeira tentativa de 10 VUs foi descartada por contaminação de outro
-  worktree do IWrite ativo na máquina — ver "Ambiente desta rodada" acima.
 - Rodada na mesma stack Docker isolada só para este teste (`container_name`/portas
   remapeados via `docker-compose.k6.local.yml`, não versionado —
   `iwrite-k6-db:5443`, `iwrite-k6-backend:8093`, `iwrite-k6-frontend:3009`).
   `crm-marketing-backend-1` ficou parado durante toda a execução; a stack de
   outro worktree do IWrite (`iwrite-backend-1`/`iwrite-db-1`/
-  `iwrite-frontend-1`, portas padrão) ficou pausada durante as três
-  execuções aqui registradas, mas os containers não foram removidos — não é
-  hardware dedicado.
+  `iwrite-frontend-1`, portas padrão) foi parada por completo (não só
+  pausada) antes destas três execuções — não é hardware dedicado.
+- `auth_csrf`/`auth_login` passaram a escalar com `VUS` de forma mais
+  visível que antes (rajada simultânea de `VUS` logins no início da janela
+  de preparação, em vez de escalonados ao longo do warmup) — não
+  investigado se isso se torna um gargalo real em `VUS` muito maior que 30.
 - O debounce do `AUTO_SAVE` (`AUTO_SAVE_DELAY_MS=1200`) reduz o throughput de
   escrita por VU por construção — este cenário modela a cadência de um autor
   digitando e pausando, não o teto de throughput que o backend consegue
@@ -1160,11 +1382,12 @@ em 30 VUs.
   outline está degradado — não reproduzido nestas medições de baseline
   saudável, só via fault injection não versionada (ver acima).
 - A rampa de subida/descida por VU (`activationOffsetMs()`/
-  `deactivationOffsetMs()`, agora `vuIndex/VUS`) é a discretização exata do
-  alvo contínuo `VUs_ativas(t)=VUS×t/WARMUP_MS` só nesses pontos de
-  ativação/desativação — não uma cópia do algoritmo interno do k6; a ordem
-  exata de quais VUs entram/saem primeiro pode diferir (ver "Prova da
-  cobertura de rampa" acima).
+  `deactivationOffsetMs()`, `vuIndex/VUS`, relativa a `loadStartAt()` desde
+  esta rodada) é a discretização exata do alvo contínuo
+  `VUs_ativas(t)=VUS×t/WARMUP_MS` só nesses pontos de ativação/desativação —
+  não uma cópia do algoritmo interno do k6; a ordem exata de quais VUs
+  entram/saem primeiro pode diferir (ver "Prova da cobertura de rampa"
+  acima).
 - Backend, Postgres e k6 rodam na mesma máquina (sem separação de rede/CPU
   entre gerador de carga e alvo), então parte da latência medida pode ser
   contenção local, não custo real de rede.
@@ -1185,11 +1408,17 @@ em 30 VUs.
   `docker-compose.loadtest.yml`) foi mantido no default (`1000`) nesta
   execução — cobre folgadamente `VUS` até `998`; os defaults de produção em
   `application.yml`/`.env.example` não foram alterados — ver
-  [§2](#2-pré-requisitos).
+  [§2](#2-pré-requisitos). A rajada de autenticação simultânea desta rodada
+  consome esse orçamento de forma mais concentrada no tempo que antes
+  (todos os logins de VU dentro de uma janela de dezenas/centenas de ms, não
+  mais espalhados pelo warmup).
 
 **Próxima ação recomendada:** repetir 30 VUs (e testar `VUS` maior, ex.
 50-100) em hardware totalmente dedicado, sem nenhum outro container Docker
-ativo na máquina. Rodar o teste com OTel habilitado
+ativo na máquina — inclusive o de outros worktrees. Investigar se a rajada
+de autenticação simultânea se torna um gargalo real em `VUS` bem maior que
+30 — considerar escalonar levemente os logins dentro da janela de
+preparação se isso se confirmar. Rodar o teste com OTel habilitado
 (`docker-compose.observability.yml`) e usar os traces correlacionados de
 `scene_content_save` para decompor o custo de `save_scene`. Investigar o
 crescimento de `list_books`/`load_outline` com o tamanho da coleção de
@@ -1239,8 +1468,10 @@ injection do refresh degradado, hoje só documentada na PR #141.
       seguinte sempre ≈ think time sorteado, nunca ≈ latência do refresh; (3)
       nas 2 execuções medidas (10/30 VUs), `refresh_outline_after_save
       status 200` continua batendo exatamente com `save_scene status 200`
-      (789/789 e 2343/2343) — nenhum refresh descartado silenciosamente. Ver
-      [§9](#9-resultados-obtidos) para os três em detalhe
+      (801/801 e 2361/2361 — números da rodada atual, `56b9303`; ver
+      [§9](#9-resultados-obtidos) para os brutos) — nenhum refresh
+      descartado silenciosamente. Ver [§9](#9-resultados-obtidos) para os
+      três em detalhe
 - [x] `phase` recalculada a cada dispatch de requisição, não mais uma vez por
       turno (PR #141, finding "Tag each operation using its dispatch-time
       phase"): fault injection com estágios curtos (`WARMUP_DURATION=
@@ -1279,15 +1510,21 @@ injection do refresh degradado, hoje só documentada na PR #141.
       `LOADTEST-decoyrun999-vu1` criado manualmente antes do teste acima
       permaneceu intacto no banco depois da limpeza automática — só
       removido manualmente ao final do teste
-- [x] Threshold de erro por operação (`http_req_failed{operation:X,phase:steady}`)
-      testado com fault injection concentrada em `save_scene` (1 a cada 25
-      iterações força um `sceneId` inválido, VUS=10, 60s de fase estável):
-      `http_req_failed` global ficou em 0.68% (passou no threshold global
-      `<1%`) enquanto `http_req_failed{operation:save_scene,phase:steady}`
-      ficou em 3.61% (rompeu o threshold `<1%`) — `k6 run` saiu com código
-      `99` só por causa do threshold por operação. `refresh_outline_after_save`
+- [x] **(histórico, substituído)** Threshold de erro por operação
+      (`http_req_failed{operation:X,phase:steady}`) testado com fault
+      injection concentrada em `save_scene` (1 a cada 25 iterações força um
+      `sceneId` inválido, VUS=10, 60s de fase estável): `http_req_failed`
+      global ficou em 0.68% (passou no threshold global `<1%`) enquanto
+      `http_req_failed{operation:save_scene,phase:steady}` ficou em 3.61%
+      (rompeu o threshold `<1%`) — `k6 run` saiu com código `99` só por
+      causa do threshold por operação. `refresh_outline_after_save`
       continuou disparando só nos saves bem-sucedidos (872/872, zero
-      falhas). Zero resíduo `LOADTEST-` após o teardown
+      falhas). Zero resíduo `LOADTEST-` após o teardown. Esses 5 thresholds
+      `http_req_failed{operation:X,phase:steady}` foram removidos e
+      substituídos por `operation_status_success{operation:X,phase:steady}`
+      (achado "Gate exact operation statuses instead of HTTP failures",
+      PR #141) — ver checklist mais abaixo para a fault injection
+      equivalente contra a métrica atual
 - [x] `teardown()` remove todos os livros sintéticos nas execuções normais —
       confirmado sem resíduo `LOADTEST-` após todas as execuções (smoke, 10
       VUs, 30 VUs, e os testes de fault injection acima)
@@ -1317,12 +1554,28 @@ injection do refresh degradado, hoje só documentada na PR #141.
       erro
 - [x] `measured_script_git_blob`/`measured_script_sha256` conferidos sobre os
       bytes do **blob do Git**, não do working tree: `git rev-parse
-      fbd98dbdfa9cf6fb2487204c69fc6c4e26be0e9b:loadtest/carga.js` bate com
+      56b9303e53a5087dbc744a03eea7fe48f11a5efa:loadtest/carga.js` bate com
       `measured_script_git_blob`, e `git cat-file blob
-      58355c7ab53ee581dfb41bc02964d6b4bf9c6f68` (via Python/`hashlib`) bate
+      91fc59f76227f95139054e15ce00125436172550` (via Python/`hashlib`) bate
       com `measured_script_sha256` registrado em `resultado.json` e neste
       README — mesma metodologia validada em `dece9f3` (ver nota em
       [§9](#9-resultados-obtidos))
+- [x] Janela de preparação de autenticação (PR #141, finding "Reach peak
+      load before starting the steady phase"): instrumentação temporária
+      confirmou `max(auth_end)` sempre `<<< load_start` (`VUS=1/2/10`,
+      inclusive com `5s` de latência artificial de login) e a última VU
+      sempre ativando exatamente em `load_start+WARMUP_MS`; fault injection
+      com senha errada (`VUS=3`) confirmou `checks=0/0` (nenhuma operação
+      principal despachada), `vu_auth_success` reprovando o run sem retry
+      storm, e `teardown()` ainda limpando os 3 livros — ver "Prova da
+      janela de preparação de autenticação" em [§9](#9-resultados-obtidos)
+- [x] Contrato de status exato por operação (PR #141, finding "Gate exact
+      operation statuses instead of HTTP failures"): fault injection contra
+      um servidor local regredindo `4%` dos `PATCH` de `200` para `204`
+      confirmou `http_req_failed` global e por operação em `0.00%` (ambos
+      passando) enquanto `operation_status_success{operation:save_scene,
+      phase:steady}` caiu para `96.00%` e reprovou o threshold — ver "Prova
+      do contrato de status exato" em [§9](#9-resultados-obtidos)
 - [x] Timeout explícito por requisição (PR #141, finding "Let the final turn
       drain before maxDuration"): `http.get` com `timeout: '2s'` contra um
       servidor TCP que aceita a conexão mas nunca responde terminou em
