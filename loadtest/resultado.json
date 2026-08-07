@@ -1,40 +1,42 @@
 {
   "resumo_comparativo": {
-    "measured_code_commit": "dece9f3e95a8b1d05356cf0c42d837618d28e455",
+    "measured_code_commit": "3bb79ce68bd00dadffcb39c2ba9b0d91e269f903",
     "measured_script_path": "loadtest/carga.js",
-    "measured_script_git_blob": "b2ed1d7bb107c5d3e960e483d3ad460cfb082b0b",
-    "measured_script_sha256": "872c2d7d6ed574d45e5e6665643d9b21b04353f9c02ae0e683bf82b3f68aa31a",
-    "nota_hash_estavel": "measured_script_sha256 é o SHA-256 dos bytes do blob do Git (git cat-file blob dece9f3:loadtest/carga.js | sha256sum), NÃO dos bytes do arquivo no working tree. loadtest/carga.js agora tem 'text eol=lf' fixado em .gitattributes, mas o hash de um arquivo já checked-out ainda depende de core.autocrlf do cliente (Windows com autocrlf=true converte o blob LF para CRLF ao fazer checkout) — por isso sha256sum loadtest/carga.js ou Get-FileHash sobre o working tree NÃO são a prova de reprodutibilidade (achado do Codex sobre a rodada anterior 1f2593e/8023b2d: o valor então registrado era o SHA-256 da forma CRLF do arquivo, e não batia com um checkout Linux limpo). A prova correta é sobre os bytes do blob, que não variam por plataforma nem por config local: 'git rev-parse dece9f3:loadtest/carga.js' reproduz measured_script_git_blob, e 'python -c \"import hashlib,subprocess; d=subprocess.check_output(['\\''git'\\'','\\''cat-file'\\'','\\''blob'\\'','\\''dece9f3:loadtest/carga.js'\\'']); print(hashlib.sha256(d).hexdigest())\"' reproduz measured_script_sha256 em qualquer SO.",
+    "measured_script_git_blob": "11c1875f40067ad18b12bb42ce3c0e5e4a9d2d4a",
+    "measured_script_sha256": "293e4d6a096e28fdb146e0b1f7eb5b8416764953599fc487b6723349f6b163ac",
+    "nota_hash_estavel": "measured_script_sha256 é o SHA-256 dos bytes do blob do Git (git cat-file blob 3bb79ce:loadtest/carga.js | sha256sum), NÃO dos bytes do arquivo no working tree — mesma metodologia da rodada anterior (dece9f3), já validada contra CRLF/LF (ver loadtest/README.md §9). 'git rev-parse 3bb79ce:loadtest/carga.js' reproduz measured_script_git_blob, e 'python -c \"import hashlib,subprocess; d=subprocess.check_output(['\\''git'\\'','\\''cat-file'\\'','\\''blob'\\'','\\''3bb79ce:loadtest/carga.js'\\'']); print(hashlib.sha256(d).hexdigest())\"' reproduz measured_script_sha256 em qualquer SO.",
     "evidence_commit": "ver a descrição da PR #141 — o commit que versiona este arquivo não pode conter o próprio hash sem autorreferência",
-    "nota_commits": "measured_code_commit (dece9f3) é o commit de loadtest/carga.js + .gitattributes exatamente como executado para gerar os números abaixo (working tree limpo, nenhuma mudança de código depois). evidence_commit é o commit posterior que só versiona este resumo, os JSONs brutos e o README — nenhuma mudança de comportamento do script. Commits anteriores (8023b2d, 1f2593e, 42cdd0b, fc521b7 e mais antigos) permanecem só como evidência histórica — não são mais a medição final desta PR, e os números deles não são diretamente comparáveis aos desta rodada porque o pacing do cenário mudou (ver mudanca_de_cenario_desde_a_ultima_medicao).",
-    "data_execucao": "2026-08-07T02:20:46Z a 2026-08-07T02:27:05Z",
+    "nota_commits": "measured_code_commit (3bb79ce) é o commit de loadtest/carga.js exatamente como executado para gerar os números abaixo (working tree limpo, nenhuma mudança de código depois). evidence_commit é o commit posterior que só versiona este resumo, os JSONs brutos e o README — nenhuma mudança de comportamento do script. Commits anteriores (dece9f3, 8023b2d, 1f2593e, 42cdd0b, fc521b7 e mais antigos) permanecem só como evidência histórica.",
+    "data_execucao": "2026-08-07T16:06:18Z a 2026-08-07T16:12:29Z",
     "k6_version": "k6.exe v2.1.0 (commit/83a87a41e2, go1.26.4, windows/amd64)",
-    "motivo_da_remedicao": "4 findings P2 do Codex sobre a rodada anterior (evidence 8023b2d, código 1f2593e): (1) o cenário não modelava o debounce real do AUTO_SAVE — o editor real só dispara o PATCH depois de CONTENT_AUTOSAVE_DELAY_MS=1200ms sem nova alteração (scene-editor.tsx), mas o script disparava saves consecutivos só limitado pelo think time (0.3-1s), gerando escritas e rollups de contagem de palavras mais rápido do que qualquer editor real permite. Corrigido com AUTO_SAVE_DELAY_MS (default 1200, validado finito/não negativo) e um await delay() antes do PATCH, separado do think time pós-save. (2) o exemplo de limpeza manual por IDs no README comparava books.id (uuid) com literais inteiros (11, 12, 13), o que o Postgres rejeita — corrigido para UUIDs entre aspas com ::uuid, mantendo o predicado por runId como opção preferencial. (3) o SHA-256 de reprodutibilidade registrado na rodada anterior foi calculado sobre os bytes CRLF do working tree Windows (core.autocrlf=true), que não batem com um checkout Linux limpo — corrigido fixando 'loadtest/carga.js text eol=lf' em .gitattributes e recalculando o hash sobre os bytes do blob do Git (git cat-file blob), não do arquivo no working tree. (4) 'backend' estava na allowlist SAFE_HOSTS sem exigir confirmação — como parseSafeHost() só compara a autoridade léxica da URL e nunca resolve o endereço real, numa máquina com domain search DNS fora da rede do Compose pretendida esse hostname genérico poderia apontar para um serviço remoto não relacionado. Removido de SAFE_HOSTS; agora exige o mesmo ALLOW_UNSAFE_TARGET que qualquer outro host não controlado.",
+    "motivo_da_remedicao": "3 novos findings P2 do Codex sobre a rodada anterior (evidence 3331d93, código dece9f3), todos exigindo a MESMA mudança estrutural: (1) 'Release the iteration when think time ends' — o refresh_outline_after_save (Promise.all com o think time) continuava sendo barreira da iteração seguinte sempre que mais lento que o think time, contrariando o fire-and-forget real do frontend; confirmado empiricamente (não só por leitura de documentação) que o k6 v2.1.0 drena TODAS as Promises de uma iteração — mesmo as nunca aguardadas — antes de considerá-la concluída, então nenhuma variação de Promise dentro da MESMA iteração k6 resolve isso. (2) 'Tag each operation using its dispatch-time phase' — phase era capturada uma vez no topo da iteração e reutilizada nas 5 operações, então um turno que atravessasse a borda warmup/steady/rampdown durante o debounce de 1200ms podia marcar save_scene como phase:steady quando já estava em ramp_down. (3) 'Stop retrying authentication after a recorded failure' — uma VU com falha de login persistente re-tentava o handshake a cada iteração k6, gerando tempestade de retries que podia esgotar o rate-limit de login e impedir a autenticação do teardown(). Corrigido restruturando default() para rodar UMA ÚNICA iteração k6 por VU (options.scenarios.default, executor per-vu-iterations) contendo um laço interno manual de turnos com rampa de subida/descida auto-gerenciada — isso resolve os três simultaneamente: (1) o refresh dispara em fire-and-forget genuíno dentro do laço (a Promise nunca é aguardada, mas ainda é checada via .then() e drenada ao final da VU), (2) currentPhase() passa a ser chamada em cada dispatch de requisição em vez de uma vez por turno, (3) authenticateVuOnce() só roda uma vez porque default() só roda uma vez — não há mais 'próxima iteração' para retentar.",
     "ambiente": {
-      "descricao": "Stack Docker isolada dedicada só a este teste (docker compose -p iwrite-k6smoke, container_name e portas remapeados via docker-compose.k6.local.yml não versionado — iwrite-k6-db:5443, iwrite-k6-backend:8093, iwrite-k6-frontend:3009 — para não colidir com outro worktree do IWrite já em uso na mesma máquina de desenvolvimento), mais o overlay versionado docker-compose.loadtest.yml.",
+      "descricao": "Stack Docker isolada dedicada só a este teste (container_name e portas remapeados via docker-compose.k6.local.yml não versionado — iwrite-k6-db:5443, iwrite-k6-backend:8093, iwrite-k6-frontend:3009 — para não colidir com outro worktree do IWrite já em uso na mesma máquina de desenvolvimento), mais o overlay versionado docker-compose.loadtest.yml.",
       "backend_containers": "db + backend + frontend (profile demo), sem OTel habilitado",
-      "hardware": "máquina de desenvolvimento compartilhada, na tomada (confirmado via Win32_Battery.BatteryStatus=2 imediatamente antes e depois das três execuções). crm-marketing-backend-1 estava parado durante toda a execução (confirmado via 'docker ps' antes de medir). Um container Postgres de outro worktree do IWrite (iwrite-db, porta 5435) permaneceu ativo mas ocioso — não é hardware dedicado."
+      "hardware": "máquina de desenvolvimento compartilhada, na tomada (confirmado via System.Windows.Forms.SystemInformation.PowerStatus.PowerLineStatus=Online imediatamente antes das três execuções e novamente depois). crm-marketing-backend-1 (e seus containers de db/frontend) estavam parados durante toda a execução (confirmado via 'docker ps -a' antes de medir). Um container Postgres de outro worktree do IWrite (iwrite-db, porta 5435) permaneceu ativo mas ocioso — não é hardware dedicado."
     },
     "cenario": [
       "GET /api/books (list_books)",
       "GET /api/books/{bookId}/outline (load_outline)",
       "GET /api/scenes/{sceneId} (load_scene)",
       "debounce do AUTO_SAVE (AUTO_SAVE_DELAY_MS=1200ms, == CONTENT_AUTOSAVE_DELAY_MS do frontend): aguardado via await delay() antes do PATCH, não é think time",
-      "PATCH /api/scenes/{sceneId}/content (save_scene) — contentText + contentJson (documento ProseMirror no mesmo formato do editor real), alternando contagem de palavras entre iterações pares/ímpares da mesma VU",
-      "GET /api/books/{bookId}/outline (refresh_outline_after_save) — só quando save_scene retornou 200; assíncrono, disparado em paralelo com o think time via http.asyncRequest()+Promise.all(), nunca serializado antes da próxima iteração"
+      "PATCH /api/scenes/{sceneId}/content (save_scene) — contentText + contentJson (documento ProseMirror no mesmo formato do editor real), alternando contagem de palavras entre turnos pares/ímpares da mesma VU",
+      "GET /api/books/{bookId}/outline (refresh_outline_after_save) — só quando save_scene retornou 200; fire-and-forget genuíno (http.asyncRequest() nunca aguardado, status checado dentro do .then()), roda dentro do laço interno de turnos de uma única iteração k6 por VU — ver mudanca_de_cenario_desde_a_ultima_medicao"
     ],
     "mudanca_de_cenario_desde_a_ultima_medicao": [
-      "NOVO: cada iteração aguarda AUTO_SAVE_DELAY_MS=1200ms (debounce do AUTO_SAVE) antes de enviar o PATCH — isso reduz deliberadamente a taxa de iterações/requisições por VU, modelando a cadência real do editor em vez da cadência artificial anterior (limitada só pelo think time de 0.3-1s). NÃO é uma regressão de performance do backend: é uma mudança na carga OFERECIDA pelo cenário. Por isso os números desta rodada (requests totais, RPS global, iterações) NÃO são comparáveis diretamente aos de 1f2593e/8023b2d — ver comparacao_com_medicao_anterior abaixo.",
-      "'backend' removido de SAFE_HOSTS (achado de segurança, não afeta o cenário medido: todas as execuções abaixo continuam contra localhost).",
-      "Nenhuma mudança na lógica de conteúdo/contagem de palavras enviada por save_scene, no cálculo de phase, nos thresholds de latência existentes ou no refetch assíncrono desde dbd5904/1f2593e — só o momento em que o PATCH é disparado dentro da iteração mudou."
+      "NOVO: default() roda 1 única iteração k6 por VU (options.scenarios.default, executor per-vu-iterations) contendo um laço interno manual de turnos, em vez de 1 iteração k6 por turno (options.stages/ramping-vus). Cada VU escalona sua própria rampa de subida/descida (activationOffsetMs()/deactivationOffsetMs()), reproduzindo a mesma curva agregada de VUs ativas que ramping-vus produzia. Motivo: é a única forma de o refresh_outline_after_save rodar em fire-and-forget genuíno no k6 v2.1.0 — ver motivo_da_remedicao.",
+      "NOVO: refresh_outline_after_save nunca é aguardado (nem via Promise.all) — dispara e o turno seguinte já começa após o think time, mesmo com o refresh ainda em voo. Sob condições normais (backend saudável) isso NÃO muda a carga oferecida de forma perceptível — ver comparacao_com_medicao_anterior_dece9f3 abaixo; o efeito só aparece quando o outline está degradado (demonstrado por fault injection não versionada, ver PR #141).",
+      "NOVO: phase é recalculada a cada dispatch de requisição (list_books/load_outline/load_scene/save_scene/refresh_outline_after_save), não mais uma vez por turno — corrige contaminação de amostras perto de uma borda de fase.",
+      "NOVO: uma falha de autenticação de VU não gera mais retry — a VU inteira encerra na única iteração k6 que teria.",
+      "'iterations' na métrica nativa do k6 agora conta VUs (1 por VU, sempre == VUS), não mais turnos/escritas — a contagem de turnos lógicos (equivalente à antiga métrica 'iterations') está em operacoes_principais.turnos_totais, derivada das contagens de check (idênticas entre si, ver notas_de_metodologia).",
+      "Nenhuma mudança na lógica de conteúdo/contagem de palavras enviada por save_scene, no debounce do AUTO_SAVE, na allowlist de host ou nos thresholds de latência/erro existentes desde dece9f3 — só quando/como cada requisição é disparada dentro do turno."
     ],
     "notas_de_metodologia": [
-      "list_books, load_outline e load_scene são pré-requisitos sequenciais: a iteração encerra imediatamente (com think time) se qualquer um retornar status inesperado, então nenhum PATCH é enviado atrás de uma leitura que falhou.",
-      "refresh_outline_after_save só executa e só é checado quando save_scene retornou 200 — confirmado nos dois runs: contagem de checks 'save_scene status 200' e 'refresh_outline_after_save status 200' idêntica (776/776 em 10 VUs, 2350/2350 em 30 VUs), zero falhas nas duas.",
-      "vu_auth_success confirma exatamente uma autenticação bem-sucedida por VU nas duas execuções: passes=10/fails=0 (10 VUs) e passes=30/fails=0 (30 VUs).",
-      "O debounce do AUTO_SAVE (AUTO_SAVE_DELAY_MS=1200ms) reduz drasticamente as iterações por VU frente à rodada anterior (776 vs 2120 em 10 VUs; 2350 vs 5786 em 30 VUs) — efeito esperado e deliberado, não uma falha ou gargalo: cada iteração agora inclui ao menos 1.2s de espera fixa antes do PATCH, além das 4 requisições e do think time.",
-      "Tags exportadas por requisição: 'operation' (dimensão funcional), 'name' (rota normalizada) e, nas 5 operações principais, 'phase' (ramp_up/steady/ramp_down). A tag automática 'url' do k6 permanece desabilitada via systemTags.",
-      "http_req_duration_global (RPS, p50-p99 agregados) inclui TODAS as requisições da execução: smoke, auth (VUS+2 logins), setup, as 5 operações principais sob carga (todas as fases) e o teardown. Não é a latência do loop principal nem está restrito à fase estável — para isso, ver operacoes_principais (phase:steady) abaixo.",
+      "list_books, load_outline e load_scene são pré-requisitos sequenciais: o turno encerra imediatamente (com think time) se qualquer um retornar status inesperado, então nenhum PATCH é enviado atrás de uma leitura que falhou.",
+      "refresh_outline_after_save só dispara quando save_scene retornou 200, em fire-and-forget — a propriedade verificada não é mais 'a próxima requisição espera o refresh', é 'todo save bem-sucedido dispara exatamente um refresh, e todos os refreshes são observados/concluídos até o fim do run': confirmado nos dois runs por contagem de checks idêntica entre 'save_scene status 200' e 'refresh_outline_after_save status 200' (789/789 em 10 VUs, 2343/2343 em 30 VUs), zero falhas nas duas — nenhum refresh foi descartado silenciosamente pelo fire-and-forget.",
+      "vu_auth_success confirma exatamente uma autenticação bem-sucedida por VU nas duas execuções: passes=10/fails=0 (10 VUs) e passes=30/fails=0 (30 VUs) — cada VU tentou autenticar exatamente 1 vez (ver PR #141 para a prova via fault injection com contador global de tentativas).",
+      "Tags exportadas por requisição: 'operation' (dimensão funcional), 'name' (rota normalizada) e, nas 5 operações principais, 'phase' (ramp_up/steady/ramp_down, calculada no instante do dispatch de CADA requisição, não mais uma vez por turno). A tag automática 'url' do k6 permanece desabilitada via systemTags.",
+      "http_req_duration_global (RPS, p50-p99 agregados) inclui TODAS as requisições da execução: smoke, auth (VUS+2 logins), setup, as 5 operações principais sob carga (todas as fases) e o teardown. Não é a latência do laço principal nem está restrito à fase estável — para isso, ver operacoes_principais (phase:steady) abaixo.",
       "operacoes_principais mede só a fase estável (phase:steady) — os thresholds de latência E os de erro das 5 operações principais avaliam exclusivamente essas amostras.",
       "Zero resíduo 'LOADTEST-' após as três execuções medidas (smoke, 10 VUs, 30 VUs — confirmado via SELECT count(*) FROM books WHERE title LIKE 'LOADTEST-%') e zero resposta 429 em qualquer uma delas (http_req_failed=0% nas três).",
       "Todos os 20 thresholds operacionais (5 latência + 5 erro, por execução × 2 execuções) passaram, além dos 4 thresholds globais (http_req_failed, checks, http_req_duration global, vu_auth_success) e dos thresholds auxiliares de auth/setup/teardown — nenhum threshold falhou em nenhuma das duas execuções."
@@ -44,119 +46,125 @@
         "execucao_completa": {
           "vus": 10,
           "duracao": "3m (30s aquecimento / 2m carga estável / 30s desaceleração)",
-          "requests_totais": 3955,
-          "rps_global": 21.57,
-          "http_req_duration_global": { "p50": 14.84, "p90": 52.93, "p95": 63.74, "p99": 106.60, "max": 300.09, "unidade": "ms" },
-          "erros": { "http_req_failed_rate": 0, "http_req_failed_total": 0, "de": 3955 },
-          "checks": { "rate": 1, "passes": 3880, "fails": 0 },
+          "requests_totais": 4020,
+          "rps_global": 22.38,
+          "http_req_duration_global": { "p50": 7.45, "p90": 27.44, "p95": 38.75, "p99": 57.77, "max": 171.24, "unidade": "ms" },
+          "erros": { "http_req_failed_rate": 0, "http_req_failed_total": 0, "de": 4020 },
+          "checks": { "rate": 1, "passes": 3945, "fails": 0 },
           "vu_auth_success": { "rate": 1, "passes": 10, "fails": 0 },
           "thresholds_globais": {
             "http_req_failed<1%": "passou",
             "checks>99%": "passou",
             "vu_auth_success==100%": "passou",
-            "http_req_duration_global_p95<500ms": "passou (63.7ms)"
+            "http_req_duration_global_p95<500ms": "passou (38.8ms)"
           }
         },
         "operacoes_principais": {
           "descricao": "Restrita à fase estável (phase:steady, 2 minutos com VUS constante no pico). Percentis individuais por operação; thresholds de latência (p95<500ms) e de erro (rate<0.01) avaliados por operação.",
-          "iterations_execucao_completa": 776,
-          "list_books": { "p50": 38.1, "p90": 61.6, "p95": 70.9, "p99": 87.4, "max": 116.9, "threshold_p95_steady<500ms": "passou", "threshold_erro_steady<1%": "passou (0%)" },
-          "load_outline": { "p50": 9.8, "p90": 15.7, "p95": 18.4, "p99": 27.6, "max": 71.9, "threshold_p95_steady<500ms": "passou", "threshold_erro_steady<1%": "passou (0%)" },
-          "load_scene": { "p50": 9.0, "p90": 14.7, "p95": 17.6, "p99": 25.2, "max": 67.6, "threshold_p95_steady<500ms": "passou", "threshold_erro_steady<1%": "passou (0%)" },
-          "save_scene": { "p50": 43.7, "p90": 59.5, "p95": 66.3, "p99": 84.1, "max": 136.6, "threshold_p95_steady<500ms": "passou", "threshold_erro_steady<1%": "passou (0%)" },
-          "refresh_outline_after_save": { "p50": 10.3, "p90": 16.2, "p95": 17.8, "p99": 30.4, "max": 47.8, "threshold_p95_steady<500ms": "passou", "threshold_erro_steady<1%": "passou (0%)" }
+          "turnos_totais": 789,
+          "iterations_metrica_k6": 10,
+          "nota_turnos_vs_iteracoes_k6": "A partir desta rodada, a métrica nativa 'iterations' do k6 conta VUs (sempre == VUS), não mais turnos — ver mudanca_de_cenario_desde_a_ultima_medicao. turnos_totais vem da contagem de check 'save_scene status 200' (== 'refresh_outline_after_save status 200', ver notas_de_metodologia).",
+          "list_books": { "p50": 15.97, "p90": 29.09, "p95": 38.96, "p99": 53.93, "max": 171.24, "threshold_p95_steady<500ms": "passou", "threshold_erro_steady<1%": "passou (0%)" },
+          "load_outline": { "p50": 4.79, "p90": 8.15, "p95": 9.95, "p99": 15.46, "max": 21.44, "threshold_p95_steady<500ms": "passou", "threshold_erro_steady<1%": "passou (0%)" },
+          "load_scene": { "p50": 4.22, "p90": 6.75, "p95": 8.85, "p99": 13.27, "max": 26.2, "threshold_p95_steady<500ms": "passou", "threshold_erro_steady<1%": "passou (0%)" },
+          "save_scene": { "p50": 20.57, "p90": 34.54, "p95": 41.46, "p99": 62.05, "max": 76.02, "threshold_p95_steady<500ms": "passou", "threshold_erro_steady<1%": "passou (0%)" },
+          "refresh_outline_after_save": { "p50": 4.84, "p90": 8.04, "p95": 10.16, "p99": 14.95, "max": 38.12, "threshold_p95_steady<500ms": "passou", "threshold_erro_steady<1%": "passou (0%)" }
         },
         "auth_setup_teardown": {
           "descricao": "Fora do loop medido: auth roda VUS+2 vezes (setup + 1 por VU + teardown); setup_create_book/section/chapter/scene rodam VUS vezes cada (1 livro por VU); teardown_delete_book roda VUS vezes.",
-          "auth_csrf_avg_ms": 9.7,
-          "auth_csrf_p95_ms": 26.0,
-          "auth_login_avg_ms": 113.5,
-          "auth_login_p95_ms": 148.6,
-          "setup_create_book_avg_ms": 18.0,
-          "setup_create_book_p95_ms": 30.0,
-          "setup_create_section_avg_ms": 9.5,
-          "setup_create_section_p95_ms": 12.2,
-          "setup_create_chapter_avg_ms": 11.5,
-          "setup_create_chapter_p95_ms": 15.6,
-          "setup_create_scene_avg_ms": 20.0,
-          "setup_create_scene_p95_ms": 29.2,
-          "teardown_delete_book_avg_ms": 38.5,
-          "teardown_delete_book_p95_ms": 57.0
+          "auth_csrf_avg_ms": 4.7,
+          "auth_csrf_p95_ms": 8.7,
+          "auth_login_avg_ms": 67.5,
+          "auth_login_p95_ms": 82.6,
+          "setup_create_book_avg_ms": 32.6,
+          "setup_create_book_p95_ms": 54.6,
+          "setup_create_section_avg_ms": 19.2,
+          "setup_create_section_p95_ms": 45.5,
+          "setup_create_chapter_avg_ms": 17.6,
+          "setup_create_chapter_p95_ms": 38.9,
+          "setup_create_scene_avg_ms": 34.0,
+          "setup_create_scene_p95_ms": 60.3,
+          "teardown_delete_book_avg_ms": 21.6,
+          "teardown_delete_book_p95_ms": 34.3
         }
       },
       "30_vus": {
         "execucao_completa": {
           "vus": 30,
           "duracao": "3m (30s aquecimento / 2m carga estável / 30s desaceleração)",
-          "requests_totais": 11965,
-          "rps_global": 65.22,
-          "http_req_duration_global": { "p50": 7.13, "p90": 42.60, "p95": 56.32, "p99": 88.55, "max": 369.22, "unidade": "ms" },
-          "erros": { "http_req_failed_rate": 0, "http_req_failed_total": 0, "de": 11965 },
-          "checks": { "rate": 1, "passes": 11750, "fails": 0 },
+          "requests_totais": 11930,
+          "rps_global": 65.72,
+          "http_req_duration_global": { "p50": 7.79, "p90": 39.44, "p95": 60.04, "p99": 96.79, "max": 161.31, "unidade": "ms" },
+          "erros": { "http_req_failed_rate": 0, "http_req_failed_total": 0, "de": 11930 },
+          "checks": { "rate": 1, "passes": 11715, "fails": 0 },
           "vu_auth_success": { "rate": 1, "passes": 30, "fails": 0 },
           "thresholds_globais": {
             "http_req_failed<1%": "passou",
             "checks>99%": "passou",
             "vu_auth_success==100%": "passou",
-            "http_req_duration_global_p95<500ms": "passou (56.3ms)"
+            "http_req_duration_global_p95<500ms": "passou (60.0ms)"
           }
         },
         "operacoes_principais": {
           "descricao": "Restrita à fase estável (phase:steady, 2 minutos com VUS constante no pico).",
-          "iterations_execucao_completa": 2350,
-          "list_books": { "p50": 31.3, "p90": 63.0, "p95": 76.5, "p99": 102.8, "max": 246.1, "threshold_p95_steady<500ms": "passou", "threshold_erro_steady<1%": "passou (0%)" },
-          "load_outline": { "p50": 4.0, "p90": 7.1, "p95": 8.4, "p99": 14.0, "max": 211.7, "threshold_p95_steady<500ms": "passou", "threshold_erro_steady<1%": "passou (0%)" },
-          "load_scene": { "p50": 3.8, "p90": 6.3, "p95": 7.5, "p99": 11.0, "max": 51.7, "threshold_p95_steady<500ms": "passou", "threshold_erro_steady<1%": "passou (0%)" },
-          "save_scene": { "p50": 31.3, "p90": 49.8, "p95": 61.6, "p99": 86.7, "max": 369.2, "threshold_p95_steady<500ms": "passou", "threshold_erro_steady<1%": "passou (0%)" },
-          "refresh_outline_after_save": { "p50": 5.2, "p90": 9.1, "p95": 10.5, "p99": 17.5, "max": 54.4, "threshold_p95_steady<500ms": "passou", "threshold_erro_steady<1%": "passou (0%)" }
+          "turnos_totais": 2343,
+          "iterations_metrica_k6": 30,
+          "nota_turnos_vs_iteracoes_k6": "Ver nota equivalente em 10_vus.operacoes_principais.",
+          "list_books": { "p50": 34.49, "p90": 82.29, "p95": 95.60, "p99": 119.15, "max": 156.47, "threshold_p95_steady<500ms": "passou", "threshold_erro_steady<1%": "passou (0%)" },
+          "load_outline": { "p50": 4.41, "p90": 8.97, "p95": 10.49, "p99": 17.26, "max": 63.58, "threshold_p95_steady<500ms": "passou", "threshold_erro_steady<1%": "passou (0%)" },
+          "load_scene": { "p50": 3.9, "p90": 7.66, "p95": 9.25, "p99": 15.21, "max": 53.0, "threshold_p95_steady<500ms": "passou", "threshold_erro_steady<1%": "passou (0%)" },
+          "save_scene": { "p50": 20.53, "p90": 37.79, "p95": 46.08, "p99": 62.69, "max": 111.42, "threshold_p95_steady<500ms": "passou", "threshold_erro_steady<1%": "passou (0%)" },
+          "refresh_outline_after_save": { "p50": 5.14, "p90": 10.48, "p95": 12.21, "p99": 18.16, "max": 44.87, "threshold_p95_steady<500ms": "passou", "threshold_erro_steady<1%": "passou (0%)" }
         },
         "auth_setup_teardown": {
           "descricao": "Fora do loop medido: auth roda VUS+2 vezes (setup + 1 por VU + teardown); setup_create_book/section/chapter/scene rodam VUS vezes cada (1 livro por VU); teardown_delete_book roda VUS vezes.",
-          "auth_csrf_avg_ms": 5.6,
-          "auth_csrf_p95_ms": 10.3,
-          "auth_login_avg_ms": 86.2,
-          "auth_login_p95_ms": 127.9,
-          "setup_create_book_avg_ms": 17.5,
-          "setup_create_book_p95_ms": 47.3,
-          "setup_create_section_avg_ms": 8.5,
-          "setup_create_section_p95_ms": 19.3,
-          "setup_create_chapter_avg_ms": 8.7,
-          "setup_create_chapter_p95_ms": 13.9,
+          "auth_csrf_avg_ms": 3.4,
+          "auth_csrf_p95_ms": 6.3,
+          "auth_login_avg_ms": 70.4,
+          "auth_login_p95_ms": 102.8,
+          "setup_create_book_avg_ms": 12.6,
+          "setup_create_book_p95_ms": 24.7,
+          "setup_create_section_avg_ms": 6.7,
+          "setup_create_section_p95_ms": 10.8,
+          "setup_create_chapter_avg_ms": 7.8,
+          "setup_create_chapter_p95_ms": 12.7,
           "setup_create_scene_avg_ms": 15.7,
-          "setup_create_scene_p95_ms": 36.3,
-          "teardown_delete_book_avg_ms": 9.9,
-          "teardown_delete_book_p95_ms": 12.2
+          "setup_create_scene_p95_ms": 42.9,
+          "teardown_delete_book_avg_ms": 25.3,
+          "teardown_delete_book_p95_ms": 60.5
         }
       }
     },
-    "comparacao_com_medicao_anterior_1f2593e": {
-      "aviso": "NÃO é uma comparação direta de performance. O pacing do cenário mudou nesta rodada (AUTO_SAVE_DELAY_MS=1200ms adicionado antes de cada PATCH, ver mudanca_de_cenario_desde_a_ultima_medicao) — cada iteração agora inclui uma espera fixa de 1.2s que a rodada anterior não tinha. A carga OFERECIDA por VU é deliberadamente menor (mais realista); as diferenças abaixo refletem essa mudança de metodologia, não uma regressão nem uma melhora do backend medido.",
+    "comparacao_com_medicao_anterior_dece9f3": {
+      "aviso": "Diferente da remedição anterior (que comparava com 1f2593e/8023b2d, onde o pacing mudou por causa do debounce), esta rodada NÃO muda o pacing sob condições normais — o refresh_outline_after_save de dece9f3 já rodava em paralelo com o think time (Promise.all), e sob backend saudável ele quase sempre termina antes do think time acabar de qualquer forma. Os números abaixo são portanto comparáveis, e a proximidade entre eles é o resultado esperado: a mudança desta rodada só deveria ter efeito perceptível quando o outline está degradado (latência do refresh > think time) — cenário reproduzido separadamente via fault injection não versionada (~2.5s de latência artificial), documentada na PR #141, não nestas medições.",
       "10_vus": {
-        "requests_totais": "10675 → 3955 (-63.0%)",
-        "rps_global": "58.86 → 21.57 (-63.4%)",
-        "iterations": "2120 → 776 (-63.4%)",
-        "save_scene_p95_steady": "55.2ms → 66.3ms (latência por requisição sob concorrência efetivamente similar; ainda 7.5x abaixo do teto de 500ms)",
-        "nota": "Queda esperada em requests/RPS/iterações: com o debounce, cada VU agora gera no máximo ~1 save a cada ~1.2s+think time+latência das 5 operações, em vez de a cada ~0.86s medido na rodada anterior (sem debounce modelado)."
+        "requests_totais": "3955 → 4020 (+1.6%)",
+        "rps_global": "21.57 → 22.38 (+3.8%)",
+        "turnos": "776 → 789 (+1.7%)",
+        "save_scene_p95_steady": "66.3ms → 41.5ms (dentro da variação normal de execução a execução; mesma ordem de grandeza)",
+        "nota": "Diferença compatível com ruído de execução a execução, não com uma mudança de pacing — confirma que, sob condições normais (sem outline degradado), o fire-and-forget genuíno produz uma carga oferecida equivalente ao Promise.all anterior."
       },
       "30_vus": {
-        "requests_totais": "29145 → 11965 (-59.0%)",
-        "rps_global": "159.10 → 65.22 (-59.0%)",
-        "iterations": "5786 → 2350 (-59.4%)",
-        "save_scene_p95_steady": "89.1ms → 61.6ms",
-        "nota": "Mesma leitura que em 10 VUs. Apesar da carga oferecida menor, todos os thresholds de latência e erro por operação continuam passando com folga — o objetivo desta rodada era corrigir o modelo de carga, não medir throughput máximo."
+        "requests_totais": "11965 → 11930 (-0.3%)",
+        "rps_global": "65.22 → 65.72 (+0.8%)",
+        "turnos": "2350 → 2343 (-0.3%)",
+        "save_scene_p95_steady": "61.6ms → 46.1ms (dentro da variação normal de execução a execução)",
+        "nota": "Mesma leitura que em 10 VUs — praticamente idêntico a dece9f3, como esperado sob backend saudável."
       }
     },
-    "gargalo_identificado": "Com host isolado, energia AC confirmada e os thresholds restritos à fase estável, as 5 operações principais passam em 10 e 30 VUs com folga ainda maior que na rodada anterior — consequência direta da carga oferecida mais baixa por VU (debounce). list_books continua sendo a operação relativamente mais lenta nas duas cargas (p95 70.9ms em 10 VUs, 76.5ms em 30 VUs) — cresce com o tamanho da coleção de livros do tenant, que aumenta com VUS por construção do próprio cenário — mas está longe do teto de 500ms mesmo em 30 VUs. Nenhum incidente de energia/throttling nesta rodada (as três execuções rodaram na tomada do início ao fim, confirmado antes e depois via Win32_Battery).",
+    "gargalo_identificado": "Com host isolado, energia AC confirmada e os thresholds restritos à fase estável, as 5 operações principais passam em 10 e 30 VUs com folga — sem mudança relevante frente à rodada anterior (ver comparacao_com_medicao_anterior_dece9f3). list_books continua sendo a operação relativamente mais lenta nas duas cargas (p95 39.0ms em 10 VUs, 95.6ms em 30 VUs) — cresce com o tamanho da coleção de livros do tenant, que aumenta com VUS por construção do próprio cenário — mas está longe do teto de 500ms mesmo em 30 VUs. Nenhum incidente de energia/throttling nesta rodada (as três execuções rodaram na tomada do início ao fim, confirmado antes e depois).",
     "limitacoes": [
       "Execução na mesma máquina de desenvolvimento. crm-marketing-backend-1 ficou parado durante toda a execução, mas um Postgres de outro worktree do IWrite (iwrite-db, porta 5435) permaneceu ativo e ocioso — não é hardware dedicado.",
       "Backend, Postgres e k6 rodam na mesma máquina, sem separação de rede/CPU entre gerador de carga e alvo — parte da latência medida pode ser contenção local, não custo real de rede.",
-      "O debounce do AUTO_SAVE (AUTO_SAVE_DELAY_MS=1200ms) reduz o throughput de escrita por VU frente às rodadas anteriores por construção — este cenário modela a cadência de um autor digitando e pausando, não o teto de throughput que o backend consegue sustentar. Para medir capacidade máxima, use AUTO_SAVE_DELAY_MS baixo/zero explicitamente como modo de estresse (ver loadtest/README.md).",
+      "O debounce do AUTO_SAVE (AUTO_SAVE_DELAY_MS=1200ms) reduz o throughput de escrita por VU frente a um cenário sem debounce por construção — este cenário modela a cadência de um autor digitando e pausando, não o teto de throughput que o backend consegue sustentar. Para medir capacidade máxima, use AUTO_SAVE_DELAY_MS baixo/zero explicitamente como modo de estresse (ver loadtest/README.md).",
+      "O efeito prático do fire-and-forget genuíno do refresh_outline_after_save (esta rodada) só se manifesta quando o outline está degradado — não reproduzido nestas medições de baseline saudável, só via fault injection não versionada (ver PR #141).",
       "list_books cresce com VUS por construção do próprio cenário (1 livro por VU no tenant do autor de teste) — em execuções com VUS muito maior que 30, o custo de listar/serializar a coleção de livros pode se tornar o novo fator dominante. Não investigado neste PR.",
       "A composição de custo de save_scene (INSERT em book_word_count_events, cálculo do rollup diário, escrita da própria cena) não foi decomposta — só o efeito agregado foi medido.",
       "Sem OTel habilitado durante a execução (evita overhead de instrumentação na medição); a decomposição de custo entre as etapas internas de save_scene/list_books/load_outline não foi feita neste PR.",
       "contentJson sintético é um único parágrafo curto (7-8 palavras) — não representa uma cena longa de verdade.",
-      "IWRITE_LOADTEST_LOGIN_RATE_LIMIT (docker-compose.loadtest.yml, versionado) foi mantido no default (1000) nesta execução — cobre folgadamente VUS até 998."
+      "IWRITE_LOADTEST_LOGIN_RATE_LIMIT (docker-compose.loadtest.yml, versionado) foi mantido no default (1000) nesta execução — cobre folgadamente VUS até 998.",
+      "A rampa de subida/descida por VU (activationOffsetMs()/deactivationOffsetMs()) é uma aproximação linear do comportamento de ramping-vus, não uma cópia do algoritmo interno do k6 — a curva agregada de VUs ativas ao longo do tempo é equivalente (prova algébrica no commit 3bb79ce), mas a ordem exata de quais VUs entram/saem primeiro pode diferir."
     ],
-    "proxima_acao_recomendada": "Repetir 30 VUs (e testar VUS maior, ex. 50-100) em hardware totalmente dedicado, sem nenhum outro container Docker ativo na máquina, agora que o pacing reflete o debounce real do editor. Rodar o teste com OTel habilitado (docker-compose.observability.yml) e usar os traces correlacionados de scene_content_save para decompor o custo de save_scene. Investigar o crescimento de list_books/load_outline com o tamanho da coleção de livros do tenant antes de rodar com VUS bem maior que 30. Considerar um segundo cenário explícito de estresse (AUTO_SAVE_DELAY_MS baixo) para medir o teto de throughput de escrita separadamente do baseline realista."
+    "proxima_acao_recomendada": "Repetir 30 VUs (e testar VUS maior, ex. 50-100) em hardware totalmente dedicado, sem nenhum outro container Docker ativo na máquina. Rodar o teste com OTel habilitado (docker-compose.observability.yml) e usar os traces correlacionados de scene_content_save para decompor o custo de save_scene. Investigar o crescimento de list_books/load_outline com o tamanho da coleção de livros do tenant antes de rodar com VUS bem maior que 30. Considerar um segundo cenário explícito de estresse (AUTO_SAVE_DELAY_MS baixo) para medir o teto de throughput de escrita separadamente do baseline realista. Considerar versionar (ou converter em teste automatizado leve) a fault injection do refresh_outline_after_save degradado, hoje só documentada na PR #141."
   }
 }
