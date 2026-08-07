@@ -4,9 +4,9 @@ import { Rate } from 'k6/metrics';
 import exec from 'k6/execution';
 
 // Nenhuma falha de autenticação de VU é tolerada: rate==1 reprova o run
-// inteiro mesmo que uma VU se autentique com sucesso numa iteração
-// posterior (ver ensureVuAuthenticated()) — o teste não pode "passar"
-// silenciosamente operando com menos sessões que o VUS pretendido.
+// inteiro mesmo com apenas uma VU falhando (ver authenticateVuOnce()) — o
+// teste não pode "passar" silenciosamente operando com menos sessões que o
+// VUS pretendido.
 const vuAuthSuccess = new Rate('vu_auth_success');
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -21,6 +21,18 @@ const vuAuthSuccess = new Rate('vu_auth_success');
 // editando o SEU PRÓPRIO livro (1 livro/seção/capítulo/cena por VU, criados
 // em setup()) — sem contenção artificial no lock pessimista de linha de um
 // único livro compartilhado.
+//
+// Cada VU roda um ÚNICO "turno" k6 (options.scenarios.default,
+// executor per-vu-iterations, iterations:1) contendo um laço interno manual
+// de "turnos" lógicos (list_books → load_outline → load_scene → debounce →
+// save_scene → refresh_outline_after_save), em vez de várias iterações k6
+// separadas — ver o comentário de MAIN_LOOP_MAX_DURATION abaixo para o motivo:
+// o runtime do k6 v2.1.0 sempre drena TODAS as Promises pendentes de uma
+// iteração (mesmo as nunca aguardadas) antes de considerá-la concluída, então
+// qualquer refresh_outline_after_save disparado dentro de uma iteração k6
+// tradicional vira barreira da iteração seguinte sempre que for mais lento
+// que o think time — contrariando o fire-and-forget real do frontend
+// (confirmado empiricamente, não por leitura da documentação: ver PR #141).
 //
 // IMPORTANTE: NUNCA aponte para Render, produção ou o servidor acadêmico
 // compartilhado (ex.: https://eqNN.dsc.rodrigor.com) — o guard de host abaixo
@@ -201,6 +213,33 @@ const RAMPDOWN_DURATION = validateK6Duration(__ENV.RAMPDOWN_DURATION || '30s', '
 // abaixo) — o que sobra depois de warmup+steady já é ramp_down por exclusão.
 const WARMUP_MS = k6DurationToMs(WARMUP_DURATION);
 const STEADY_MS = k6DurationToMs(STEADY_DURATION);
+const RAMPDOWN_MS = k6DurationToMs(RAMPDOWN_DURATION);
+
+// O executor per-vu-iterations (ver options.scenarios abaixo) inicia as VUS
+// VUs simultaneamente em exec.scenario.startTime — sem o escalonamento
+// automático de VU que options.stages/ramping-vus fazia. default() escalona
+// manualmente sua própria ativação (rampa de subida) e desativação (rampa de
+// descida) por VU, proporcional ao índice __VU (1..VUS), reproduzindo a MESMA
+// curva agregada de VUs ativas ao longo do tempo que ramping-vus produzia:
+// sobe linear de 0→VUS em WARMUP_MS, mantém VUS em STEADY_MS, desce linear de
+// VUS→0 em RAMPDOWN_MS (a prova algébrica está no commit que introduziu isto,
+// ver PR #141). Cada VU calcula os dois deslocamentos em relação ao início do
+// cenário (exec.scenario.startTime) uma única vez, no topo de default().
+function activationOffsetMs(vuIndex) {
+  return ((vuIndex - 1) / VUS) * WARMUP_MS;
+}
+function deactivationOffsetMs(vuIndex) {
+  return WARMUP_MS + STEADY_MS + ((vuIndex - 1) / VUS) * RAMPDOWN_MS;
+}
+
+// Folga além de warmup+steady+rampdown antes do k6 interromper à força a
+// iteração única de uma VU: cobre o último turno disparado perto do limiar de
+// desativação (debounce de 1200ms + PATCH + refresh) e a drenagem final do
+// event loop (ver comentário grande acima) — nunca usada para estender as
+// fases medidas em si (currentPhase() só olha para WARMUP_MS/STEADY_MS,
+// nunca para este valor).
+const MAIN_LOOP_GRACE_MS = 60000;
+const MAIN_LOOP_MAX_DURATION = `${WARMUP_MS + STEADY_MS + RAMPDOWN_MS + MAIN_LOOP_GRACE_MS}ms`;
 
 // setup() cria 1 livro/seção/capítulo/cena por VU, em loop serial: o número
 // de requisições (e portanto o tempo de setup) cresce com VUS, então o
@@ -222,11 +261,19 @@ const ORPHAN_RECOVERY_POLL_INTERVAL_S = 0.5;
 export const options = {
   setupTimeout: SETUP_TIMEOUT,
   teardownTimeout: TEARDOWN_TIMEOUT,
-  stages: [
-    { duration: WARMUP_DURATION, target: VUS },
-    { duration: STEADY_DURATION, target: VUS },
-    { duration: RAMPDOWN_DURATION, target: 0 },
-  ],
+  // per-vu-iterations (não options.stages/ramping-vus): cada VU roda 1 única
+  // iteração k6, contendo o laço interno manual de turnos com rampa de
+  // subida/descida auto-gerenciada — ver o comentário de
+  // activationOffsetMs()/deactivationOffsetMs() acima para o porquê. O nome
+  // do cenário continua 'default', então a tag `scenario` nas métricas não muda.
+  scenarios: {
+    default: {
+      executor: 'per-vu-iterations',
+      vus: VUS,
+      iterations: 1,
+      maxDuration: MAIN_LOOP_MAX_DURATION,
+    },
+  },
   // Lista padrão do k6 menos 'url': a tag automática 'url' carrega a URL
   // concreta de cada requisição (com o bookId/sceneId sintéticos embutidos),
   // o que criaria uma série por livro/cena caso o resultado seja exportado
@@ -243,9 +290,8 @@ export const options = {
     checks: ['rate>0.99'],
     http_req_duration: ['p(95)<500'],
     // Sem tolerância: uma única falha de autenticação de VU reprova o run
-    // inteiro, mesmo que a mesma VU se autentique com sucesso numa iteração
-    // posterior — o teste não pode passar operando com menos sessões que o
-    // VUS pretendido (ver ensureVuAuthenticated()).
+    // inteiro — o teste não pode passar operando com menos sessões que o
+    // VUS pretendido (ver authenticateVuOnce()).
     vu_auth_success: ['rate==1'],
     // Operações principais do cenário medido, restritas à fase estável
     // (phase:steady, ver currentPhase()): os estágios de warmup/rampdown
@@ -257,7 +303,7 @@ export const options = {
     'http_req_duration{operation:load_scene,phase:steady}': ['p(95)<500'],
     'http_req_duration{operation:save_scene,phase:steady}': ['p(95)<500'],
     // Refetch do outline que o frontend real dispara (invalidateQueries) após
-    // um save_scene bem-sucedido — ver ensureVuAuthenticated()/default().
+    // um save_scene bem-sucedido, em fire-and-forget genuíno — ver runTurn().
     'http_req_duration{operation:refresh_outline_after_save,phase:steady}': ['p(95)<500'],
     // Erro por operação, restrito à fase estável: os thresholds globais
     // (http_req_failed/checks acima) diluem falhas concentradas numa única
@@ -327,19 +373,16 @@ function jarCookie(jar, url, name) {
 }
 
 /**
- * Autentica no jar explicitamente passado. k6 recicla o "jar corrente"
- * (o que `http.cookieJar()` devolve) a cada chamada de nível superior —
- * setup(), teardown() e CADA iteração de default() começam com um jar
- * vazio, mesmo dentro da mesma VU; não é o jar persistente "por VU" que a
- * documentação sugere à primeira leitura (confirmado empiricamente: chamar
- * `http.cookieJar()` de novo numa iteração posterior da mesma VU devolve um
- * jar sem os cookies da iteração anterior). Por isso login() nunca usa o
- * jar implícito — sempre recebe e devolve a autenticação no jar que o
- * chamador guardou (setup()/teardown() num `const jar` local; a VU num
- * `vuJar` de módulo, reaproveitado entre iterações via `{ jar }` explícito
- * em toda requisição). Nunca retorna nem guarda o cookie/token numa
- * variável separada do jar — quem precisa do header CSRF lê de volta do
- * jar, no momento da requisição, via `authHeaders(jar)`.
+ * Autentica no jar explicitamente passado. k6 recicla o "jar corrente" (o
+ * que `http.cookieJar()` devolve) a cada chamada de nível superior — não é o
+ * jar persistente "por VU" que a documentação sugere à primeira leitura.
+ * Por isso login() nunca usa o jar implícito — sempre recebe e devolve a
+ * autenticação no jar que o chamador guardou (setup()/teardown() num
+ * `const jar` local; a VU no jar devolvido por `authenticateVuOnce()`,
+ * reaproveitado por todos os turnos do laço interno de default() via
+ * `{ jar }` explícito em toda requisição). Nunca retorna nem guarda o
+ * cookie/token numa variável separada do jar — quem precisa do header CSRF
+ * lê de volta do jar, no momento da requisição, via `authHeaders(jar)`.
  */
 function login(jar) {
   const csrfRes = http.get(`${BASE}/api/auth/csrf`, { jar, tags: { operation: 'auth_csrf', name: 'GET /api/auth/csrf' } });
@@ -377,40 +420,36 @@ function jsonHeaders(jar, extra) {
   return Object.assign({ 'Content-Type': 'application/json' }, authHeaders(jar), extra || {});
 }
 
-let vuJar = null;
-let vuAuthenticated = false;
-
 /**
- * Login único por VU, feito na primeira iteração daquela VU — não em
- * setup() nem repetido a cada iteração. `vuJar` é guardado em variável de
- * módulo (sobrevive entre iterações da mesma VU) e passado explicitamente
- * (`{ jar: vuJar }`) em toda requisição do loop principal — sem isso, a
- * sessão se perderia a cada nova iteração (ver comentário de `login()`).
- * Cada VU passa a ter sua própria sessão de servidor real, refletindo VUS
- * sessões independentes do mesmo autor editando livros distintos, em vez de
- * uma única sessão de setup() repassada manualmente via headers para todas.
- * Falha ao autenticar não aborta o processo do k6 imediatamente: só a
- * iteração atual desta VU é perdida (a próxima iteração tenta autenticar de
- * novo, já que `vuAuthenticated` continua `false`), mas a métrica
- * `vu_auth_success` registra `false` nesse instante — e como o threshold
- * é `rate==1` sem tolerância, o run inteiro é reprovado ao final mesmo que
- * essa mesma VU consiga autenticar numa iteração posterior. Não existe
- * "reduzir a carga silenciosamente": qualquer falha de login vira falha do
- * `k6 run`.
+ * Login único por VU, tentado exatamente uma vez, no topo da (única)
+ * iteração k6 daquela VU (default() agora roda 1x por VU — ver
+ * options.scenarios.default/MAIN_LOOP_MAX_DURATION acima) — não em setup().
+ * O jar retornado é passado explicitamente (`{ jar }`) em toda requisição do
+ * laço interno principal (ver comentário de `login()`). Cada VU tem sua
+ * própria sessão de servidor real, refletindo VUS sessões independentes do
+ * mesmo autor editando livros distintos.
+ *
+ * NUNCA re-tenta. Antes (quando default() era chamada de novo a cada
+ * iteração k6), uma falha de autenticação persistente virava uma tempestade
+ * de retries: cada iteração subsequente da mesma VU tentava o handshake de
+ * duas requisições de novo após só 0.3-1s de think time, consumindo o
+ * orçamento de rate-limit de login da conta/origem e podendo impedir até o
+ * login de teardown() (achado do Codex, PR #141). Como agora só existe UMA
+ * chamada a default() por VU, uma falha aqui já É terminal por construção —
+ * não há "próxima iteração" desta VU para retentar, e vu_auth_success só é
+ * registrada esta ÚNICA vez, nunca repetidamente. O run inteiro ainda é
+ * reprovado (threshold `vu_auth_success: rate==1`, sem tolerância), mas sem
+ * gerar tráfego de retry artificial nem competir pelo orçamento de login que
+ * teardown() precisa para limpar os livros sintéticos das outras VUs.
  */
-function ensureVuAuthenticated() {
-  if (vuAuthenticated) {
-    return vuJar;
-  }
+function authenticateVuOnce() {
+  const jar = http.cookieJar();
   try {
-    vuJar = http.cookieJar();
-    login(vuJar);
-    vuAuthenticated = true;
+    login(jar);
     vuAuthSuccess.add(true);
-    return vuJar;
+    return jar;
   } catch (err) {
-    console.error(`VU ${__VU}: falha ao autenticar: ${err.message}`);
-    vuJar = null;
+    console.error(`VU ${__VU}: falha ao autenticar (sem retry nesta execução): ${err.message}`);
     vuAuthSuccess.add(false);
     return null;
   }
@@ -508,12 +547,12 @@ function cleanupBooks(jar, runId, bookIds, originalError) {
 /**
  * setup() autentica só internamente (jar próprio de setup(), nunca
  * devolvido) para provisionar 1 livro/seção/capítulo/cena por VU — cada VU
- * autentica de novo, sozinha, na própria primeira iteração
- * (ensureVuAuthenticated()). O retorno de setup() é só metadado não
- * sensível ([{ bookId, sceneId }, ...]): nenhum cookie, header ou CSRF sai
- * daqui, então nenhum caminho de summary do k6 — RESULT_PATH,
- * --summary-export nativo ou K6_SUMMARY_EXPORT — consegue vazar sessão,
- * nem mesmo o caminho nativo que ignora handleSummary() por completo.
+ * autentica de novo, sozinha, no topo da sua própria (única) iteração
+ * (authenticateVuOnce()). O retorno de setup() é só metadado não sensível
+ * ([{ bookId, sceneId }, ...]): nenhum cookie, header ou CSRF sai daqui,
+ * então nenhum caminho de summary do k6 — RESULT_PATH, --summary-export
+ * nativo ou K6_SUMMARY_EXPORT — consegue vazar sessão, nem mesmo o caminho
+ * nativo que ignora handleSummary() por completo.
  */
 export function setup() {
   if (!LOGIN_PASSWORD) {
@@ -602,11 +641,12 @@ function thinkTime() {
   return THINK_TIME_MIN_S + Math.random() * (THINK_TIME_MAX_S - THINK_TIME_MIN_S);
 }
 
-// Substitui k6/sleep dentro de default(), que agora é async: sleep() bloqueia
-// a thread e nunca resolveria as Promises paralelas do refetch em segundo
-// plano (ver default()). exec.scenario.startTime é o timestamp (ms desde
-// epoch) de quando o cenário começou — currentPhase() usa isso, não __VU nem
-// contagem de VUs ativas, porque o k6 não expõe "VUs atuais" por requisição.
+// Substitui k6/sleep dentro de default()/runTurn(), que agora são async:
+// sleep() bloqueia a thread e nunca deixaria o refresh_outline_after_save
+// fire-and-forget de um turno anterior avançar em segundo plano (ver
+// runTurn()). exec.scenario.startTime é o timestamp (ms desde epoch) de
+// quando o cenário começou — currentPhase() usa isso, não __VU nem contagem
+// de VUs ativas, porque o k6 não expõe "VUs atuais" por requisição.
 function delay(seconds) {
   return new Promise((resolve) => {
     setTimeout(resolve, seconds * 1000);
@@ -616,9 +656,18 @@ function delay(seconds) {
 /**
  * Fase do estágio no instante da chamada: ramp_up (WARMUP_DURATION),
  * steady (STEADY_DURATION) ou ramp_down (RAMPDOWN_DURATION), pelo tempo
- * decorrido desde o início do cenário. Chamada uma vez no início de cada
- * iteração de default() — a mesma fase vale para as cinco operações
- * daquela iteração, mesmo que ela atravesse uma borda de fase.
+ * decorrido desde o início do cenário. Chamada de novo a cada requisição, no
+ * momento exato do dispatch (list_books/load_outline/load_scene/save_scene/
+ * refresh_outline_after_save) — NUNCA capturada uma vez só e reutilizada para
+ * as demais. Antes (uma única `const phase = currentPhase()` no topo do
+ * turno) uma iteração que começasse perto de uma borda de fase carregava essa
+ * fase "congelada" em requisições disparadas bem depois — especialmente
+ * save_scene, que só sai após o debounce de AUTO_SAVE_DELAY_MS (1200ms por
+ * padrão): um turno iniciado no fim de steady podia entregar seu save_scene
+ * já em ramp_down, mas ainda marcado phase:steady, contaminando os percentis
+ * que os thresholds tratam como exclusivamente de pico (achado do Codex, PR
+ * #141). Chamar currentPhase() no instante do dispatch de cada requisição
+ * elimina essa contaminação por construção.
  */
 function currentPhase() {
   const elapsedMs = Date.now() - exec.scenario.startTime;
@@ -632,41 +681,36 @@ function currentPhase() {
 }
 
 /**
- * Autenticação (uma vez por VU) e depois list_books/load_outline/load_scene
- * são pré-requisitos sequenciais do fluxo real (não dá para abrir uma cena
- * sem antes navegar até o outline, e não dá para chegar no outline sem
- * antes listar os livros, nem fazer nada sem sessão). Uma falha em qualquer
- * um encerra a iteração imediatamente: nenhuma etapa seguinte roda, e em
- * particular nenhum PATCH é enviado usando um estado que o VU nunca
- * confirmou ter lido — uma falha de leitura não pode virar tráfego de
- * escrita nem distorcer a latência/erro de save_scene.
+ * Um turno lógico completo: list_books → load_outline → load_scene →
+ * debounce do AUTO_SAVE → save_scene → (se bem-sucedido)
+ * refresh_outline_after_save disparado em fire-and-forget genuíno — ver
+ * comentário grande no topo do arquivo para por que isso exige um laço manual
+ * dentro de uma única iteração k6, em vez de uma nova iteração k6 por turno.
  *
- * Cada VU opera exclusivamente sobre o livro/cena no índice correspondente
- * a __VU (`data[__VU - 1]`), criados 1:1 por setup() — nunca um recurso
- * compartilhado com outra VU.
+ * list_books/load_outline/load_scene são pré-requisitos sequenciais do fluxo
+ * real (não dá para abrir uma cena sem antes navegar até o outline, e não dá
+ * para chegar no outline sem antes listar os livros). Uma falha em qualquer
+ * um encerra o turno imediatamente (retorna sem chamar save_scene): nenhuma
+ * etapa seguinte roda, e em particular nenhum PATCH é enviado usando um
+ * estado que o VU nunca confirmou ter lido.
+ *
+ * `turn` substitui `__ITER` (que ficaria fixo em 0 — default() agora só tem
+ * uma iteração k6 por VU) para alternar a contagem de palavras entre turnos
+ * pares/ímpares: sem isso, todo save após o primeiro repetiria a mesma
+ * contagem do anterior, então SceneService.updateContent() sempre calcularia
+ * wordCountDelta=0 e WordCountEventService.shouldUpdateDailyRollup() nunca
+ * atualizaria o progresso diário.
+ *
+ * Retorna sempre depois de aguardar o think time — o chamador (default())
+ * decide se continua para o próximo turno ou encerra o laço.
  */
-export default async function (data) {
-  const jar = ensureVuAuthenticated();
-  if (!jar) {
-    await delay(thinkTime());
-    return;
-  }
-
-  const resource = data[__VU - 1];
-  if (!resource) {
-    console.error(`VU ${__VU}: nenhum livro provisionado por setup() (criou ${data.length}, VUS=${VUS}).`);
-    await delay(thinkTime());
-    return;
-  }
+async function runTurn(jar, resource, turn) {
   const { bookId, sceneId } = resource;
-  // Capturada uma vez por iteração: as cinco operações abaixo carregam a
-  // mesma fase, mesmo que a iteração atravesse uma borda warmup/steady/rampdown.
-  const phase = currentPhase();
 
   const listRes = http.get(`${BASE}/api/books`, {
     jar,
     headers: jsonHeaders(jar),
-    tags: { operation: 'list_books', name: 'GET /api/books', phase },
+    tags: { operation: 'list_books', name: 'GET /api/books', phase: currentPhase() },
   });
   if (!check(listRes, { 'list_books status 200': (r) => r.status === 200 })) {
     await delay(thinkTime());
@@ -676,7 +720,7 @@ export default async function (data) {
   const outlineRes = http.get(`${BASE}/api/books/${bookId}/outline`, {
     jar,
     headers: jsonHeaders(jar),
-    tags: { operation: 'load_outline', name: 'GET /api/books/{bookId}/outline', phase },
+    tags: { operation: 'load_outline', name: 'GET /api/books/{bookId}/outline', phase: currentPhase() },
   });
   if (!check(outlineRes, { 'load_outline status 200': (r) => r.status === 200 })) {
     await delay(thinkTime());
@@ -690,7 +734,7 @@ export default async function (data) {
   const sceneRes = http.get(`${BASE}/api/scenes/${sceneId}`, {
     jar,
     headers: jsonHeaders(jar),
-    tags: { operation: 'load_scene', name: 'GET /api/scenes/{sceneId}', phase },
+    tags: { operation: 'load_scene', name: 'GET /api/scenes/{sceneId}', phase: currentPhase() },
   });
   if (!check(sceneRes, { 'load_scene status 200': (r) => r.status === 200 })) {
     await delay(thinkTime());
@@ -698,19 +742,15 @@ export default async function (data) {
   }
   const revision = sceneRes.json('contentRevision');
 
-  // Alterna a contagem de palavras entre iterações pares/ímpares da mesma VU:
-  // sem isso, todo save após o primeiro tem a mesma contagem do anterior,
-  // então SceneService.updateContent() sempre calcula wordCountDelta=0 e
-  // WordCountEventService.shouldUpdateDailyRollup() nunca atualiza o
-  // progresso diário — o caminho real de save nunca é exercitado sob carga.
-  const extraWord = __ITER % 2 === 0 ? ' progresso' : '';
-  const contentText = `LOADTEST conteúdo sintético VU ${__VU} iteração ${__ITER}${extraWord}`;
+  const extraWord = turn % 2 === 0 ? ' progresso' : '';
+  const contentText = `LOADTEST conteúdo sintético VU ${__VU} turno ${turn}${extraWord}`;
 
   // Debounce do AUTO_SAVE (ver AUTO_SAVE_DELAY_MS acima): aguarda antes de
   // enviar o PATCH, simulando o intervalo que o editor real espera após a
   // última alteração antes de persistir. Nunca sleep() aqui — default() é
-  // async e sleep() bloquearia a thread, o que impediria as Promises
-  // paralelas do refetch mais abaixo de avançar.
+  // async e sleep() bloquearia a thread, o que impediria o refresh
+  // fire-and-forget de um turno anterior (ainda pendente em segundo plano)
+  // de avançar.
   await delay(AUTO_SAVE_DELAY_MS / 1000);
 
   const saveRes = http.patch(
@@ -725,39 +765,87 @@ export default async function (data) {
       expectedContentRevision: revision,
       operationId: uuidv4(),
     }),
-    { jar, headers: jsonHeaders(jar), tags: { operation: 'save_scene', name: 'PATCH /api/scenes/{sceneId}/content', phase } }
+    { jar, headers: jsonHeaders(jar), tags: { operation: 'save_scene', name: 'PATCH /api/scenes/{sceneId}/content', phase: currentPhase() } }
   );
   const saveSucceeded = check(saveRes, { 'save_scene status 200': (r) => r.status === 200 });
 
   // Espelha o frontend real: BookWorkspace mantém a query do outline ativa e
-  // contentMutation.mutateAsync() dispara queryClient.invalidateQueries no
-  // sucesso do save, o que refaz este GET (ver web/src/features/scenes).
-  // Só roda depois de um save bem-sucedido — o frontend também só invalida
-  // o outline nesse caso — e fica numa tag própria (não agregada em
-  // load_outline) para mostrar separadamente o custo desse refetch.
+  // contentMutation.mutateAsync() dispara `void queryClient.invalidateQueries(...)`
+  // (scene-editor.tsx) no sucesso do save — fire-and-forget genuíno, sem
+  // bloquear a UI nem o think time seguinte. Só roda depois de um save
+  // bem-sucedido — o frontend também só invalida o outline nesse caso.
   //
-  // O editor real dispara essa invalidação com `void
-  // queryClient.invalidateQueries(...)` (scene-editor.tsx) — fire-and-forget,
-  // sem bloquear a UI nem o think time seguinte. Serializar esse GET aqui
-  // (await síncrono) somaria a latência inteira do refetch ao think time e
-  // reduziria a taxa de requisições da VU bem no momento em que o backend
-  // fica mais lento — subestimando a carga oferecida. Por isso o refetch roda
-  // em paralelo com o think time via http.asyncRequest() + Promise.all(): o
-  // que demorar mais entre os dois é que dita quando a próxima iteração começa.
+  // NUNCA `await` aqui, nem via Promise.all com o think time: confirmado
+  // empiricamente (PR #141) que o k6 v2.1.0 drena TODAS as Promises de uma
+  // iteração — mesmo as nunca aguardadas — antes de considerá-la concluída,
+  // então qualquer forma de esperar por esta Promise (explícita ou via
+  // Promise.all) dentro da MESMA iteração k6 sempre vira barreira. A correção
+  // real não é a Promise em si, é rodá-la dentro do laço manual de
+  // runTurn()/default() (uma única iteração k6 por VU): como o `await`
+  // seguinte (thinkTime(), e depois o debounce do próximo turno) SÃO
+  // aguardados, mas a Promise do refresh NÃO É, o turno seguinte começa
+  // assim que o think time atual termina — o event loop só é forçado a
+  // drenar a Promise pendente quando toda a VU (não o turno) termina. Isso
+  // reproduz o mesmo overlap do frontend: o refresh de um turno pode
+  // continuar em voo enquanto o próximo turno já está em andamento. status é
+  // checado dentro do `.then()` (roda mesmo sem ninguém aguardar a Promise
+  // diretamente) e `.catch()` evita qualquer rejeição não tratada.
   if (saveSucceeded) {
-    const refreshPromise = http.asyncRequest('GET', `${BASE}/api/books/${bookId}/outline`, null, {
+    http.asyncRequest('GET', `${BASE}/api/books/${bookId}/outline`, null, {
       jar,
       headers: jsonHeaders(jar),
-      tags: { operation: 'refresh_outline_after_save', name: 'GET /api/books/{bookId}/outline', phase },
+      tags: { operation: 'refresh_outline_after_save', name: 'GET /api/books/{bookId}/outline', phase: currentPhase() },
+    }).then((refreshRes) => {
+      check(refreshRes, { 'refresh_outline_after_save status 200': (r) => r.status === 200 });
+    }).catch((err) => {
+      console.error(`VU ${__VU} turno ${turn}: refresh_outline_after_save falhou: ${err.message}`);
     });
-
-    const [refreshRes] = await Promise.all([refreshPromise, delay(thinkTime())]);
-
-    check(refreshRes, { 'refresh_outline_after_save status 200': (r) => r.status === 200 });
-    return;
   }
 
   await delay(thinkTime());
+}
+
+/**
+ * Uma única iteração k6 por VU (options.scenarios.default, executor
+ * per-vu-iterations) contendo um laço manual de turnos — ver o comentário
+ * grande no topo do arquivo e o de runTurn() para o porquê. Cada VU
+ * escalona sua própria ativação (rampa de subida) e desativação (rampa de
+ * descida) via activationOffsetMs()/deactivationOffsetMs(), reproduzindo a
+ * curva agregada de VUs ativas que options.stages/ramping-vus produzia.
+ *
+ * Autenticação é tentada exatamente uma vez, sem retry (ver
+ * authenticateVuOnce()) — uma falha encerra a VU inteira nesta única
+ * iteração, sem gerar tráfego de retry artificial.
+ *
+ * Cada VU opera exclusivamente sobre o livro/cena no índice correspondente
+ * a __VU (`data[__VU - 1]`), criados 1:1 por setup() — nunca um recurso
+ * compartilhado com outra VU.
+ */
+export default async function (data) {
+  await delay(activationOffsetMs(__VU) / 1000);
+
+  const jar = authenticateVuOnce();
+  if (!jar) {
+    return;
+  }
+
+  const resource = data[__VU - 1];
+  if (!resource) {
+    console.error(`VU ${__VU}: nenhum livro provisionado por setup() (criou ${data.length}, VUS=${VUS}).`);
+    return;
+  }
+
+  const deactivateAt = deactivationOffsetMs(__VU);
+  let turn = 0;
+  while (Date.now() - exec.scenario.startTime < deactivateAt) {
+    await runTurn(jar, resource, turn);
+    turn++;
+  }
+  // default() retorna aqui: o k6 drena qualquer refresh_outline_after_save
+  // ainda pendente do último turno (ou dos últimos turnos, sob latência
+  // suficientemente alta para empilhar mais de um) antes de considerar esta
+  // VU verdadeiramente encerrada — nenhuma requisição é descartada
+  // silenciosamente (ver comentário de runTurn()).
 }
 
 /**
