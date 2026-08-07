@@ -1,19 +1,20 @@
 {
   "resumo_comparativo": {
-    "measured_code_commit": "fc521b7f5d53669875fb543848f679d90f3d625c",
+    "measured_code_commit": "1f2593efdca90d4f21703bdea9d54cbe6ca15324",
     "measured_script_path": "loadtest/carga.js",
-    "measured_script_git_blob": "73450fd5dba30e4227c278e5a9c850eddc925bff",
-    "measured_script_sha256": "fde69d4f1899ebafc583f9b1c4526a73b5da053d178d7f9f9636140c375e2159",
-    "nota_hash_estavel": "measured_code_commit pode deixar de ser alcançável a partir de master depois de um squash-merge (git checkout <sha> -- loadtest/carga.js falharia num clone novo). measured_script_git_blob (git hash-object loadtest/carga.js, conferido igual a git rev-parse fc521b7:loadtest/carga.js) e measured_script_sha256 (sha256sum loadtest/carga.js; equivalente PowerShell: (Get-FileHash loadtest/carga.js -Algorithm SHA256).Hash.ToLower()) não dependem de nenhum commit continuar alcançável — bastam o conteúdo atual do arquivo em master e um hash local para confirmar que é byte a byte o mesmo script que gerou os números abaixo.",
+    "measured_script_git_blob": "a0c3f20fa3c0011e4a7a4c2069087e8b53c19717",
+    "measured_script_sha256": "1b9ed6d4cb9d27db11419376489548d1177fe8f9d9fce55a31c92fa677d47da7",
+    "nota_hash_estavel": "measured_code_commit pode deixar de ser alcançável a partir de master depois de um squash-merge (git checkout <sha> -- loadtest/carga.js falharia num clone novo). measured_script_git_blob (git hash-object loadtest/carga.js, conferido igual a git rev-parse 1f2593e:loadtest/carga.js) e measured_script_sha256 (sha256sum loadtest/carga.js; equivalente PowerShell: (Get-FileHash loadtest/carga.js -Algorithm SHA256).Hash.ToLower()) não dependem de nenhum commit continuar alcançável — bastam o conteúdo atual do arquivo em master e um hash local para confirmar que é byte a byte o mesmo script que gerou os números abaixo.",
     "evidence_commit": "ver a descrição da PR #141 — o commit que versiona este arquivo não pode conter o próprio hash sem autorreferência",
-    "nota_commits": "measured_code_commit é o commit de loadtest/carga.js exatamente como executado para gerar os números abaixo (working tree limpo, nenhuma mudança de código depois), mantido como referência histórica de onde a medição aconteceu — a prova estável de conteúdo é measured_script_git_blob/measured_script_sha256. evidence_commit é o commit posterior que só versiona este resumo e os JSONs brutos — não contém nenhuma mudança de comportamento do script. Os commits 884701a, 2838fe0 e dbd5904 (medições anteriores) permanecem só como evidência histórica — não são mais a medição final desta PR.",
-    "data_execucao": "2026-08-06T06:37:20Z a 2026-08-06T06:44:15Z",
+    "nota_commits": "measured_code_commit é o commit de loadtest/carga.js exatamente como executado para gerar os números abaixo (working tree limpo, nenhuma mudança de código depois), mantido como referência histórica de onde a medição aconteceu — a prova estável de conteúdo é measured_script_git_blob/measured_script_sha256. evidence_commit é o commit posterior que só versiona este resumo e os JSONs brutos — não contém nenhuma mudança de comportamento do script. Os commits fc521b7/42cdd0b (rodada anterior) e os commits anteriores a eles permanecem só como evidência histórica — não são mais a medição final desta PR.",
+    "data_execucao": "2026-08-07T01:06:45Z a 2026-08-07T01:13:43Z",
     "k6_version": "k6.exe v2.1.0 (commit/83a87a41e2, go1.26.4, windows/amd64)",
-    "motivo_da_remedicao": "2 findings P2 do Codex sobre a rodada anterior (bb23e29, código dbd5904): (1) se POST /api/books persistisse no servidor mas a resposta se perdesse (timeout) antes de createdBookIds.push(bookId), esse ID nunca entrava na lista de limpeza — e como teardown() nunca roda quando setup() lança, o livro ficava órfão. Corrigido com recoverOrphanedBookIds(): antes de relançar o erro original, setup() lista os livros da conta e casa pelo marcador EXATO desta execução (LOADTEST-${runId}-vu, nunca LOADTEST- genérico, para não tocar em livros de outra execução concorrente), unindo qualquer órfão encontrado aos já rastreados antes de tentar remover todos. (2) THINK_TIME_MIN_S/THINK_TIME_MAX_S não eram validados — um valor não numérico virava NaN e o timer efetivamente não esperava nada, inflando silenciosamente a taxa de requisições. Corrigido com validateThinkTime(): rejeita não-finito, negativo ou min > max antes de montar options ou disparar qualquer HTTP (k6 inspect já falha nesses casos). Nenhuma das duas correções toca o código das 5 operações principais, os thresholds ou o cálculo de phase — ao contrário da remedição anterior (2838fe0 → dbd5904), os números desta rodada são diretamente comparáveis a bb23e29 — ver comparacao_com_medicao_anterior.",
+    "motivo_da_remedicao": "3 findings P2 do Codex sobre a rodada anterior (42cdd0b, código fc521b7): (1) recoverOrphanedBookIds() fazia só uma consulta imediata a GET /api/books — se o handler do POST /api/books com timeout ainda estivesse terminando a transação no servidor, essa consulta rodava antes do commit e não via o livro. Corrigido com retentativa limitada por tempo: ORPHAN_RECOVERY_WINDOW_MS=5000 com ORPHAN_RECOVERY_POLL_INTERVAL_S=0.5 entre tentativas, continuando mesmo após uma consulta vazia, bound só por tempo (Date.now() >= deadline), nunca por resposta do servidor. (2) Os thresholds de http_req_failed/checks eram só globais — uma falha concentrada numa única operação (ex. save_scene) ficava diluída pelas outras quatro. Adicionados 5 thresholds http_req_failed{operation:X,phase:steady} (rate<0.01), um por operação principal. (3) O README documentava limpeza manual com LIKE 'LOADTEST-%' genérico, que apagaria livros de execuções concorrentes. setup() agora imprime o runId imediatamente após gerá-lo (antes do primeiro POST /api/books) e inclui o runId em toda mensagem de falha, e o README passou a documentar só o predicado escopado LOADTEST-<runId>-vu%. Nenhuma das três correções toca o código das 5 operações principais, os thresholds de latência existentes ou o cálculo de phase — os números desta rodada são diretamente comparáveis a fc521b7.",
     "ambiente": {
-      "descricao": "Stack Docker isolada dedicada só a este teste (docker compose -p iwrite-k6smoke, container_name e portas remapeados via docker-compose.k6.local.yml não versionado, para não colidir com outro worktree do IWrite já em uso na mesma máquina de desenvolvimento).",
+      "descricao": "Stack Docker isolada dedicada só a este teste (docker compose -p iwrite-k6smoke, container_name e portas remapeados via docker-compose.k6.local.yml não versionado — iwrite-k6-db:5443, iwrite-k6-backend:8093, iwrite-k6-frontend:3009 — para não colidir com outro worktree do IWrite já em uso na mesma máquina de desenvolvimento), mais o overlay versionado docker-compose.loadtest.yml.",
       "backend_containers": "db + backend + frontend (profile demo), sem OTel habilitado",
-      "hardware": "máquina de desenvolvimento compartilhada. crm-marketing-backend-1 (~360-478% de CPU, mesmo container que dominava a contenção nas medições mais antigas) foi parado antes de cada uma das três execuções (smoke, 10 VUs, 30 VUs) e reiniciado só depois — mesma isolação já usada na rodada anterior (bb23e29), tornando a comparação direta. Um container Postgres de outro worktree do IWrite (iwrite-db, porta 5435) permaneceu ativo mas ocioso durante a execução — não é hardware dedicado."
+      "hardware": "máquina de desenvolvimento compartilhada. crm-marketing-backend-1 foi parado manualmente antes das execuções medidas e religado só depois — mesma isolação já usada nas rodadas anteriores. Um container Postgres de outro worktree do IWrite (iwrite-db, porta 5435) permaneceu ativo mas ocioso durante a execução — não é hardware dedicado.",
+      "incidente_de_medicao_energia_da_maquina": "As duas primeiras tentativas de 30 VUs rodaram com a máquina na bateria (plano de energia \"Equilibrado\" do Windows) e o threshold http_req_duration{operation:list_books,phase:steady} p(95)<500ms estourou de forma repetível: 595.6ms na 1ª tentativa, 556.7ms na 2ª (mesmo código, mesmo ambiente Docker). Depois de conectar a máquina à tomada (só a fonte de energia mudou, plano de energia inalterado), a mesma carga passou com folga (list_books p95 106.0ms) e com throughput mais alto (159.1 RPS vs 137.0 RPS na rodada anterior fc521b7) — confirmando que o throttling de CPU por bateria era a causa raiz do estouro, não uma regressão no código medido (que não toca list_books, os thresholds ou o cálculo de phase). smoke e 10 VUs foram reexecutados na energia AC para manter o dataset final consistente (as três execuções nos números abaixo rodaram todas com a máquina na tomada). Ver limitacoes/proxima_acao_recomendada."
     },
     "cenario": [
       "GET /api/books (list_books)",
@@ -23,137 +24,138 @@
       "GET /api/books/{bookId}/outline (refresh_outline_after_save) — só quando save_scene retornou 200; assíncrono, disparado em paralelo com o think time via http.asyncRequest()+Promise.all(), nunca serializado antes da próxima iteração"
     ],
     "mudanca_de_cenario_desde_a_ultima_medicao": [
-      "Nenhuma mudança no cenário/loop de carga medido (list_books/load_outline/load_scene/save_scene/refresh_outline_after_save), nos thresholds ou na tag phase desde bb23e29 — as duas correções desta rodada (recoverOrphanedBookIds(), validateThinkTime()) atuam fora do loop de VUs medido (caminho de falha de setup() e validação de configuração no carregamento do módulo).",
-      "Nenhuma mudança na lógica de conteúdo/contagem de palavras enviada por save_scene desde 2838fe0 — a alternância par/ímpar de wordCountDelta (ver notas_de_metodologia) é exatamente o mesmo código."
+      "Nenhuma mudança no cenário/loop de carga medido (list_books/load_outline/load_scene/save_scene/refresh_outline_after_save), nos thresholds de latência já existentes ou na tag phase desde fc521b7 — as três correções desta rodada atuam fora do loop de VUs medido: recoverOrphanedBookIds()/cleanupBooks()/impressão do runId (caminho de falha de setup()) e 5 novos thresholds http_req_failed{operation:X,phase:steady} (só adicionados, não alteram os 5 de latência nem os globais existentes).",
+      "Nenhuma mudança na lógica de conteúdo/contagem de palavras enviada por save_scene desde 2838fe0 — a alternância par/ímpar de wordCountDelta é exatamente o mesmo código."
     ],
     "notas_de_metodologia": [
       "list_books, load_outline e load_scene são pré-requisitos sequenciais: a iteração encerra imediatamente (com think time) se qualquer um retornar status inesperado, então nenhum PATCH é enviado atrás de uma leitura que falhou.",
-      "refresh_outline_after_save só executa e só é checado quando save_scene retornou 200 — confirmado nos dois runs: contagem de checks 'save_scene status 200' e 'refresh_outline_after_save status 200' idêntica (2015/2015 em 10 VUs, 5011/5011 em 30 VUs), zero falhas nas duas. Essa contagem é sobre a execução inteira (todas as fases), não só phase:steady — checks não carregam a tag phase.",
-      "vu_auth_success confirma exatamente uma autenticação bem-sucedida por VU nas duas execuções: passes=10/fails=0 (10 VUs) e passes=30/fails=0 (30 VUs) — nenhuma VU operou sem sessão própria.",
-      "Alternância de wordCountDelta: a lógica (__ITER par soma uma palavra extra ao contentText, ímpar não) não foi tocada nesta rodada — permanece a mesma verificada e confirmada diretamente no banco na medição 2838fe0 (sequência real 8, -1, +1, -1, +1, -1, ... — nunca 0 a partir do segundo save). Não re-verificada nesta rodada por não haver mudança de código nesse caminho.",
-      "Tags exportadas por requisição: 'operation' (dimensão funcional), 'name' (rota normalizada) e, nas 5 operações principais, 'phase' (ramp_up/steady/ramp_down). A tag automática 'url' do k6 permanece desabilitada via systemTags (não reverificado nesta rodada por não haver mudança de código nesse caminho desde bb23e29, onde foi confirmado com --out json=).",
-      "http_req_duration_global (RPS, p50-p99 agregados) inclui TODAS as requisições da execução: smoke, auth (VUS+2 logins: setup + 1/VU + teardown), setup de VUS livros/seções/capítulos/cenas, as 5 operações principais sob carga (todas as fases) e o teardown de VUS livros. Não é a latência do loop principal nem está restrito à fase estável — para isso, ver operacoes_principais (phase:steady) abaixo.",
-      "operacoes_principais mede só a fase estável (phase:steady, os 2 minutos com VUS constante no pico) — os thresholds das 5 operações principais avaliam exclusivamente essas amostras, deixando de fora as amostras de warmup (menos VUs que o pico, rampando) e rampdown (VUs sendo desligadas).",
-      "Zero resíduo 'LOADTEST-' após as duas execuções (confirmado via SELECT count(*) FROM books WHERE title LIKE 'LOADTEST-%') e zero resposta 429 em qualquer uma delas (http_req_failed=0% nas duas).",
-      "Fault injection separada (fora destas 3 execuções medidas, script temporário não versionado): recoverOrphanedBookIds() testado com dois cenários — VUS=1 com createdBookIds vazio no momento da falha, e VUS=3 com falha na 2ª de 3 criações (createdBookIds já com 1 entrada) — nos dois, o órfão foi encontrado pelo marcador e removido junto dos já rastreados, zero resíduo do runId, k6 run saiu com código diferente de zero. Um livro de outro runId criado manualmente antes do segundo teste permaneceu intacto após a limpeza automática, confirmando que a recuperação não toca livros de execuções concorrentes. validateThinkTime() testado via k6 inspect: abc/NaN/Infinity/-1/min>max rejeitados antes de qualquer HTTP; 0, min==max e decimais aceitos."
+      "refresh_outline_after_save só executa e só é checado quando save_scene retornou 200 — confirmado nos dois runs: contagem de checks 'save_scene status 200' e 'refresh_outline_after_save status 200' idêntica (2120/2120 em 10 VUs, 5786/5786 em 30 VUs), zero falhas nas duas.",
+      "vu_auth_success confirma exatamente uma autenticação bem-sucedida por VU nas duas execuções: passes=10/fails=0 (10 VUs) e passes=30/fails=0 (30 VUs).",
+      "Tags exportadas por requisição: 'operation' (dimensão funcional), 'name' (rota normalizada) e, nas 5 operações principais, 'phase' (ramp_up/steady/ramp_down). A tag automática 'url' do k6 permanece desabilitada via systemTags.",
+      "http_req_duration_global (RPS, p50-p99 agregados) inclui TODAS as requisições da execução: smoke, auth (VUS+2 logins), setup, as 5 operações principais sob carga (todas as fases) e o teardown. Não é a latência do loop principal nem está restrito à fase estável — para isso, ver operacoes_principais (phase:steady) abaixo.",
+      "operacoes_principais mede só a fase estável (phase:steady) — os thresholds de latência E os novos thresholds de erro das 5 operações principais avaliam exclusivamente essas amostras.",
+      "Zero resíduo 'LOADTEST-' após as três execuções medidas (smoke, 10 VUs, 30 VUs — confirmado via SELECT count(*) FROM books WHERE title LIKE 'LOADTEST-%') e zero resposta 429 em qualquer uma delas (http_req_failed=0% nas três).",
+      "Fault injection 1 — recuperação de órfão com visibilidade atrasada (fora das 3 execuções medidas, script temporário não versionado, ORPHAN_RECOVERY_WINDOW_MS/POLL_INTERVAL inalterados): setup() forçado a lançar imediatamente com createdBookIds=[], simulando resposta perdida; um processo externo cria o livro-fantasma LOADTEST-<runId>-vu1 SÓ DEPOIS da 1ª varredura. Log instrumentado prova a race exata do finding do Codex: scan #1 (t=...624004ms) recovered.size=0, scan #2 (t=...624514ms, 510ms depois — 1 intervalo de poll) recovered.size=1. O livro foi encontrado, removido ('Limpeza automática removeu todos os 1 livro(s) órfão(s)'), o erro original foi relançado (k6 run saiu com código 107) e um livro de outro runId criado manualmente antes do teste (LOADTEST-decoyrun999-vu1) permaneceu intacto — confirmando isolamento entre execuções concorrentes. Um segundo teste sem nenhum livro real (nada criado) confirmou 11 varreduras em ~5.1s (deadline de 5000ms + intervalo de 500ms) e término normal — nunca loop infinito.",
+      "Fault injection 2 — falha concentrada em save_scene (fora das 3 execuções medidas, script temporário não versionado): 1 a cada 25 iterações de cada VU (VUS=10, 60s de fase estável) força save_scene a apontar para um sceneId inválido (status >=400). Resultado: http_req_failed global = 0.68% (30 falhas / 4528+31 requisições, PASSOU no threshold global <1%), mas http_req_failed{operation:save_scene,phase:steady} = 3.61% (30 falhas / 831 requisições na fase estável, ROMPEU o novo threshold <1%) — k6 run saiu com código 99. refresh_outline_after_save continuou disparando só nos saves bem-sucedidos (872/872, 0 falhas), confirmando que a lógica de cascata (só refaz o outline quando o save teve sucesso) não foi afetada pela falha injetada. Zero resíduo LOADTEST- após o teardown."
     ],
     "execucoes": {
       "10_vus": {
         "execucao_completa": {
           "vus": 10,
           "duracao": "3m (30s aquecimento / 2m carga estável / 30s desaceleração)",
-          "requests_totais": 10150,
-          "rps_global": 55.85,
-          "http_req_duration_global": { "p50": 13.8, "p90": 48.5, "p95": 64.8, "p99": 91.8, "max": 271.7, "unidade": "ms" },
-          "erros": { "http_req_failed_rate": 0, "http_req_failed_total": 0, "de": 10150 },
-          "checks": { "rate": 1, "passes": 10075, "fails": 0 },
+          "requests_totais": 10675,
+          "rps_global": 58.86,
+          "http_req_duration_global": { "p50": 8.1, "p90": 33.68, "p95": 40.88, "p99": 59.89, "max": 148.46, "unidade": "ms" },
+          "erros": { "http_req_failed_rate": 0, "http_req_failed_total": 0, "de": 10675 },
+          "checks": { "rate": 1, "passes": 10600, "fails": 0 },
           "vu_auth_success": { "rate": 1, "passes": 10, "fails": 0 },
           "thresholds_globais": {
             "http_req_failed<1%": "passou",
             "checks>99%": "passou",
             "vu_auth_success==100%": "passou",
-            "http_req_duration_global_p95<500ms": "passou (64.8ms)"
+            "http_req_duration_global_p95<500ms": "passou (40.9ms)"
           }
         },
         "operacoes_principais": {
-          "descricao": "Restrita à fase estável (phase:steady, 2 minutos com VUS constante no pico) — não inclui as amostras de warmup nem de rampdown. Percentis individuais por operação — não existe um agregado único (misturaria séries com perfis de latência bem diferentes).",
-          "iterations_execucao_completa": 2015,
-          "list_books": { "p50": 33.6, "p90": 56.1, "p95": 66.9, "p99": 82.4, "max": 104.1, "threshold_p95_steady<500ms": "passou" },
-          "load_outline": { "p50": 9.1, "p90": 16.0, "p95": 18.6, "p99": 24.1, "max": 46.6, "threshold_p95_steady<500ms": "passou" },
-          "load_scene": { "p50": 8.1, "p90": 14.3, "p95": 17.0, "p99": 22.6, "max": 50.0, "threshold_p95_steady<500ms": "passou" },
-          "save_scene": { "p50": 33.5, "p90": 72.4, "p95": 80.4, "p99": 101.0, "max": 127.6, "threshold_p95_steady<500ms": "passou" },
-          "refresh_outline_after_save": { "p50": 9.4, "p90": 14.7, "p95": 17.2, "p99": 22.7, "max": 47.0, "threshold_p95_steady<500ms": "passou" }
+          "descricao": "Restrita à fase estável (phase:steady, 2 minutos com VUS constante no pico). Percentis individuais por operação; thresholds de latência (p95<500ms) e de erro (rate<0.01) avaliados por operação.",
+          "iterations_execucao_completa": 2120,
+          "list_books": { "p50": 17.48, "p90": 34.17, "p95": 41.24, "p99": 54.20, "max": 68.53, "threshold_p95_steady<500ms": "passou", "threshold_erro_steady<1%": "passou (0%)" },
+          "load_outline": { "p50": 4.72, "p90": 9.78, "p95": 11.61, "p99": 15.63, "max": 25.73, "threshold_p95_steady<500ms": "passou", "threshold_erro_steady<1%": "passou (0%)" },
+          "load_scene": { "p50": 4.29, "p90": 8.30, "p95": 9.53, "p99": 13.36, "max": 34.25, "threshold_p95_steady<500ms": "passou", "threshold_erro_steady<1%": "passou (0%)" },
+          "save_scene": { "p50": 30.55, "p90": 47.44, "p95": 55.24, "p99": 85.24, "max": 123.36, "threshold_p95_steady<500ms": "passou", "threshold_erro_steady<1%": "passou (0%)" },
+          "refresh_outline_after_save": { "p50": 5.86, "p90": 9.63, "p95": 11.27, "p99": 14.63, "max": 25.73, "threshold_p95_steady<500ms": "passou", "threshold_erro_steady<1%": "passou (0%)" }
         },
         "auth_setup_teardown": {
           "descricao": "Fora do loop medido: auth roda VUS+2 vezes (setup + 1 por VU + teardown); setup_create_book/section/chapter/scene rodam VUS vezes cada (1 livro por VU); teardown_delete_book roda VUS vezes.",
-          "auth_csrf_avg_ms": 8.6,
-          "auth_csrf_p95_ms": 14.0,
-          "auth_login_avg_ms": 116.5,
-          "auth_login_p95_ms": 150.0,
-          "setup_create_book_avg_ms": 27.1,
-          "setup_create_book_p95_ms": 37.0,
-          "setup_create_section_avg_ms": 20.0,
-          "setup_create_section_p95_ms": 31.5,
-          "setup_create_chapter_avg_ms": 19.6,
-          "setup_create_chapter_p95_ms": 27.7,
-          "setup_create_scene_avg_ms": 30.0,
-          "setup_create_scene_p95_ms": 37.7,
-          "teardown_delete_book_avg_ms": 42.7,
-          "teardown_delete_book_p95_ms": 67.3
+          "auth_csrf_avg_ms": 7.81,
+          "auth_csrf_p95_ms": 22.64,
+          "auth_login_avg_ms": 74.73,
+          "auth_login_p95_ms": 111.49,
+          "setup_create_book_avg_ms": 10.69,
+          "setup_create_book_p95_ms": 22.29,
+          "setup_create_section_avg_ms": 5.05,
+          "setup_create_section_p95_ms": 6.02,
+          "setup_create_chapter_avg_ms": 6.30,
+          "setup_create_chapter_p95_ms": 7.84,
+          "setup_create_scene_avg_ms": 10.38,
+          "setup_create_scene_p95_ms": 12.37,
+          "teardown_delete_book_avg_ms": 32.98,
+          "teardown_delete_book_p95_ms": 43.48
         }
       },
       "30_vus": {
         "execucao_completa": {
           "vus": 30,
           "duracao": "3m (30s aquecimento / 2m carga estável / 30s desaceleração)",
-          "requests_totais": 25270,
-          "rps_global": 136.95,
-          "http_req_duration_global": { "p50": 42.6, "p90": 122.6, "p95": 146.3, "p99": 200.9, "max": 489.2, "unidade": "ms" },
-          "erros": { "http_req_failed_rate": 0, "http_req_failed_total": 0, "de": 25270 },
-          "checks": { "rate": 1, "passes": 25055, "fails": 0 },
+          "requests_totais": 29145,
+          "rps_global": 159.10,
+          "http_req_duration_global": { "p50": 16.21, "p90": 67.78, "p95": 82.83, "p99": 114.88, "max": 255.11, "unidade": "ms" },
+          "erros": { "http_req_failed_rate": 0, "http_req_failed_total": 0, "de": 29145 },
+          "checks": { "rate": 1, "passes": 28930, "fails": 0 },
           "vu_auth_success": { "rate": 1, "passes": 30, "fails": 0 },
           "thresholds_globais": {
             "http_req_failed<1%": "passou",
             "checks>99%": "passou",
             "vu_auth_success==100%": "passou",
-            "http_req_duration_global_p95<500ms": "passou (146.3ms)"
+            "http_req_duration_global_p95<500ms": "passou (82.8ms)"
           }
         },
         "operacoes_principais": {
-          "descricao": "Restrita à fase estável (phase:steady, 2 minutos com VUS constante no pico) — não inclui as amostras de warmup nem de rampdown.",
-          "iterations_execucao_completa": 5011,
-          "list_books": { "p50": 108.8, "p90": 159.9, "p95": 179.7, "p99": 234.4, "max": 489.2, "threshold_p95_steady<500ms": "passou" },
-          "load_outline": { "p50": 31.4, "p90": 80.2, "p95": 99.0, "p99": 144.0, "max": 291.7, "threshold_p95_steady<500ms": "passou" },
-          "load_scene": { "p50": 29.7, "p90": 78.3, "p95": 94.8, "p99": 147.7, "max": 328.7, "threshold_p95_steady<500ms": "passou" },
-          "save_scene": { "p50": 69.5, "p90": 156.7, "p95": 183.7, "p99": 236.9, "max": 371.9, "threshold_p95_steady<500ms": "passou" },
-          "refresh_outline_after_save": { "p50": 22.4, "p90": 72.5, "p95": 90.7, "p99": 131.3, "max": 295.5, "threshold_p95_steady<500ms": "passou" }
+          "descricao": "Restrita à fase estável (phase:steady, 2 minutos com VUS constante no pico).",
+          "iterations_execucao_completa": 5786,
+          "list_books": { "p50": 61.28, "p90": 94.49, "p95": 106.01, "p99": 132.32, "max": 246.71, "threshold_p95_steady<500ms": "passou", "threshold_erro_steady<1%": "passou (0%)" },
+          "load_outline": { "p50": 8.36, "p90": 33.28, "p95": 45.15, "p99": 69.79, "max": 202.45, "threshold_p95_steady<500ms": "passou", "threshold_erro_steady<1%": "passou (0%)" },
+          "load_scene": { "p50": 7.50, "p90": 30.56, "p95": 42.78, "p99": 67.22, "max": 187.36, "threshold_p95_steady<500ms": "passou", "threshold_erro_steady<1%": "passou (0%)" },
+          "save_scene": { "p50": 34.15, "p90": 72.17, "p95": 89.10, "p99": 131.51, "max": 255.11, "threshold_p95_steady<500ms": "passou", "threshold_erro_steady<1%": "passou (0%)" },
+          "refresh_outline_after_save": { "p50": 8.08, "p90": 22.01, "p95": 32.17, "p99": 63.94, "max": 166.02, "threshold_p95_steady<500ms": "passou", "threshold_erro_steady<1%": "passou (0%)" }
         },
         "auth_setup_teardown": {
           "descricao": "Fora do loop medido: auth roda VUS+2 vezes (setup + 1 por VU + teardown); setup_create_book/section/chapter/scene rodam VUS vezes cada (1 livro por VU); teardown_delete_book roda VUS vezes.",
-          "auth_csrf_avg_ms": 5.7,
-          "auth_csrf_p95_ms": 9.6,
-          "auth_login_avg_ms": 107.1,
-          "auth_login_p95_ms": 153.7,
-          "setup_create_book_avg_ms": 28.9,
-          "setup_create_book_p95_ms": 56.4,
-          "setup_create_section_avg_ms": 12.9,
-          "setup_create_section_p95_ms": 20.9,
-          "setup_create_chapter_avg_ms": 14.9,
-          "setup_create_chapter_p95_ms": 24.0,
-          "setup_create_scene_avg_ms": 27.3,
-          "setup_create_scene_p95_ms": 52.8,
-          "teardown_delete_book_avg_ms": 53.5,
-          "teardown_delete_book_p95_ms": 69.8
+          "auth_csrf_avg_ms": 8.48,
+          "auth_csrf_p95_ms": 27.08,
+          "auth_login_avg_ms": 83.16,
+          "auth_login_p95_ms": 113.01,
+          "setup_create_book_avg_ms": 18.77,
+          "setup_create_book_p95_ms": 46.05,
+          "setup_create_section_avg_ms": 10.35,
+          "setup_create_section_p95_ms": 27.52,
+          "setup_create_chapter_avg_ms": 10.73,
+          "setup_create_chapter_p95_ms": 31.85,
+          "setup_create_scene_avg_ms": 18.59,
+          "setup_create_scene_p95_ms": 48.78,
+          "teardown_delete_book_avg_ms": 24.65,
+          "teardown_delete_book_p95_ms": 51.93
         }
       }
     },
-    "comparacao_com_medicao_anterior_bb23e29": {
-      "aviso": "Comparação DIRETA — ao contrário da remedição anterior (2838fe0 → dbd5904), nenhuma das duas correções desta rodada (recoverOrphanedBookIds(), validateThinkTime()) toca o código das 5 operações principais, os thresholds ou o cálculo de phase. As duas rodadas isolam crm-marketing-backend-1 da mesma forma (parado durante a execução inteira). Variações abaixo são atribuídas a variância normal de execução em execução na mesma máquina de desenvolvimento compartilhada, não a uma mudança de código no caminho medido.",
+    "comparacao_com_medicao_anterior_fc521b7": {
+      "aviso": "Comparação DIRETA — nenhuma das três correções desta rodada toca o código das 5 operações principais, os thresholds de latência existentes ou o cálculo de phase (só adiciona 5 thresholds de erro novos). As duas rodadas isolam crm-marketing-backend-1 da mesma forma. Diferente da rodada anterior, aqui a máquina rodou na energia AC (ver incidente_de_medicao_energia_da_maquina) — variações abaixo podem refletir tanto variância normal de máquina compartilhada quanto essa diferença de energia entre as duas rodadas.",
       "10_vus": {
-        "requests_totais": "10565 → 10150 (-3.9%)",
-        "rps_global": "57.92 → 55.85 (-3.6%)",
-        "iterations": "2098 → 2015 (-4.0%)",
-        "save_scene_p95_steady": "53.6ms → 80.4ms (+50.0%)",
-        "nota": "Variação dentro do esperado para execuções sucessivas na mesma máquina de desenvolvimento compartilhada — nenhuma mudança de código no caminho medido explicaria uma diferença sistemática."
+        "requests_totais": "10150 → 10675 (+5.2%)",
+        "rps_global": "55.85 → 58.86 (+5.4%)",
+        "iterations": "2015 → 2120 (+5.2%)",
+        "save_scene_p95_steady": "80.4ms → 55.2ms (-31.3%)",
+        "nota": "Melhora consistente em todas as métricas — dentro do que se espera de rodar com a máquina na tomada em vez da bateria (ver incidente_de_medicao_energia_da_maquina)."
       },
       "30_vus": {
-        "requests_totais": "24340 → 25270 (+3.8%)",
-        "rps_global": "132.85 → 136.95 (+3.1%)",
-        "iterations": "4825 → 5011 (+3.9%)",
-        "save_scene_p95_steady": "286.8ms → 183.7ms (-35.9%)",
-        "nota": "Mesma leitura que em 10 VUs — thresholds continuam passando com folga nas duas rodadas (5/5 em bb23e29, 5/5 em fc521b7)."
+        "requests_totais": "25270 → 29145 (+15.3%)",
+        "rps_global": "136.95 → 159.10 (+16.2%)",
+        "iterations": "5011 → 5786 (+15.5%)",
+        "save_scene_p95_steady": "183.7ms → 89.1ms (-51.5%)",
+        "nota": "Mesma leitura que em 10 VUs, mais pronunciada em 30 VUs — thresholds continuam passando com folga (10/10 nesta rodada, incluindo os 5 novos de erro; 5/5 de latência em fc521b7, que não tinha os thresholds de erro)."
       }
     },
-    "gargalo_identificado": "Com host isolado (crm-marketing-backend-1 parado durante toda a execução) e os thresholds restritos à fase estável, as 5 operações principais passam em 10 e 30 VUs — nenhum gargalo cruza o teto de 500ms nesta rodada. list_books continua sendo a operação mais lenta relativa nas duas cargas (p95 66.9ms em 10 VUs, 179.7ms em 30 VUs) — cresce com o tamanho da coleção de livros do tenant, que aumenta com VUS por construção do próprio cenário (1 livro por VU) — mas está longe do teto mesmo em 30 VUs.",
+    "gargalo_identificado": "Com host isolado e na energia AC, e os thresholds restritos à fase estável, as 5 operações principais passam em 10 e 30 VUs — nenhum gargalo cruza o teto de 500ms nesta rodada. list_books continua sendo a operação relativamente mais lenta nas duas cargas (p95 41.2ms em 10 VUs, 106.0ms em 30 VUs) — cresce com o tamanho da coleção de livros do tenant, que aumenta com VUS por construção do próprio cenário — mas está longe do teto mesmo em 30 VUs. Nota: com a máquina na bateria, list_books foi o único gargalo real observado (p95 556-596ms em 30 VUs, estourando o threshold) — ver incidente_de_medicao_energia_da_maquina.",
     "limitacoes": [
       "Execução na mesma máquina de desenvolvimento. crm-marketing-backend-1 ficou parado durante toda a execução, mas um Postgres de outro worktree do IWrite (iwrite-db, porta 5435) permaneceu ativo e ocioso — não é hardware dedicado.",
       "Backend, Postgres e k6 rodam na mesma máquina, sem separação de rede/CPU entre gerador de carga e alvo — parte da latência medida pode ser contenção local, não custo real de rede.",
+      "Novo nesta rodada: a fonte de energia da máquina (bateria vs. tomada) afeta o resultado o suficiente para derrubar um threshold de operação — ver incidente_de_medicao_energia_da_maquina. Nenhuma verificação automática do plano de energia/fonte existe no script; é um passo manual do operador.",
       "list_books cresce com VUS por construção do próprio cenário (1 livro por VU no tenant do autor de teste) — em execuções com VUS muito maior que 30, o custo de listar/serializar a coleção de livros pode se tornar o novo fator dominante. Não investigado neste PR.",
       "A composição de custo de save_scene (INSERT em book_word_count_events, cálculo do rollup diário, escrita da própria cena) não foi decomposta — só o efeito agregado foi medido.",
       "Sem OTel habilitado durante a execução (evita overhead de instrumentação na medição); a decomposição de custo entre as etapas internas de save_scene/list_books/load_outline não foi feita neste PR.",
-      "contentJson sintético é um único parágrafo curto (7-8 palavras) — não representa uma cena longa de verdade. save_scene sob um payload realisticamente maior tende a ser mais lento ainda que o medido aqui.",
-      "IWRITE_LOADTEST_LOGIN_RATE_LIMIT (docker-compose.loadtest.yml, versionado) foi mantido no default (1000) nesta execução — cobre folgadamente VUS até 998; os defaults de produção em application.yml/.env.example não foram alterados — ver loadtest/README.md §2."
+      "contentJson sintético é um único parágrafo curto (7-8 palavras) — não representa uma cena longa de verdade.",
+      "IWRITE_LOADTEST_LOGIN_RATE_LIMIT (docker-compose.loadtest.yml, versionado) foi mantido no default (1000) nesta execução — cobre folgadamente VUS até 998."
     ],
-    "proxima_acao_recomendada": "Repetir 30 VUs (e testar VUS maior, ex. 50-100) em hardware totalmente dedicado, sem nenhum outro container Docker ativo na máquina, para ter uma linha de base limpa sem depender de lembrar de parar containers de outros projetos manualmente. Rodar o teste com OTel habilitado (docker-compose.observability.yml) e usar os traces correlacionados de scene_content_save para decompor o custo de save_scene entre INSERT em book_word_count_events/rollup diário e a própria escrita de conteúdo da cena. Investigar o crescimento de list_books/load_outline com o tamanho da coleção de livros do tenant antes de rodar com VUS bem maior que 30, já que a folga atual sob 500ms pode não se sustentar em escala maior."
+    "proxima_acao_recomendada": "Adicionar ao README/checklist de pré-requisitos uma verificação manual explícita de que a máquina está na energia AC (não bateria) antes de rodar 10/30 VUs — esta rodada mostrou que throttling de bateria sozinho é suficiente para estourar o threshold de list_books em 30 VUs. Repetir 30 VUs (e testar VUS maior, ex. 50-100) em hardware totalmente dedicado, sem nenhum outro container Docker ativo na máquina. Rodar o teste com OTel habilitado (docker-compose.observability.yml) e usar os traces correlacionados de scene_content_save para decompor o custo de save_scene. Investigar o crescimento de list_books/load_outline com o tamanho da coleção de livros do tenant antes de rodar com VUS bem maior que 30."
   }
 }

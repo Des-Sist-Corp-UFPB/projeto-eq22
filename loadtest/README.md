@@ -182,6 +182,14 @@ k6 run -e "VUS=$loadTestVus" ...
 Tenha o k6 disponível (`k6.io/docs` para instalação, ou use a imagem
 `grafana/k6` via Docker apontando `BASE_URL` para `host.docker.internal`).
 
+**Rode 10/30 VUs com a máquina na tomada, nunca na bateria.** Numa
+remedição desta PR, a mesma execução de 30 VUs estourou o threshold
+`list_books` (`p(95)<500ms`) duas vezes seguidas na bateria (595.6ms,
+556.7ms) e passou com folga (106.0ms) assim que a máquina foi conectada à
+tomada — plano de energia do Windows inalterado, só a fonte. Throttling de
+CPU por bateria sozinho já é suficiente para derrubar esse threshold; não há
+verificação automática disso no script — confira manualmente antes de medir.
+
 ---
 
 ## 3. Autenticação
@@ -307,13 +315,19 @@ falharam ao ser removidos (só `bookId`/status HTTP), nunca cookies ou o
 token CSRF.
 
 **Se a própria resposta do `POST /api/books` se perder** (timeout, erro de
-rede) depois que o servidor já persistiu o livro, o ID nunca chegaria à
-lista de limpeza — `recoverOrphanedBookIds()` cobre esse caso: antes de
-relançar o erro, `setup()` lista os livros da conta e casa pelo marcador
-EXATO desta execução (prefixo `LOADTEST-${runId}-vu`, nunca `LOADTEST-`
-genérico), unindo qualquer órfão encontrado aos já rastreados antes de
-tentar remover todos. Nunca toca livros de outra execução concorrente (outro
-`runId`).
+rede) enquanto o servidor ainda está terminando a transação, o ID nunca
+chegaria à lista de limpeza e uma única consulta imediata pode rodar ANTES
+do commit — `recoverOrphanedBookIds()` cobre esse caso com retentativa
+limitada por tempo: antes de relançar o erro, `setup()` consulta os livros
+da conta repetidamente (intervalo curto de 0.5s, janela de 5s — constantes
+`ORPHAN_RECOVERY_POLL_INTERVAL_S`/`ORPHAN_RECOVERY_WINDOW_MS` em
+`carga.js`), continuando mesmo depois de uma consulta vazia, até a janela
+fechar — bound só por tempo (`Date.now() >= deadline`), nunca por resposta
+do servidor, então nunca é um loop infinito. Casa pelo marcador EXATO desta
+execução (prefixo `LOADTEST-${runId}-vu`, nunca `LOADTEST-` genérico),
+acumulando IDs sem duplicar (`Set`) e unindo qualquer órfão encontrado aos
+já rastreados antes de tentar remover todos. Nunca toca livros de outra
+execução concorrente (outro `runId`).
 
 `teardown()` autentica de novo (sessão própria, não reaproveita a de nenhuma
 VU nem a de `setup()`) e apaga **todos** os livros da execução (cascata apaga
@@ -325,17 +339,46 @@ trás sem que nenhum threshold acusasse nada, já que essas chamadas acontecem
 fora do loop de VUs medido.
 
 Se o teste for interrompido (Ctrl+C, k6 morto, timeout) antes do `teardown()`
-rodar, limpe manualmente:
+rodar, limpe manualmente. `setup()` imprime o `runId` desta execução
+(`runId desta execução: <RUN_ID>`) no log do k6 imediatamente após gerá-lo,
+ANTES do primeiro `POST /api/books` — copie esse valor do terminal (ou do
+`stdout` salvo, se você redirecionou a execução) mesmo que o setup tenha
+falhado antes de criar qualquer livro. As mensagens de falha de `setup()`
+também repetem o `runId` para facilitar copiar de qualquer ponto do log.
+
+**Nunca use um `LIKE 'LOADTEST-%'` genérico** — isso apaga livros de
+qualquer outra execução (histórica ou concorrente) que bata com o prefixo
+`LOADTEST-`, mesmo com `runId` diferente, corrompendo os resultados dela.
+Escope sempre pelo `runId` impresso, com a mesma consulta de conferência
+antes do `DELETE`:
 
 ```bash
 # lista os livros LOADTEST- residuais de uma sessão autenticada (substitua os
 # cookies pelos da sua sessão de teste)
 curl -s -b cookies.txt "$BASE_URL/api/books" | grep -o '"title":"LOADTEST-[^"]*"'
 
-# ou direto no banco do ambiente local (nunca em produção)
+# ou direto no banco do ambiente LOCAL (nunca em produção) — substitua
+# <RUN_ID> pelo valor impresso pelo setup() desta execução interrompida.
+# Primeiro confira o que seria apagado:
 docker exec iwrite-db psql -U postgres -d iwrite -c \
-  "delete from books where title like 'LOADTEST-%';"
+  "select id, title from books where title like 'LOADTEST-<RUN_ID>-vu%';"
+
+# só então apague, com o mesmo predicado escopado por runId:
+docker exec iwrite-db psql -U postgres -d iwrite -c \
+  "delete from books where title like 'LOADTEST-<RUN_ID>-vu%';"
 ```
+
+Alternativa mais segura: apague por IDs explícitos (os `id` retornados pela
+consulta de conferência acima), em vez de um `LIKE`:
+
+```bash
+docker exec iwrite-db psql -U postgres -d iwrite -c \
+  "delete from books where id in (11, 12, 13);"
+```
+
+Isso é sempre limpeza manual de emergência contra o Postgres do seu
+ambiente LOCAL — nunca rode nada disto contra produção, e nunca use um
+padrão genérico (`LOADTEST-%`) que possa apagar títulos de outra execução.
 
 ---
 
@@ -475,6 +518,7 @@ checks                       > 99%
 vu_auth_success               == 100%   (zero tolerância — ver §3)
 http_req_duration p(95)      < 500ms   (global — todas as fases, todas as requisições)
 http_req_duration p(95)      < 500ms   (por operação principal, SÓ fase estável: list_books, load_outline, load_scene, save_scene, refresh_outline_after_save — tag phase:steady)
+http_req_failed  rate        < 1%      (por operação principal, SÓ fase estável — as mesmas 5 operações acima)
 http_req_duration p(95)      < 2000ms  (auth/setup/teardown — fora do loop medido)
 http_req_duration p(95)      < 8000ms  (auth_login — bcrypt + cold start da JVM, ver §9)
 ```
@@ -488,6 +532,20 @@ rodam 1x ou `VUS` vezes por execução, nunca sob a carga em regime.
 `vu_auth_success` é a única exceção: `rate==1` sem tolerância, porque uma
 única falha de login de VU nunca pode "passar" reduzindo a carga
 silenciosamente — ver [§3](#3-autenticação).
+
+**Por que thresholds de erro por operação, além do `http_req_failed` global:**
+o global dilui uma falha concentrada numa única operação entre as outras
+quatro requisições da mesma iteração — 4% de falha isolada em `save_scene`
+ainda fica bem abaixo de 1% no total agregado de 5 operações, então o `k6
+run` passaria mesmo com 1 em cada 25 saves quebrado. Os 5 thresholds
+`http_req_failed{operation:X,phase:steady}` (`rate<0.01`) avaliam a taxa de
+erro de cada operação isoladamente, restrita à fase estável pelo mesmo
+motivo do parágrafo acima. Validado com fault injection concentrada em
+`save_scene` (ver [§9](#9-resultados-obtidos)): `http_req_failed` global
+ficou em 0.68% (passou) enquanto
+`http_req_failed{operation:save_scene,phase:steady}` ficou em 3.61%
+(rompeu) — o `k6 run` saiu com código diferente de zero só por causa do
+threshold por operação.
 
 **Por que `phase:steady` e não a operação sem filtro:** os estágios de
 `WARMUP_DURATION`/`RAMPDOWN_DURATION` rodam com menos VUs que o pico
@@ -546,50 +604,52 @@ continua agregando as 3 fases — é o número de "execução completa" em
 ## 9. Resultados obtidos
 
 Execuções reais, ambiente local isolado (ver limitações abaixo). **Esta é
-uma remedição depois de 2 correções P2 do Codex sobre `bb23e29`** — mas, ao
-contrário da remedição anterior, nenhuma delas muda o *pacing* da iteração
-nem o que os thresholds medem: ambas atuam fora do loop de carga medido.
+uma remedição depois de 3 correções P2 do Codex sobre `42cdd0b`** (código
+medido anterior: `fc521b7`) — nenhuma delas muda o código das 5 operações
+principais, os thresholds de latência já existentes ou o cálculo de `phase`:
 
-1. Livro órfão em falha ambígua de `setup()`: se o `POST /api/books`
-   persistisse no servidor mas a resposta se perdesse (timeout) antes de
-   `createdBookIds.push(bookId)`, esse ID nunca entrava na lista de limpeza
-   — e como `teardown()` nunca roda quando `setup()` lança, o livro ficava
-   órfão. Corrigido com `recoverOrphanedBookIds()`: antes de relançar o erro,
-   `setup()` lista os livros da conta e casa pelo marcador EXATO desta
-   execução (`LOADTEST-${runId}-vu`, nunca `LOADTEST-` genérico, para não
-   tocar em livros de outra execução concorrente), unindo qualquer órfão
-   encontrado aos já rastreados antes de tentar remover todos.
-2. `THINK_TIME_MIN_S`/`THINK_TIME_MAX_S` não eram validados: um valor não
-   numérico virava `NaN` e o timer efetivamente não esperava nada,
-   inflando silenciosamente a taxa de requisições da VU. Corrigido com
-   `validateThinkTime()` — rejeita não-finito, negativo ou `min > max`
-   antes de montar `options` ou disparar qualquer HTTP (`k6 inspect` já
-   falha nesses casos).
+1. **Retentativa limitada na recuperação de órfãos.** `recoverOrphanedBookIds()`
+   fazia só uma consulta imediata a `GET /api/books` — se o handler do `POST
+   /api/books` que deu timeout ainda estivesse terminando a transação no
+   servidor, essa consulta rodava antes do commit e não via o livro.
+   Corrigido com retentativa bound por tempo: consulta a cada 0.5s
+   (`ORPHAN_RECOVERY_POLL_INTERVAL_S`) por uma janela de 5s
+   (`ORPHAN_RECOVERY_WINDOW_MS`), continuando mesmo após uma consulta vazia,
+   nunca por resposta do servidor — então nunca é um loop infinito.
+2. **Threshold de erro por operação.** Os thresholds de `http_req_failed`
+   eram só globais, então uma falha concentrada numa única operação (ex.
+   `save_scene`) ficava diluída pelas outras quatro. Adicionados 5
+   thresholds `http_req_failed{operation:X,phase:steady}` (`rate<0.01`), um
+   por operação principal — ver [§7](#7-thresholds).
+3. **Limpeza manual escopada ao `runId`.** O README documentava `DELETE ...
+   WHERE title LIKE 'LOADTEST-%'`, que apagaria livros de execuções
+   concorrentes. `setup()` agora imprime o `runId` imediatamente após
+   gerá-lo (antes do primeiro `POST /api/books`) e o inclui em toda mensagem
+   de falha; o README passou a documentar só o predicado escopado
+   `LOADTEST-<runId>-vu%` — ver [§5](#5-dados-sintéticos-e-limpeza).
 
-Como nenhuma das duas correções toca o código das 5 operações principais
-nem os thresholds/tags que os medem, **os números desta rodada são
-diretamente comparáveis à medição anterior (`bb23e29`)** — ver a tabela de
-comparação ao final desta seção. Nenhuma mudança na lógica de
-conteúdo/contagem de palavras de `save_scene` desde `2838fe0` (alternância
-par/ímpar de `wordCountDelta`, ver abaixo).
+Como nenhuma das três correções toca o código das 5 operações principais,
+os thresholds de latência já existentes ou o cálculo de `phase`, **os
+números desta rodada são diretamente comparáveis à medição anterior
+(`fc521b7`)** — ver a tabela de comparação ao final desta seção.
 
-- **`measured_code_commit`**: `fc521b7f5d53669875fb543848f679d90f3d625c` — o
+- **`measured_code_commit`**: `1f2593efdca90d4f21703bdea9d54cbe6ca15324` — o
   commit de `loadtest/carga.js` exatamente como executado para gerar os
   números abaixo, com working tree limpo, sem nenhuma mudança de código
-  depois. Reproduzir: `git checkout fc521b7 -- loadtest/carga.js`.
+  depois. Reproduzir: `git checkout 1f2593e -- loadtest/carga.js`.
 - **`measured_script_path`**: `loadtest/carga.js`.
-- **`measured_script_git_blob`**: `73450fd5dba30e4227c278e5a9c850eddc925bff`
+- **`measured_script_git_blob`**: `a0c3f20fa3c0011e4a7a4c2069087e8b53c19717`
   — saída de `git hash-object loadtest/carga.js` sobre o arquivo exatamente
-  como medido; confirmado igual a `git rev-parse fc521b7:loadtest/carga.js`.
+  como medido; confirmado igual a `git rev-parse 1f2593e:loadtest/carga.js`.
 - **`measured_script_sha256`**:
-  `fde69d4f1899ebafc583f9b1c4526a73b5da053d178d7f9f9636140c375e2159` — saída
+  `1b9ed6d4cb9d27db11419376489548d1177fe8f9d9fce55a31c92fa677d47da7` — saída
   de `sha256sum loadtest/carga.js` (bash) ou
   `(Get-FileHash loadtest/carga.js -Algorithm SHA256).Hash.ToLower()`
   (PowerShell) sobre o mesmo arquivo.
 - **Por que blob + SHA-256, e não só `measured_code_commit`**: depois de um
   squash-merge (e possível exclusão da branch `feature/k6-realistic-baseline`),
   `measured_code_commit` pode deixar de ser alcançável a partir de `master` —
-  um `git checkout fc521b7 -- loadtest/carga.js` num clone novo falharia.
+  um `git checkout 1f2593e -- loadtest/carga.js` num clone novo falharia.
   O blob e o SHA-256 não dependem de nenhum commit específico continuar
   alcançável: bastam o conteúdo do arquivo em `master` e um `git hash-object`/
   `sha256sum` local para confirmar que é byte a byte o mesmo script que
@@ -606,6 +666,23 @@ Resumo comparativo completo, estruturado, em
 [`resultados/resultado-10vus.json`](resultados/resultado-10vus.json) e
 [`resultados/resultado-30vus.json`](resultados/resultado-30vus.json).
 
+### Incidente de medição: throttling de CPU por bateria
+
+**As duas primeiras tentativas de 30 VUs rodaram com a máquina na bateria**
+(plano de energia "Equilibrado" do Windows) e o threshold
+`http_req_duration{operation:list_books,phase:steady}` `p(95)<500ms` estourou
+de forma repetível: **595.6ms** na 1ª tentativa, **556.7ms** na 2ª — mesmo
+código, mesmo ambiente Docker, nenhuma mudança entre as duas. Depois de
+conectar a máquina à tomada (plano de energia inalterado, só a fonte), a
+mesma carga passou com folga: `list_books p95` caiu para **106.0ms** e o
+throughput global subiu de 137.0 para 159.1 RPS — confirmando que o
+throttling de CPU por bateria era a causa raiz, não uma regressão no código
+medido (que não toca `list_books`, os thresholds ou o cálculo de `phase`
+desde `fc521b7`). `smoke` e `10 VUs` foram reexecutados na energia AC para
+manter o dataset final consistente — **as três execuções nos números abaixo
+rodaram com a máquina na tomada.** Ver [§2](#2-pré-requisitos) para o aviso
+adicionado ao pré-requisito de execução.
+
 ### Execução completa (todas as fases, todas as requisições)
 
 Smoke, auth, setup, as 5 operações principais (`ramp_up`+`steady`+`ramp_down`)
@@ -613,8 +690,8 @@ e teardown — `http_req_duration` **sem** tag `phase`:
 
 | | VUs | Duração | Requests | RPS global | p50 (ms) | p90 (ms) | p95 (ms) | p99 (ms) | Erros | Checks | `vu_auth_success` |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| Baseline | 10 | 3m (30s/2m/30s) | 10150 | 55.9 | 13.8 | 48.5 | 64.8 | 91.8 | 0% (0/10150) | 100% (10075/10075) | 100% (10/10) |
-| Carga ampliada | 30 | 3m (30s/2m/30s) | 25270 | 137.0 | 42.6 | 122.6 | 146.3 | 200.9 | 0% (0/25270) | 100% (25055/25055) | 100% (30/30) |
+| Baseline | 10 | 3m (30s/2m/30s) | 10675 | 58.9 | 8.1 | 33.7 | 40.9 | 59.9 | 0% (0/10675) | 100% (10600/10600) | 100% (10/10) |
+| Carga ampliada | 30 | 3m (30s/2m/30s) | 29145 | 159.1 | 16.2 | 67.8 | 82.8 | 114.9 | 0% (0/29145) | 100% (28930/28930) | 100% (30/30) |
 
 `vu_auth_success` confirma exatamente uma autenticação bem-sucedida por VU
 nas duas execuções. Estes percentis incluem auth/setup/teardown **e**
@@ -625,25 +702,23 @@ seguinte.
 
 | Operação | 10 VUs p50 | 10 VUs p90 | 10 VUs p95 | 10 VUs p99 | 10 VUs max | 30 VUs p50 | 30 VUs p90 | 30 VUs p95 | 30 VUs p99 | 30 VUs max |
 |---|---|---|---|---|---|---|---|---|---|---|
-| `list_books` | 33.6 | 56.1 | 66.9 | 82.4 | 104.1 | 108.8 | 159.9 | 179.7 | 234.4 | 489.2 |
-| `load_outline` | 9.1 | 16.0 | 18.6 | 24.1 | 46.6 | 31.4 | 80.2 | 99.0 | 144.0 | 291.7 |
-| `load_scene` | 8.1 | 14.3 | 17.0 | 22.6 | 50.0 | 29.7 | 78.3 | 94.8 | 147.7 | 328.7 |
-| `save_scene` | 33.5 | 72.4 | 80.4 | 101.0 | 127.6 | 69.5 | 156.7 | 183.7 | 236.9 | 371.9 |
-| `refresh_outline_after_save` | 9.4 | 14.7 | 17.2 | 22.7 | 47.0 | 22.4 | 72.5 | 90.7 | 131.3 | 295.5 |
+| `list_books` | 17.5 | 34.2 | 41.2 | 54.2 | 68.5 | 61.3 | 94.5 | 106.0 | 132.3 | 246.7 |
+| `load_outline` | 4.7 | 9.8 | 11.6 | 15.6 | 25.7 | 8.4 | 33.3 | 45.1 | 69.8 | 202.4 |
+| `load_scene` | 4.3 | 8.3 | 9.5 | 13.4 | 34.2 | 7.5 | 30.6 | 42.8 | 67.2 | 187.4 |
+| `save_scene` | 30.5 | 47.4 | 55.2 | 85.2 | 123.4 | 34.1 | 72.2 | 89.1 | 131.5 | 255.1 |
+| `refresh_outline_after_save` | 5.9 | 9.6 | 11.3 | 14.6 | 25.7 | 8.1 | 22.0 | 32.2 | 63.9 | 166.0 |
 
-**Todos os 10 thresholds `p95<500ms` (5 operações × 2 execuções) passaram**,
-com folga confortável em relação ao teto nas duas cargas — ver "Leitura do
-resultado" abaixo pela comparação com a rodada anterior (`bb23e29`), que
-também passava nos 10. `checks` (100%) e `http_req_failed` (0%) passaram nas
-duas execuções — nenhuma requisição falhou.
+**Todos os 10 thresholds de latência `p95<500ms` (5 operações × 2 execuções)
+passaram**, com folga confortável nas duas cargas. **Os 10 novos thresholds
+de erro `rate<0.01` (5 operações × 2 execuções) também passaram — 0% de
+erro em todas as operações, nas duas cargas.** `checks` (100%) e
+`http_req_failed` global (0%) passaram nas duas execuções — nenhuma
+requisição falhou.
 
 Em cada execução, a contagem do check `refresh_outline_after_save status 200`
-bate exatamente com `save_scene status 200` (2015/2015 em 10 VUs, 5011/5011
+bate exatamente com `save_scene status 200` (2120/2120 em 10 VUs, 5786/5786
 em 30 VUs, zero falhas) — confirmando que o refetch só roda após um save
-bem-sucedido, nunca a mais nem a menos. A alternância de `wordCountDelta` não
-foi re-verificada nesta rodada (a lógica não mudou desde `2838fe0`, onde foi
-confirmada diretamente no banco: sequência real `8, -1, +1, -1, +1, -1, ...`
-— nunca `0` a partir do segundo save).
+bem-sucedido, nunca a mais nem a menos.
 
 ### Auth/setup/teardown (fora do loop medido)
 
@@ -653,52 +728,94 @@ confirmada diretamente no banco: sequência real `8, -1, +1, -1, +1, -1, ...`
 
 | Operação | 10 VUs avg | 10 VUs p95 | 30 VUs avg | 30 VUs p95 |
 |---|---|---|---|---|
-| `auth_csrf` | 8.6ms | 14.0ms | 5.7ms | 9.6ms |
-| `auth_login` | 116.5ms | 150.0ms | 107.1ms | 153.7ms |
-| `setup_create_book` | 27.1ms | 37.0ms | 28.9ms | 56.4ms |
-| `setup_create_section` | 20.0ms | 31.5ms | 12.9ms | 20.9ms |
-| `setup_create_chapter` | 19.6ms | 27.7ms | 14.9ms | 24.0ms |
-| `setup_create_scene` | 30.0ms | 37.7ms | 27.3ms | 52.8ms |
-| `teardown_delete_book` | 42.7ms | 67.3ms | 53.5ms | 69.8ms |
+| `auth_csrf` | 7.8ms | 22.6ms | 8.5ms | 27.1ms |
+| `auth_login` | 74.7ms | 111.5ms | 83.2ms | 113.0ms |
+| `setup_create_book` | 10.7ms | 22.3ms | 18.8ms | 46.0ms |
+| `setup_create_section` | 5.1ms | 6.0ms | 10.3ms | 27.5ms |
+| `setup_create_chapter` | 6.3ms | 7.8ms | 10.7ms | 31.8ms |
+| `setup_create_scene` | 10.4ms | 12.4ms | 18.6ms | 48.8ms |
+| `teardown_delete_book` | 33.0ms | 43.5ms | 24.7ms | 51.9ms |
 
-### Leitura do resultado — comparação com a rodada anterior (`bb23e29`)
+### Fault injection — os dois findings que motivaram esta remedição
 
-Ao contrário da remedição anterior (`2838fe0` → `dbd5904`, que mudava pacing e
-o filtro de fase ao mesmo tempo), **nenhuma das duas correções desta rodada
-toca o código das 5 operações principais, os thresholds ou o cálculo de
-`phase`** — `recoverOrphanedBookIds()` só roda no caminho de falha de
-`setup()`, e `validateThinkTime()` só rejeita entradas inválidas, sem mudar o
-sorteio de think time para entradas válidas. A comparação com a rodada
-anterior (`bb23e29`, código `dbd5904`) é direta:
+Fora das 3 execuções medidas acima, com scripts temporários não versionados
+(cópias de `carga.js` com um gatilho de falha ligado por variável de
+ambiente):
 
-| | 10 VUs: `bb23e29` → `fc521b7` | 30 VUs: `bb23e29` → `fc521b7` |
+**1. Recuperação de órfão com visibilidade atrasada.** `setup()` forçado a
+lançar imediatamente com `createdBookIds=[]` (resposta perdida simulada); um
+processo externo cria o livro-fantasma `LOADTEST-<runId>-vu1` só **depois**
+da 1ª varredura de `recoverOrphanedBookIds()`. Log instrumentado prova a
+race exata do finding do Codex:
+
+```text
+scan #1 em t=...624004ms: recovered.size=0   (livro ainda não existe)
+scan #2 em t=...624514ms: recovered.size=1   (510ms depois — achou)
+```
+
+O livro foi removido (`Limpeza automática removeu todos os 1 livro(s)
+órfão(s)`), o erro original foi relançado (`k6 run` saiu com código `107`) e
+um livro de **outro** `runId` criado manualmente antes do teste
+(`LOADTEST-decoyrun999-vu1`) permaneceu intacto — confirmando que a
+recuperação nunca toca execuções concorrentes. Um segundo teste sem nenhum
+livro real confirmou 11 varreduras em ~5.1s e término normal — nunca loop
+infinito.
+
+**2. Falha concentrada em `save_scene`.** 1 a cada 25 iterações de cada VU
+(`VUS=10`, 60s de fase estável) força `save_scene` a apontar para um
+`sceneId` inválido (status ≥400). Resultado:
+
+| Threshold | Valor medido | Resultado |
 |---|---|---|
-| Requests totais | 10565 → 10150 (-3.9%) | 24340 → 25270 (+3.8%) |
-| RPS global | 57.9 → 55.9 (-3.5%) | 132.9 → 137.0 (+3.1%) |
-| Iterações | 2098 → 2015 (-4.0%) | 4825 → 5011 (+3.9%) |
-| `save_scene` p95 (steady) | 53.6 → 80.4 (+50.0%) | 286.8 → 183.7 (-35.9%) |
-| Thresholds de operação principal | 5/5 passaram | 5/5 passaram |
+| `http_req_failed` global `<1%` | 0.68% (30 falhas / 4559 requisições) | passou |
+| `http_req_failed{operation:save_scene,phase:steady}` `<1%` | 3.61% (30 falhas / 831 requisições) | **rompeu** |
 
-As variações (poucos % em requests/RPS/iterações, mais visíveis no p95
-individual de `save_scene`) são consistentes com variância normal de
-execução em execução na mesma máquina de desenvolvimento compartilhada — não
-há mudança de código no caminho medido que explicaria uma diferença
-sistemática, e as duas rodadas têm `crm-marketing-backend-1` parado durante a
-execução inteira (ver limitações abaixo). Os 10 thresholds de operação
-principal (5 operações × 2 cargas) passam com folga nas duas rodadas.
+`k6 run` saiu com código `99` — só por causa do threshold por operação; o
+global sozinho teria deixado passar. `refresh_outline_after_save` continuou
+disparando só nos saves bem-sucedidos (872/872, zero falhas), confirmando
+que a lógica de cascata não foi afetada pela falha injetada. Zero resíduo
+`LOADTEST-` após o teardown nos dois testes.
 
-**Gargalo principal:** nenhum — as 5 operações passam o teto de 500ms com
-folga em 10 e 30 VUs nesta rodada. `list_books` continua sendo a operação
+### Leitura do resultado — comparação com a rodada anterior (`fc521b7`)
+
+**Nenhuma das três correções desta rodada toca o código das 5 operações
+principais, os thresholds de latência existentes ou o cálculo de `phase`**
+(só adiciona 5 thresholds de erro novos) — a comparação é direta, com uma
+ressalva: esta rodada correu na energia AC, a anterior não teve essa
+condição registrada (ver "Incidente de medição" acima), então parte da
+diferença pode refletir isso, não só variância normal de máquina
+compartilhada:
+
+| | 10 VUs: `fc521b7` → `1f2593e` | 30 VUs: `fc521b7` → `1f2593e` |
+|---|---|---|
+| Requests totais | 10150 → 10675 (+5.2%) | 25270 → 29145 (+15.3%) |
+| RPS global | 55.9 → 58.9 (+5.4%) | 137.0 → 159.1 (+16.2%) |
+| Iterações | 2015 → 2120 (+5.2%) | 5011 → 5786 (+15.5%) |
+| `save_scene` p95 (steady) | 80.4 → 55.2 (-31.3%) | 183.7 → 89.1 (-51.5%) |
+| Thresholds de operação principal | 5/5 (só latência) | 5/5 (só latência) |
+| Thresholds de operação principal (esta rodada) | 10/10 (latência + erro) | 10/10 (latência + erro) |
+
+**Gargalo principal:** nenhum na energia AC — as 5 operações passam o teto
+de 500ms com folga em 10 e 30 VUs. `list_books` continua sendo a operação
 relativamente mais lenta (cresce com o tamanho da coleção de livros do
 tenant, que aumenta com `VUS` por construção do cenário), mas está longe do
-teto mesmo em 30 VUs.
+teto mesmo em 30 VUs. Na bateria, `list_books` foi o único gargalo real
+observado (p95 556-596ms, estourando o threshold) — ver "Incidente de
+medição" acima.
 
 **Limitações desta execução:**
 - Rodada em uma stack Docker isolada só para este teste (`docker-compose -p
-  iwrite-k6smoke`, container_name/portas remapeados via overlay não
-  versionado). `crm-marketing-backend-1` ficou parado durante toda a
-  execução, mas um Postgres de **outro worktree do IWrite** (`iwrite-db`,
-  porta 5435) permaneceu ativo e ocioso — não é hardware dedicado.
+  iwrite-k6smoke`, `container_name`/portas remapeados via
+  `docker-compose.k6.local.yml`, não versionado — `iwrite-k6-db:5443`,
+  `iwrite-k6-backend:8093`, `iwrite-k6-frontend:3009`). `crm-marketing-backend-1`
+  ficou parado durante toda a execução, mas um Postgres de **outro worktree
+  do IWrite** (`iwrite-db`, porta 5435) permaneceu ativo e ocioso — não é
+  hardware dedicado.
+- **Nova nesta rodada:** a fonte de energia da máquina (bateria vs. tomada)
+  afeta o resultado o suficiente para derrubar um threshold de operação —
+  ver "Incidente de medição" acima. Nenhuma verificação automática disso
+  existe no script; é um passo manual do operador (ver aviso em
+  [§2](#2-pré-requisitos)).
 - Backend, Postgres e k6 rodam na mesma máquina (sem separação de rede/CPU
   entre gerador de carga e alvo), então parte da latência medida pode ser
   contenção local, não custo real de rede.
@@ -723,20 +840,19 @@ teto mesmo em 30 VUs.
   [§2](#2-pré-requisitos).
 - `crm-marketing-backend-1` foi parado manualmente antes de cada uma das
   três execuções (smoke, 10 VUs, 30 VUs) desta rodada e reiniciado só depois
-  — mesma isolação já usada na rodada anterior (`bb23e29`), o que torna a
-  comparação em "Leitura do resultado" acima direta.
+  — mesma isolação já usada na rodada anterior.
 
-**Próxima ação recomendada:** repetir 30 VUs (e testar `VUS` maior, ex.
-50-100) em hardware totalmente dedicado, sem nenhum outro container Docker
-ativo na máquina, para uma linha de base limpa que não dependa de lembrar de
-parar containers de outros projetos manualmente. Rodar o teste com OTel
-habilitado (`docker-compose.observability.yml`) e usar os traces
-correlacionados de `scene_content_save` para decompor o custo de
-`save_scene` entre `INSERT` em `book_word_count_events`/rollup diário e a
-própria escrita de conteúdo da cena. Investigar o crescimento de
-`list_books`/`load_outline` com o tamanho da coleção de livros do tenant
-antes de rodar com `VUS` bem maior que 30, já que a folga atual sob 500ms
-pode não se sustentar em escala maior.
+**Próxima ação recomendada:** adicionar ao checklist de pré-requisitos uma
+verificação manual explícita de que a máquina está na energia AC antes de
+rodar 10/30 VUs — esta rodada mostrou que throttling de bateria sozinho é
+suficiente para estourar o threshold de `list_books`. Repetir 30 VUs (e
+testar `VUS` maior, ex. 50-100) em hardware totalmente dedicado, sem nenhum
+outro container Docker ativo na máquina. Rodar o teste com OTel habilitado
+(`docker-compose.observability.yml`) e usar os traces correlacionados de
+`scene_content_save` para decompor o custo de `save_scene` entre `INSERT` em
+`book_word_count_events`/rollup diário e a própria escrita de conteúdo da
+cena. Investigar o crescimento de `list_books`/`load_outline` com o tamanho
+da coleção de livros do tenant antes de rodar com `VUS` bem maior que 30.
 
 ---
 
@@ -781,20 +897,29 @@ pode não se sustentar em escala maior.
 - [x] Falha de `teardown()` testada com fault injection (um dos livros já
       ausente): `k6 run` sai com código diferente de zero, listando qual
       `bookId` não foi removido, em vez de só logar
-- [x] Recuperação de livro órfão em resposta ambígua testada com fault
-      injection: `throw` inserido entre o `POST /api/books` bem-sucedido e
-      `createdBookIds.push(bookId)`, simulando resposta perdida. Confirmado
-      com dois cenários (VUS=1, `createdBookIds` vazio no momento da falha;
-      VUS=3, falha na 2ª de 3 criações, `createdBookIds` já com 1 entrada) —
-      nos dois, o livro órfão foi encontrado pelo marcador
-      `LOADTEST-${runId}-vu` e removido junto dos já rastreados
-      (`console.error` confirma a contagem exata: 1 e 2 respectivamente),
-      `SELECT count(*) FROM books WHERE title LIKE 'LOADTEST-%'` retornou 0
-      após cada execução, e `k6 run` saiu com código diferente de zero
+- [x] Retentativa da recuperação de órfão com visibilidade atrasada testada
+      com fault injection (script temporário instrumentado, não versionado):
+      `setup()` forçado a lançar imediatamente com `createdBookIds=[]`; um
+      processo externo cria o livro-fantasma `LOADTEST-<runId>-vu1` só
+      **depois** da 1ª varredura. Log prova a race exata: scan #1
+      `recovered.size=0`, scan #2 (510ms depois) `recovered.size=1`. Livro
+      removido (`Limpeza automática removeu todos os 1 livro(s) órfão(s)`),
+      erro original relançado, `k6 run` saiu com código `107`. Um segundo
+      teste sem nenhum livro real confirmou 11 varreduras em ~5.1s (janela
+      de 5000ms + intervalo de 500ms) e término normal — nunca loop infinito
 - [x] A recuperação de órfãos não remove livros de outra execução: um livro
-      `LOADTEST-<outro-runId>-vu1` criado manualmente antes do teste acima
-      (VUS=3) permaneceu intacto no banco depois da limpeza automática —
-      só removido manualmente ao final do teste
+      `LOADTEST-decoyrun999-vu1` criado manualmente antes do teste acima
+      permaneceu intacto no banco depois da limpeza automática — só
+      removido manualmente ao final do teste
+- [x] Threshold de erro por operação (`http_req_failed{operation:X,phase:steady}`)
+      testado com fault injection concentrada em `save_scene` (1 a cada 25
+      iterações força um `sceneId` inválido, VUS=10, 60s de fase estável):
+      `http_req_failed` global ficou em 0.68% (passou no threshold global
+      `<1%`) enquanto `http_req_failed{operation:save_scene,phase:steady}`
+      ficou em 3.61% (rompeu o threshold `<1%`) — `k6 run` saiu com código
+      `99` só por causa do threshold por operação. `refresh_outline_after_save`
+      continuou disparando só nos saves bem-sucedidos (872/872, zero
+      falhas). Zero resíduo `LOADTEST-` após o teardown
 - [x] `teardown()` remove todos os livros sintéticos nas execuções normais —
       confirmado sem resíduo `LOADTEST-` após todas as execuções (smoke, 10
       VUs, 30 VUs, e os testes de fault injection acima)
@@ -824,7 +949,7 @@ pode não se sustentar em escala maior.
       erro
 - [x] `measured_script_git_blob`/`measured_script_sha256` conferidos:
       `git hash-object loadtest/carga.js` bate com
-      `git rev-parse fc521b7:loadtest/carga.js`, e `sha256sum
+      `git rev-parse 1f2593e:loadtest/carga.js`, e `sha256sum
       loadtest/carga.js` bate com o valor registrado em `resultado.json` e
       neste README
 - [x] `vu_auth_success` (threshold `rate==1`) confirmado: execução normal
@@ -851,3 +976,15 @@ pode não se sustentar em escala maior.
       confirmam
 - [x] Resultados gerados com working tree limpo, exatamente no commit
       registrado como `measured_code_commit` em `resultado.json`
+- [x] `runId` impresso no log do k6 (`runId desta execução: <id>`)
+      imediatamente após ser gerado, antes do primeiro `POST /api/books` —
+      confirmado nas 3 execuções medidas e nos 3 testes de fault injection;
+      mensagens de falha de `setup()` (criação de livro/seção/capítulo/cena)
+      incluem o `runId`
+- [x] Throttling de CPU por bateria identificado e eliminado: 30 VUs
+      estourou `list_books p95<500ms` duas vezes na bateria (595.6ms,
+      556.7ms), passou com folga (106.0ms) na tomada — as 3 execuções finais
+      (smoke, 10 VUs, 30 VUs) rodaram todas na energia AC
+- [x] Zero resíduo `LOADTEST-` confirmado após as 3 execuções medidas
+      (smoke, 10 VUs, 30 VUs) e após os 3 testes de fault injection desta
+      rodada, via `SELECT title FROM books WHERE title LIKE 'LOADTEST-%'`
