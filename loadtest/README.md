@@ -5,8 +5,8 @@ introduzida na PR #139 (cookie `JSESSIONID` + CSRF de duplo envio via `XSRF-TOKE
 Substitui o teste anterior, que só exercitava `/ping`.
 
 > ⚠️ **Rode SEMPRE contra o seu ambiente LOCAL.** O script recusa qualquer
-> `BASE_URL` que não resolva para `localhost`, `127.0.0.1`, `::1`,
-> `host.docker.internal` ou `backend` — ver [Segurança de destino](#4-segurança-de-destino).
+> `BASE_URL` que não resolva para `localhost`, `127.0.0.1`, `::1` ou
+> `host.docker.internal` — ver [Segurança de destino](#4-segurança-de-destino).
 > **Nunca** aponte para Render, produção ou o servidor acadêmico compartilhado
 > (`https://eqNN.dsc.rodrigor.com`): o Postgres é compartilhado com outras equipes.
 
@@ -27,8 +27,15 @@ Fluxo por VU, uma vez por iteração:
 3. `GET /api/scenes/{sceneId}` — tag `operation=load_scene` (o mesmo que o
    `SceneEditor` real faz ao abrir uma cena — `getScene(sceneId)` em
    `web/src/features/scenes/api/scenes-api.ts`)
-4. `PATCH /api/scenes/{sceneId}/content` — tag `operation=save_scene`
-5. **Só se o passo 4 retornou 200:** `GET /api/books/{bookId}/outline` de
+4. debounce do `AUTO_SAVE` (`AUTO_SAVE_DELAY_MS`, default `1200`ms — mesmo
+   valor que `CONTENT_AUTOSAVE_DELAY_MS` em
+   `web/src/features/scenes/components/scene-editor.tsx`): a VU aguarda esse
+   intervalo depois de montar o conteúdo alterado, antes de enviar o PATCH,
+   modelando o tempo que o editor real espera sem nova tecla antes de
+   persistir. Não é think time — o think time (passo 7) representa o
+   intervalo de atividade do usuário DEPOIS do save concluído
+5. `PATCH /api/scenes/{sceneId}/content` — tag `operation=save_scene`
+6. **Só se o passo 5 retornou 200:** `GET /api/books/{bookId}/outline` de
    novo — tag `operation=refresh_outline_after_save` (separada de
    `load_outline`, nunca agregada nela). Espelha o `BookWorkspace` real: ele
    mantém a query do outline ativa e `contentMutation.mutateAsync()` chama
@@ -38,12 +45,12 @@ Fluxo por VU, uma vez por iteração:
    teve sucesso. O editor real dispara essa invalidação com `void
    queryClient.invalidateQueries(...)` (`scene-editor.tsx`) — fire-and-forget,
    sem bloquear a UI. O script espelha isso: o refetch usa
-   `http.asyncRequest()` e roda **em paralelo** com o think time do passo 6
+   `http.asyncRequest()` e roda **em paralelo** com o think time do passo 7
    (`Promise.all([refreshPromise, delay(thinkTime())])`), nunca serializado
    antes dele — um GET síncrono aqui somaria a latência inteira do refetch ao
    think time e reduziria a taxa de requisições da VU justamente quando o
    backend fica mais lento, subestimando a carga oferecida.
-6. think time curto (0.3–1s, configurável), sobreposto ao passo 5 quando ele roda
+7. think time curto (0.3–1s, configurável), sobreposto ao passo 6 quando ele roda
 
 Cada requisição das 5 operações acima também carrega uma tag `phase`
 (`ramp_up`/`steady`/`ramp_down`), calculada uma vez por iteração a partir de
@@ -260,7 +267,7 @@ de login).
 ## 4. Segurança de destino
 
 `BASE_URL` só é aceita sem override se o host resolver para um destes:
-`localhost`, `127.0.0.1`, `::1`, `host.docker.internal`, `backend`. A
+`localhost`, `127.0.0.1`, `::1`, `host.docker.internal`. A
 resolução do host **não usa regex ingênua** — o parser (`parseSafeHost` em
 `carga.js`) só aceita esquema `http:`/`https:`, resolve corretamente literais
 IPv6 (`[::1]`) e **rejeita qualquer URL com user-info** (`user@host` ou
@@ -269,6 +276,20 @@ IPv6 (`[::1]`) e **rejeita qualquer URL com user-info** (`user@host` ou
 host real, ela é recusada inteira, porque tentar adivinhar o host por trás de
 credenciais é exatamente a superfície que um parser baseado em regex
 simples pode errar.
+
+**`backend` (o hostname do container do Compose) não está na allowlist.**
+`parseSafeHost()` só compara a autoridade léxica da URL — nunca resolve nem
+verifica para qual endereço `backend` realmente aponta. Rodar o k6 de dentro
+da rede do Compose com `-e BASE_URL=http://backend:8085` é um cenário real
+(container-a-container), mas numa máquina com um domain search DNS fora
+dessa rede, o hostname genérico `backend` pode resolver para um serviço
+remoto completamente não relacionado — e a allowlist não teria como
+diferenciar os dois casos. Por isso `backend` exige o mesmo override que
+qualquer outro host não controlado:
+
+```bash
+-e BASE_URL=http://backend:8085 -e ALLOW_UNSAFE_TARGET=eu-autorizo-um-destino-externo
+```
 
 Nenhuma mensagem de erro do parser imprime a `BASE_URL` bruta — só uma
 descrição genérica do problema (`BASE_URL inválida.`, `BASE_URL rejeitada
@@ -368,17 +389,27 @@ docker exec iwrite-db psql -U postgres -d iwrite -c \
   "delete from books where title like 'LOADTEST-<RUN_ID>-vu%';"
 ```
 
-Alternativa mais segura: apague por IDs explícitos (os `id` retornados pela
-consulta de conferência acima), em vez de um `LIKE`:
+Alternativa mais segura (e preferencial sobre o `LIKE` acima, quando você já
+tem os IDs em mãos): apague por IDs explícitos, os `id` retornados pela
+consulta de conferência acima. `books.id` é `uuid` (`V1__create_books.sql`,
+`Book.java`), não inteiro — cole os valores exatos impressos pela consulta,
+entre aspas simples e com `::uuid` explícito, nunca literais numéricos como
+`11, 12, 13` (o Postgres rejeitaria a comparação `uuid = integer`):
 
 ```bash
 docker exec iwrite-db psql -U postgres -d iwrite -c \
-  "delete from books where id in (11, 12, 13);"
+  "delete from books where id in (
+    '11111111-1111-4111-8111-111111111111'::uuid,
+    '22222222-2222-4222-8222-222222222222'::uuid
+  );"
 ```
 
 Isso é sempre limpeza manual de emergência contra o Postgres do seu
 ambiente LOCAL — nunca rode nada disto contra produção, e nunca use um
 padrão genérico (`LOADTEST-%`) que possa apagar títulos de outra execução.
+Prefira sempre o predicado escopado por `runId` (`LIKE
+'LOADTEST-<RUN_ID>-vu%'`, acima) a apagar por IDs — a versão por `runId` não
+depende de copiar/colar UUIDs corretamente.
 
 ---
 
@@ -393,7 +424,8 @@ Variáveis de carga (todas opcionais, com padrão realista):
 | `WARMUP_DURATION` | rampa de subida | `30s` |
 | `STEADY_DURATION` | carga estável | `2m` |
 | `RAMPDOWN_DURATION` | desaquecimento | `30s` |
-| `THINK_TIME_MIN_S` / `THINK_TIME_MAX_S` | think time por iteração | `0.3` / `1` |
+| `THINK_TIME_MIN_S` / `THINK_TIME_MAX_S` | think time por iteração (depois do save concluído) | `0.3` / `1` |
+| `AUTO_SAVE_DELAY_MS` | debounce do `AUTO_SAVE` antes do PATCH (== `CONTENT_AUTOSAVE_DELAY_MS` do frontend) | `1200` |
 | `RESULT_PATH` | caminho do resumo JSON já sanitizado (opcional) | nenhum — só imprime no terminal |
 | `SETUP_TIMEOUT` | timeout de `setup()` (formato de duração do k6, ex. `10m`, `90s`, `0.5m`) — sobe com `VUS` porque `setup()` cria um livro completo por VU em série | `10m` |
 | `TEARDOWN_TIMEOUT` | timeout de `teardown()`, mesmo formato | `10m` |
@@ -412,6 +444,18 @@ não negativos, com `THINK_TIME_MIN_S <= THINK_TIME_MAX_S` (`0` e
 `min > max` falha imediatamente — sem isso, `Number("abc")` viraria `NaN` e
 o think time seguinte seria efetivamente zero, inflando a taxa de
 requisições da VU sem aviso.
+
+`AUTO_SAVE_DELAY_MS` (default `1200`, mesmo valor que
+`CONTENT_AUTOSAVE_DELAY_MS` em
+`web/src/features/scenes/components/scene-editor.tsx`) é validado com a
+mesma regra (finito, não negativo) antes de rodar. Modela o debounce real do
+editor: a VU aguarda esse intervalo depois de montar o conteúdo alterado, e
+só então envia o PATCH de `AUTO_SAVE` — sem isso, o cenário dispararia saves
+mais rápido do que qualquer editor real permite, inflando artificialmente a
+taxa de escritas e de atualizações de contagem de palavras sob carga. Valores
+abaixo de `1200` são um modo de estresse deliberado (rajada de saves mais
+rápida que qualquer usuário real geraria através do editor), não o baseline
+realista que este cenário pretende medir por padrão.
 
 Validação estática antes de rodar:
 
@@ -604,57 +648,74 @@ continua agregando as 3 fases — é o número de "execução completa" em
 ## 9. Resultados obtidos
 
 Execuções reais, ambiente local isolado (ver limitações abaixo). **Esta é
-uma remedição depois de 3 correções P2 do Codex sobre `42cdd0b`** (código
-medido anterior: `fc521b7`) — nenhuma delas muda o código das 5 operações
-principais, os thresholds de latência já existentes ou o cálculo de `phase`:
+uma remedição depois de 4 correções P2 do Codex sobre `8023b2d`** (código
+medido anterior: `1f2593e`):
 
-1. **Retentativa limitada na recuperação de órfãos.** `recoverOrphanedBookIds()`
-   fazia só uma consulta imediata a `GET /api/books` — se o handler do `POST
-   /api/books` que deu timeout ainda estivesse terminando a transação no
-   servidor, essa consulta rodava antes do commit e não via o livro.
-   Corrigido com retentativa bound por tempo: consulta a cada 0.5s
-   (`ORPHAN_RECOVERY_POLL_INTERVAL_S`) por uma janela de 5s
-   (`ORPHAN_RECOVERY_WINDOW_MS`), continuando mesmo após uma consulta vazia,
-   nunca por resposta do servidor — então nunca é um loop infinito.
-2. **Threshold de erro por operação.** Os thresholds de `http_req_failed`
-   eram só globais, então uma falha concentrada numa única operação (ex.
-   `save_scene`) ficava diluída pelas outras quatro. Adicionados 5
-   thresholds `http_req_failed{operation:X,phase:steady}` (`rate<0.01`), um
-   por operação principal — ver [§7](#7-thresholds).
-3. **Limpeza manual escopada ao `runId`.** O README documentava `DELETE ...
-   WHERE title LIKE 'LOADTEST-%'`, que apagaria livros de execuções
-   concorrentes. `setup()` agora imprime o `runId` imediatamente após
-   gerá-lo (antes do primeiro `POST /api/books`) e o inclui em toda mensagem
-   de falha; o README passou a documentar só o predicado escopado
-   `LOADTEST-<runId>-vu%` — ver [§5](#5-dados-sintéticos-e-limpeza).
+1. **Debounce real do `AUTO_SAVE`.** O cenário disparava o PATCH assim que o
+   conteúdo alternado era montado, limitado só pelo think time (0.3-1s) —
+   mais rápido do que qualquer editor real permite. O editor real espera
+   `CONTENT_AUTOSAVE_DELAY_MS=1200ms` sem nova alteração antes de persistir
+   (`scene-editor.tsx`). Adicionado `AUTO_SAVE_DELAY_MS` (default `1200`,
+   validado finito/não negativo) com `await delay(AUTO_SAVE_DELAY_MS / 1000)`
+   antes do PATCH — **isto muda o pacing do cenário e portanto a carga
+   oferecida**, ver "Mudança de pacing" abaixo.
+2. **UUIDs no exemplo de limpeza por ID.** O README comparava `books.id`
+   (`uuid`) com literais inteiros (`11, 12, 13`), que o Postgres rejeita.
+   Corrigido para UUIDs entre aspas com `::uuid` explícito — ver
+   [§5](#5-dados-sintéticos-e-limpeza).
+3. **Hash de reprodutibilidade independente de CRLF/LF.** O
+   `measured_script_sha256` da rodada anterior foi calculado sobre os bytes
+   CRLF do working tree Windows (`core.autocrlf=true`), que não batem com um
+   checkout Linux limpo. `.gitattributes` agora fixa `loadtest/carga.js text
+   eol=lf`, e o hash passa a ser calculado sobre os bytes do **blob do Git**
+   (`git cat-file blob <commit>:loadtest/carga.js`), não do arquivo no
+   working tree — ver nota abaixo.
+4. **`backend` fora da allowlist automática.** `SAFE_HOSTS` aceitava o
+   hostname genérico `backend` sem exigir confirmação, mas `parseSafeHost()`
+   só compara a autoridade léxica da URL — nunca resolve o endereço real.
+   Numa máquina com domain search DNS fora da rede do Compose pretendida,
+   `backend` poderia apontar para um serviço remoto não relacionado. Removido
+   de `SAFE_HOSTS`; agora exige o mesmo `ALLOW_UNSAFE_TARGET` que qualquer
+   outro host não controlado — ver [§4](#4-segurança-de-destino).
 
-Como nenhuma das três correções toca o código das 5 operações principais,
-os thresholds de latência já existentes ou o cálculo de `phase`, **os
-números desta rodada são diretamente comparáveis à medição anterior
-(`fc521b7`)** — ver a tabela de comparação ao final desta seção.
+**Mudança de pacing (finding 1 acima):** cada iteração agora inclui uma
+espera fixa de `AUTO_SAVE_DELAY_MS` (1.2s) antes do PATCH que a rodada
+anterior não tinha. Isso reduz deliberadamente a taxa de
+iterações/requisições por VU — os números desta rodada **não são uma
+comparação direta de performance** com `1f2593e`: a carga oferecida mudou de
+propósito, não o backend medido. A diferença de requests/RPS é mostrada mais
+abaixo, com essa ressalva.
 
-- **`measured_code_commit`**: `1f2593efdca90d4f21703bdea9d54cbe6ca15324` — o
-  commit de `loadtest/carga.js` exatamente como executado para gerar os
-  números abaixo, com working tree limpo, sem nenhuma mudança de código
-  depois. Reproduzir: `git checkout 1f2593e -- loadtest/carga.js`.
+- **`measured_code_commit`**: `dece9f3e95a8b1d05356cf0c42d837618d28e455` — o
+  commit de `loadtest/carga.js` + `.gitattributes` exatamente como executado
+  para gerar os números abaixo, com working tree limpo, sem nenhuma mudança
+  de código depois. Reproduzir: `git checkout dece9f3 -- loadtest/carga.js`.
 - **`measured_script_path`**: `loadtest/carga.js`.
-- **`measured_script_git_blob`**: `a0c3f20fa3c0011e4a7a4c2069087e8b53c19717`
-  — saída de `git hash-object loadtest/carga.js` sobre o arquivo exatamente
-  como medido; confirmado igual a `git rev-parse 1f2593e:loadtest/carga.js`.
+- **`measured_script_git_blob`**: `b2ed1d7bb107c5d3e960e483d3ad460cfb082b0b`
+  — saída de `git rev-parse dece9f3:loadtest/carga.js` (bytes do blob do Git,
+  não do working tree).
 - **`measured_script_sha256`**:
-  `1b9ed6d4cb9d27db11419376489548d1177fe8f9d9fce55a31c92fa677d47da7` — saída
-  de `sha256sum loadtest/carga.js` (bash) ou
-  `(Get-FileHash loadtest/carga.js -Algorithm SHA256).Hash.ToLower()`
-  (PowerShell) sobre o mesmo arquivo.
+  `872c2d7d6ed574d45e5e6665643d9b21b04353f9c02ae0e683bf82b3f68aa31a` — SHA-256
+  dos bytes do blob acima, calculado com:
+  ```bash
+  python -c "import hashlib,subprocess; d=subprocess.check_output(['git','cat-file','blob','dece9f3:loadtest/carga.js']); print(hashlib.sha256(d).hexdigest())"
+  ```
+  **Não** use `sha256sum loadtest/carga.js` nem `Get-FileHash` sobre o
+  arquivo já checked-out como prova — mesmo com `.gitattributes` fixando
+  `eol=lf`, um arquivo já no disco reflete o `core.autocrlf` de quem fez
+  checkout (Windows com `autocrlf=true` converte o blob LF de volta para
+  CRLF), então o hash do working tree pode divergir do hash do blob conforme
+  a máquina. `git cat-file blob` lê os bytes do objeto armazenado no Git
+  diretamente, sem passar pelo checkout — o mesmo em qualquer SO.
 - **Por que blob + SHA-256, e não só `measured_code_commit`**: depois de um
   squash-merge (e possível exclusão da branch `feature/k6-realistic-baseline`),
   `measured_code_commit` pode deixar de ser alcançável a partir de `master` —
-  um `git checkout 1f2593e -- loadtest/carga.js` num clone novo falharia.
+  um `git checkout dece9f3 -- loadtest/carga.js` num clone novo falharia.
   O blob e o SHA-256 não dependem de nenhum commit específico continuar
-  alcançável: bastam o conteúdo do arquivo em `master` e um `git hash-object`/
-  `sha256sum` local para confirmar que é byte a byte o mesmo script que
-  gerou os números abaixo — `measured_code_commit` continua registrado só
-  como referência histórica de onde a medição aconteceu.
+  alcançável: bastam o conteúdo do arquivo em `master` e `git cat-file blob`
+  local para confirmar que é byte a byte o mesmo script que gerou os números
+  abaixo — `measured_code_commit` continua registrado só como referência
+  histórica de onde a medição aconteceu.
 - **`evidence_commit`**: o commit imediatamente seguinte nesta branch, que só
   adiciona/atualiza `resultado.json`, `resultados/*.json` e este README — sem
   nenhuma mudança de comportamento do script. Hash exato na descrição da PR
@@ -666,22 +727,14 @@ Resumo comparativo completo, estruturado, em
 [`resultados/resultado-10vus.json`](resultados/resultado-10vus.json) e
 [`resultados/resultado-30vus.json`](resultados/resultado-30vus.json).
 
-### Incidente de medição: throttling de CPU por bateria
+### Ambiente desta rodada
 
-**As duas primeiras tentativas de 30 VUs rodaram com a máquina na bateria**
-(plano de energia "Equilibrado" do Windows) e o threshold
-`http_req_duration{operation:list_books,phase:steady}` `p(95)<500ms` estourou
-de forma repetível: **595.6ms** na 1ª tentativa, **556.7ms** na 2ª — mesmo
-código, mesmo ambiente Docker, nenhuma mudança entre as duas. Depois de
-conectar a máquina à tomada (plano de energia inalterado, só a fonte), a
-mesma carga passou com folga: `list_books p95` caiu para **106.0ms** e o
-throughput global subiu de 137.0 para 159.1 RPS — confirmando que o
-throttling de CPU por bateria era a causa raiz, não uma regressão no código
-medido (que não toca `list_books`, os thresholds ou o cálculo de `phase`
-desde `fc521b7`). `smoke` e `10 VUs` foram reexecutados na energia AC para
-manter o dataset final consistente — **as três execuções nos números abaixo
-rodaram com a máquina na tomada.** Ver [§2](#2-pré-requisitos) para o aviso
-adicionado ao pré-requisito de execução.
+Energia AC confirmada via `Win32_Battery.BatteryStatus=2` imediatamente
+antes do smoke e imediatamente depois da execução de 30 VUs — nenhum
+incidente de throttling de bateria nesta rodada (diferente de `8023b2d`, que
+havia documentado um). `crm-marketing-backend-1` confirmado parado (`docker
+ps`) antes de medir. As três execuções (smoke, 10 VUs, 30 VUs) rodaram em
+sequência, sem outra carga de trabalho pesada ativa na máquina.
 
 ### Execução completa (todas as fases, todas as requisições)
 
@@ -690,33 +743,35 @@ e teardown — `http_req_duration` **sem** tag `phase`:
 
 | | VUs | Duração | Requests | RPS global | p50 (ms) | p90 (ms) | p95 (ms) | p99 (ms) | Erros | Checks | `vu_auth_success` |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| Baseline | 10 | 3m (30s/2m/30s) | 10675 | 58.9 | 8.1 | 33.7 | 40.9 | 59.9 | 0% (0/10675) | 100% (10600/10600) | 100% (10/10) |
-| Carga ampliada | 30 | 3m (30s/2m/30s) | 29145 | 159.1 | 16.2 | 67.8 | 82.8 | 114.9 | 0% (0/29145) | 100% (28930/28930) | 100% (30/30) |
+| Baseline | 10 | 3m (30s/2m/30s) | 3955 | 21.6 | 14.8 | 52.9 | 63.7 | 106.6 | 0% (0/3955) | 100% (3880/3880) | 100% (10/10) |
+| Carga ampliada | 30 | 3m (30s/2m/30s) | 11965 | 65.2 | 7.1 | 42.6 | 56.3 | 88.5 | 0% (0/11965) | 100% (11750/11750) | 100% (30/30) |
 
 `vu_auth_success` confirma exatamente uma autenticação bem-sucedida por VU
 nas duas execuções. Estes percentis incluem auth/setup/teardown **e**
 warmup/rampdown — não são a fase estável isolada; para isso, a seção
-seguinte.
+seguinte. **Requests/RPS caem frente à rodada anterior por causa do debounce
+do `AUTO_SAVE` (ver "Mudança de pacing" acima) — não é uma regressão.**
 
 ### Fase estável (`phase:steady`) — só as operações principais, só os 2 minutos com VUS constante no pico
 
 | Operação | 10 VUs p50 | 10 VUs p90 | 10 VUs p95 | 10 VUs p99 | 10 VUs max | 30 VUs p50 | 30 VUs p90 | 30 VUs p95 | 30 VUs p99 | 30 VUs max |
 |---|---|---|---|---|---|---|---|---|---|---|
-| `list_books` | 17.5 | 34.2 | 41.2 | 54.2 | 68.5 | 61.3 | 94.5 | 106.0 | 132.3 | 246.7 |
-| `load_outline` | 4.7 | 9.8 | 11.6 | 15.6 | 25.7 | 8.4 | 33.3 | 45.1 | 69.8 | 202.4 |
-| `load_scene` | 4.3 | 8.3 | 9.5 | 13.4 | 34.2 | 7.5 | 30.6 | 42.8 | 67.2 | 187.4 |
-| `save_scene` | 30.5 | 47.4 | 55.2 | 85.2 | 123.4 | 34.1 | 72.2 | 89.1 | 131.5 | 255.1 |
-| `refresh_outline_after_save` | 5.9 | 9.6 | 11.3 | 14.6 | 25.7 | 8.1 | 22.0 | 32.2 | 63.9 | 166.0 |
+| `list_books` | 38.1 | 61.6 | 70.9 | 87.4 | 116.9 | 31.3 | 63.0 | 76.5 | 102.8 | 246.1 |
+| `load_outline` | 9.8 | 15.7 | 18.4 | 27.6 | 71.9 | 4.0 | 7.1 | 8.4 | 14.0 | 211.7 |
+| `load_scene` | 9.0 | 14.7 | 17.6 | 25.2 | 67.6 | 3.8 | 6.3 | 7.5 | 11.0 | 51.7 |
+| `save_scene` | 43.7 | 59.5 | 66.3 | 84.1 | 136.6 | 31.3 | 49.8 | 61.6 | 86.7 | 369.2 |
+| `refresh_outline_after_save` | 10.3 | 16.2 | 17.8 | 30.4 | 47.8 | 5.2 | 9.1 | 10.5 | 17.5 | 54.4 |
 
 **Todos os 10 thresholds de latência `p95<500ms` (5 operações × 2 execuções)
-passaram**, com folga confortável nas duas cargas. **Os 10 novos thresholds
-de erro `rate<0.01` (5 operações × 2 execuções) também passaram — 0% de
-erro em todas as operações, nas duas cargas.** `checks` (100%) e
+passaram**, com folga ainda mais confortável que na rodada anterior — a
+carga oferecida por VU é menor com o debounce modelado. **Os 10 thresholds
+de erro `rate<0.01` (5 operações × 2 execuções) também passaram — 0% de erro
+em todas as operações, nas duas cargas.** `checks` (100%) e
 `http_req_failed` global (0%) passaram nas duas execuções — nenhuma
 requisição falhou.
 
 Em cada execução, a contagem do check `refresh_outline_after_save status 200`
-bate exatamente com `save_scene status 200` (2120/2120 em 10 VUs, 5786/5786
+bate exatamente com `save_scene status 200` (776/776 em 10 VUs, 2350/2350
 em 30 VUs, zero falhas) — confirmando que o refetch só roda após um save
 bem-sucedido, nunca a mais nem a menos.
 
@@ -728,80 +783,56 @@ bem-sucedido, nunca a mais nem a menos.
 
 | Operação | 10 VUs avg | 10 VUs p95 | 30 VUs avg | 30 VUs p95 |
 |---|---|---|---|---|
-| `auth_csrf` | 7.8ms | 22.6ms | 8.5ms | 27.1ms |
-| `auth_login` | 74.7ms | 111.5ms | 83.2ms | 113.0ms |
-| `setup_create_book` | 10.7ms | 22.3ms | 18.8ms | 46.0ms |
-| `setup_create_section` | 5.1ms | 6.0ms | 10.3ms | 27.5ms |
-| `setup_create_chapter` | 6.3ms | 7.8ms | 10.7ms | 31.8ms |
-| `setup_create_scene` | 10.4ms | 12.4ms | 18.6ms | 48.8ms |
-| `teardown_delete_book` | 33.0ms | 43.5ms | 24.7ms | 51.9ms |
+| `auth_csrf` | 9.7ms | 26.0ms | 5.6ms | 10.3ms |
+| `auth_login` | 113.5ms | 148.6ms | 86.2ms | 127.9ms |
+| `setup_create_book` | 18.0ms | 30.0ms | 17.5ms | 47.3ms |
+| `setup_create_section` | 9.5ms | 12.2ms | 8.5ms | 19.3ms |
+| `setup_create_chapter` | 11.5ms | 15.6ms | 8.7ms | 13.9ms |
+| `setup_create_scene` | 20.0ms | 29.2ms | 15.7ms | 36.3ms |
+| `teardown_delete_book` | 38.5ms | 57.0ms | 9.9ms | 12.2ms |
 
-### Fault injection — os dois findings que motivaram esta remedição
+### Debounce do AUTO_SAVE — teste dedicado (finding 1)
 
-Fora das 3 execuções medidas acima, com scripts temporários não versionados
-(cópias de `carga.js` com um gatilho de falha ligado por variável de
-ambiente):
+Fora das 3 execuções medidas acima, com uma cópia temporária instrumentada
+de `carga.js` (não versionada: `console.log` do timestamp imediatamente
+antes e depois do `await delay(AUTO_SAVE_DELAY_MS / 1000)`), `VUS=1`,
+`WARMUP_DURATION=1s`/`STEADY_DURATION=8s`/`RAMPDOWN_DURATION=1s`,
+`THINK_TIME_MIN_S=0.1`/`THINK_TIME_MAX_S=0.2`: 7 iterações completas, 100%
+checks (35/35), 0% `http_req_failed`. Diferença `pre_patch - pre_delay` em
+cada iteração: **1201ms, 1200ms, 1207ms, 1201ms, 1200ms, 1200ms, 1201ms** —
+sempre ≥ `AUTO_SAVE_DELAY_MS` (1200ms), nunca um PATCH disparado ignorando o
+debounce, mesmo com think time curto o suficiente para permitir saves
+consecutivos rápidos.
 
-**1. Recuperação de órfão com visibilidade atrasada.** `setup()` forçado a
-lançar imediatamente com `createdBookIds=[]` (resposta perdida simulada); um
-processo externo cria o livro-fantasma `LOADTEST-<runId>-vu1` só **depois**
-da 1ª varredura de `recoverOrphanedBookIds()`. Log instrumentado prova a
-race exata do finding do Codex:
+### Fault injection — os dois findings que motivaram a rodada anterior (`8023b2d`)
 
-```text
-scan #1 em t=...624004ms: recovered.size=0   (livro ainda não existe)
-scan #2 em t=...624514ms: recovered.size=1   (510ms depois — achou)
-```
+Não re-testados nesta rodada porque nenhuma das quatro correções toca
+`recoverOrphanedBookIds()` nem os thresholds de erro por operação — ver
+`loadtest/README.md` na revisão `8023b2d` (histórico) para os logs
+originais de fault injection desses dois achados.
 
-O livro foi removido (`Limpeza automática removeu todos os 1 livro(s)
-órfão(s)`), o erro original foi relançado (`k6 run` saiu com código `107`) e
-um livro de **outro** `runId` criado manualmente antes do teste
-(`LOADTEST-decoyrun999-vu1`) permaneceu intacto — confirmando que a
-recuperação nunca toca execuções concorrentes. Um segundo teste sem nenhum
-livro real confirmou 11 varreduras em ~5.1s e término normal — nunca loop
-infinito.
+### Leitura do resultado — comparação com a rodada anterior (`1f2593e`)
 
-**2. Falha concentrada em `save_scene`.** 1 a cada 25 iterações de cada VU
-(`VUS=10`, 60s de fase estável) força `save_scene` a apontar para um
-`sceneId` inválido (status ≥400). Resultado:
+**Não é uma comparação direta de performance** — o pacing do cenário mudou
+(debounce de 1.2s adicionado antes de cada PATCH, ver "Mudança de pacing"
+acima). A carga oferecida por VU é deliberadamente menor; a diferença abaixo
+reflete a mudança de metodologia, não uma regressão nem uma melhora do
+backend medido:
 
-| Threshold | Valor medido | Resultado |
+| | 10 VUs: `1f2593e` → `dece9f3` | 30 VUs: `1f2593e` → `dece9f3` |
 |---|---|---|
-| `http_req_failed` global `<1%` | 0.68% (30 falhas / 4559 requisições) | passou |
-| `http_req_failed{operation:save_scene,phase:steady}` `<1%` | 3.61% (30 falhas / 831 requisições) | **rompeu** |
+| Requests totais | 10675 → 3955 (-63.0%) | 29145 → 11965 (-59.0%) |
+| RPS global | 58.9 → 21.6 (-63.4%) | 159.1 → 65.2 (-59.0%) |
+| Iterações | 2120 → 776 (-63.4%) | 5786 → 2350 (-59.4%) |
+| `save_scene` p95 (steady) | 55.2 → 66.3 | 89.1 → 61.6 |
+| Thresholds de operação principal | 10/10 (latência + erro) | 10/10 (latência + erro) |
 
-`k6 run` saiu com código `99` — só por causa do threshold por operação; o
-global sozinho teria deixado passar. `refresh_outline_after_save` continuou
-disparando só nos saves bem-sucedidos (872/872, zero falhas), confirmando
-que a lógica de cascata não foi afetada pela falha injetada. Zero resíduo
-`LOADTEST-` após o teardown nos dois testes.
-
-### Leitura do resultado — comparação com a rodada anterior (`fc521b7`)
-
-**Nenhuma das três correções desta rodada toca o código das 5 operações
-principais, os thresholds de latência existentes ou o cálculo de `phase`**
-(só adiciona 5 thresholds de erro novos) — a comparação é direta, com uma
-ressalva: esta rodada correu na energia AC, a anterior não teve essa
-condição registrada (ver "Incidente de medição" acima), então parte da
-diferença pode refletir isso, não só variância normal de máquina
-compartilhada:
-
-| | 10 VUs: `fc521b7` → `1f2593e` | 30 VUs: `fc521b7` → `1f2593e` |
-|---|---|---|
-| Requests totais | 10150 → 10675 (+5.2%) | 25270 → 29145 (+15.3%) |
-| RPS global | 55.9 → 58.9 (+5.4%) | 137.0 → 159.1 (+16.2%) |
-| Iterações | 2015 → 2120 (+5.2%) | 5011 → 5786 (+15.5%) |
-| `save_scene` p95 (steady) | 80.4 → 55.2 (-31.3%) | 183.7 → 89.1 (-51.5%) |
-| Thresholds de operação principal | 5/5 (só latência) | 5/5 (só latência) |
-| Thresholds de operação principal (esta rodada) | 10/10 (latência + erro) | 10/10 (latência + erro) |
-
-**Gargalo principal:** nenhum na energia AC — as 5 operações passam o teto
-de 500ms com folga em 10 e 30 VUs. `list_books` continua sendo a operação
-relativamente mais lenta (cresce com o tamanho da coleção de livros do
-tenant, que aumenta com `VUS` por construção do cenário), mas está longe do
-teto mesmo em 30 VUs. Na bateria, `list_books` foi o único gargalo real
-observado (p95 556-596ms, estourando o threshold) — ver "Incidente de
-medição" acima.
+**Gargalo principal:** nenhum — as 5 operações passam o teto de 500ms com
+folga ainda maior que na rodada anterior, consequência direta da carga
+oferecida mais baixa por VU. `list_books` continua sendo a operação
+relativamente mais lenta nas duas cargas (cresce com o tamanho da coleção de
+livros do tenant, que aumenta com `VUS` por construção do cenário), mas está
+longe do teto mesmo em 30 VUs.
 
 **Limitações desta execução:**
 - Rodada em uma stack Docker isolada só para este teste (`docker-compose -p
@@ -811,11 +842,11 @@ medição" acima.
   ficou parado durante toda a execução, mas um Postgres de **outro worktree
   do IWrite** (`iwrite-db`, porta 5435) permaneceu ativo e ocioso — não é
   hardware dedicado.
-- **Nova nesta rodada:** a fonte de energia da máquina (bateria vs. tomada)
-  afeta o resultado o suficiente para derrubar um threshold de operação —
-  ver "Incidente de medição" acima. Nenhuma verificação automática disso
-  existe no script; é um passo manual do operador (ver aviso em
-  [§2](#2-pré-requisitos)).
+- O debounce do `AUTO_SAVE` (`AUTO_SAVE_DELAY_MS=1200`) reduz o throughput de
+  escrita por VU frente às rodadas anteriores por construção — este cenário
+  modela a cadência de um autor digitando e pausando, não o teto de
+  throughput que o backend consegue sustentar. Para medir capacidade máxima,
+  use `AUTO_SAVE_DELAY_MS` baixo/zero explicitamente como modo de estresse.
 - Backend, Postgres e k6 rodam na mesma máquina (sem separação de rede/CPU
   entre gerador de carga e alvo), então parte da latência medida pode ser
   contenção local, não custo real de rede.
@@ -831,28 +862,23 @@ medição" acima.
   `save_scene`/`list_books`/`load_outline` entre suas etapas internas não
   foi feita neste PR.
 - `contentJson` sintético é um único parágrafo curto (7-8 palavras) — não
-  representa uma cena longa de verdade. `save_scene` sob um payload
-  realisticamente maior tende a ser mais lento ainda que o medido aqui.
+  representa uma cena longa de verdade.
 - `IWRITE_LOADTEST_LOGIN_RATE_LIMIT` (overlay versionado
   `docker-compose.loadtest.yml`) foi mantido no default (`1000`) nesta
   execução — cobre folgadamente `VUS` até `998`; os defaults de produção em
   `application.yml`/`.env.example` não foram alterados — ver
   [§2](#2-pré-requisitos).
-- `crm-marketing-backend-1` foi parado manualmente antes de cada uma das
-  três execuções (smoke, 10 VUs, 30 VUs) desta rodada e reiniciado só depois
-  — mesma isolação já usada na rodada anterior.
 
-**Próxima ação recomendada:** adicionar ao checklist de pré-requisitos uma
-verificação manual explícita de que a máquina está na energia AC antes de
-rodar 10/30 VUs — esta rodada mostrou que throttling de bateria sozinho é
-suficiente para estourar o threshold de `list_books`. Repetir 30 VUs (e
-testar `VUS` maior, ex. 50-100) em hardware totalmente dedicado, sem nenhum
-outro container Docker ativo na máquina. Rodar o teste com OTel habilitado
-(`docker-compose.observability.yml`) e usar os traces correlacionados de
-`scene_content_save` para decompor o custo de `save_scene` entre `INSERT` em
-`book_word_count_events`/rollup diário e a própria escrita de conteúdo da
-cena. Investigar o crescimento de `list_books`/`load_outline` com o tamanho
-da coleção de livros do tenant antes de rodar com `VUS` bem maior que 30.
+**Próxima ação recomendada:** repetir 30 VUs (e testar `VUS` maior, ex.
+50-100) em hardware totalmente dedicado, sem nenhum outro container Docker
+ativo na máquina, agora que o pacing reflete o debounce real do editor.
+Rodar o teste com OTel habilitado (`docker-compose.observability.yml`) e
+usar os traces correlacionados de `scene_content_save` para decompor o
+custo de `save_scene`. Investigar o crescimento de
+`list_books`/`load_outline` com o tamanho da coleção de livros do tenant
+antes de rodar com `VUS` bem maior que 30. Considerar um segundo cenário
+explícito de estresse (`AUTO_SAVE_DELAY_MS` baixo) para medir o teto de
+throughput de escrita separadamente do baseline realista.
 
 ---
 
@@ -947,11 +973,36 @@ da coleção de livros do tenant antes de rodar com `VUS` bem maior que 30.
       (ex. `2` / `1`) rejeitado explicitamente citando os dois valores;
       `0`/`0`, `1.5`/`1.5` (min==max) e `0.15`/`0.75` (decimais) aceitos sem
       erro
-- [x] `measured_script_git_blob`/`measured_script_sha256` conferidos:
-      `git hash-object loadtest/carga.js` bate com
-      `git rev-parse 1f2593e:loadtest/carga.js`, e `sha256sum
-      loadtest/carga.js` bate com o valor registrado em `resultado.json` e
-      neste README
+- [x] `measured_script_git_blob`/`measured_script_sha256` conferidos sobre os
+      bytes do **blob do Git**, não do working tree: `git rev-parse
+      dece9f3:loadtest/carga.js` bate com `measured_script_git_blob`, e
+      `git cat-file blob dece9f3:loadtest/carga.js` (via Python/`hashlib`)
+      bate com `measured_script_sha256` registrado em `resultado.json` e
+      neste README. `git hash-object loadtest/carga.js` sobre o working tree
+      também bate, confirmando que `.gitattributes` (`eol=lf`) normaliza
+      corretamente nesta máquina — mas a prova de reprodutibilidade
+      multiplataforma é o blob, não o working tree (ver nota em [§9](#9-resultados-obtidos))
+- [x] Debounce do `AUTO_SAVE` (`AUTO_SAVE_DELAY_MS=1200`, default) testado com
+      instrumentação temporária (`console.log` de timestamp ao redor do
+      `await delay()`, não versionada): diferença `pre_patch - pre_delay`
+      sempre ≥ 1200ms em 7/7 iterações de um smoke `VUS=1` com think time
+      curto (0.1-0.2s) — nenhum PATCH disparado ignorando o debounce mesmo
+      quando o think time sozinho permitiria saves mais rápidos
+- [x] `AUTO_SAVE_DELAY_MS` validado com `k6 inspect` (mesma regra de
+      `THINK_TIME_MIN_S`/`MAX_S`): valor não finito ou negativo rejeitado
+      antes de qualquer HTTP
+- [x] Allowlist `SAFE_HOSTS` testada explicitamente: `localhost`,
+      `127.0.0.1`, `[::1]` e `host.docker.internal` passam sem override;
+      `backend` falha sem `ALLOW_UNSAFE_TARGET` e passa com o valor exato do
+      override; um host externo (`evil.example.com`) continua falhando;
+      user-info continua rejeitado; nenhuma mensagem de erro imprime a
+      `BASE_URL` bruta em nenhum dos casos acima (testado com `k6 inspect`
+      para cada combinação)
+- [x] Exemplo de limpeza manual por IDs no README corrigido para UUIDs
+      entre aspas com `::uuid` explícito — `books.id` é `uuid`
+      (`V1__create_books.sql`), então o literal inteiro anterior (`11, 12,
+      13`) teria falhado por incompatibilidade de tipo se alguém tivesse
+      copiado e colado
 - [x] `vu_auth_success` (threshold `rate==1`) confirmado: execução normal
       reprova o `k6 run` diante de qualquer falha de login de VU, mesmo
       quando a mesma VU se autentica com sucesso numa iteração seguinte
@@ -981,10 +1032,10 @@ da coleção de livros do tenant antes de rodar com `VUS` bem maior que 30.
       confirmado nas 3 execuções medidas e nos 3 testes de fault injection;
       mensagens de falha de `setup()` (criação de livro/seção/capítulo/cena)
       incluem o `runId`
-- [x] Throttling de CPU por bateria identificado e eliminado: 30 VUs
-      estourou `list_books p95<500ms` duas vezes na bateria (595.6ms,
-      556.7ms), passou com folga (106.0ms) na tomada — as 3 execuções finais
-      (smoke, 10 VUs, 30 VUs) rodaram todas na energia AC
+- [x] Energia AC confirmada (`Win32_Battery.BatteryStatus=2`) imediatamente
+      antes do smoke e imediatamente depois da execução de 30 VUs desta
+      rodada — sem incidente de throttling de bateria (achado de uma rodada
+      anterior, `8023b2d`, corrigido operacionalmente desde então)
 - [x] Zero resíduo `LOADTEST-` confirmado após as 3 execuções medidas
       (smoke, 10 VUs, 30 VUs) e após os 3 testes de fault injection desta
       rodada, via `SELECT title FROM books WHERE title LIKE 'LOADTEST-%'`
