@@ -414,7 +414,7 @@ rede) enquanto o servidor ainda está terminando a transação, o ID nunca
 chegaria à lista de limpeza e uma única consulta imediata pode rodar ANTES
 do commit — `recoverOrphanedBookIds()` cobre esse caso com retentativa
 limitada por tempo: antes de relançar o erro, `setup()` consulta os livros
-da conta repetidamente (intervalo curto de 0.5s, janela de 5s — constantes
+da conta repetidamente (intervalo curto de 0.5s, janela de até 5s — constantes
 `ORPHAN_RECOVERY_POLL_INTERVAL_S`/`ORPHAN_RECOVERY_WINDOW_MS` em
 `carga.js`), continuando mesmo depois de uma consulta vazia, até a janela
 fechar — bound só por tempo (`Date.now() >= deadline`), nunca por resposta
@@ -423,6 +423,25 @@ execução (prefixo `LOADTEST-${runId}-vu`, nunca `LOADTEST-` genérico),
 acumulando IDs sem duplicar (`Set`) e unindo qualquer órfão encontrado aos
 já rastreados antes de tentar remover todos. Nunca toca livros de outra
 execução concorrente (outro `runId`).
+
+**Bounded em três níveis, não só pela janela declarada** (achado do Codex,
+PR #141, "Bound each orphan-recovery request"): (1) cada `GET` de
+recuperação individual usa `timeout: min(ORPHAN_RECOVERY_REQUEST_TIMEOUT_MS,
+tempo restante até o deadline da janela)` — sem isso, uma única consulta
+lenta podia sozinha consumir a janela inteira sem que o loop tivesse chance
+de reagir; (2) o `sleep()` entre polls nunca ultrapassa o deadline; (3) a
+própria janela nunca é maior que o orçamento que `setup()` ainda pode gastar
+dentro de `SETUP_TIMEOUT` sem comprometer o cleanup dos livros já
+conhecidos — `setup()` recusa iniciar mais uma operação de provisionamento
+(falha controlada, preservando o erro original) sempre que o restante não
+cobrir request-em-andamento + janela de recuperação + cleanup sequencial
+(`cleanupBudgetMs()`), em vez de deixar o k6 matar `setup()` de fora por
+`SETUP_TIMEOUT`. Uma validação fail-fast rejeita, antes de criar qualquer
+dado, um `SETUP_TIMEOUT` matematicamente insuficiente para o `VUS` pedido.
+O `DELETE` de `cleanupBooks()` e os 4 `POST`s de provisionamento também usam
+timeout explícito — ver "Prova do bound de recuperação de órfãos" e "Prova
+do orçamento de cleanup" em [§9](#9-resultados-obtidos) para a fault
+injection.
 
 `teardown()` autentica de novo (sessão própria, não reaproveita a de nenhuma
 VU nem a de `setup()`) e apaga **todos** os livros da execução (cascata apaga
@@ -502,7 +521,7 @@ Variáveis de carga (todas opcionais, com padrão realista):
 | `AUTO_SAVE_DELAY_MS` | debounce do `AUTO_SAVE` antes do PATCH (== `CONTENT_AUTOSAVE_DELAY_MS` do frontend) | `1200` |
 | `HTTP_REQUEST_TIMEOUT` | timeout por requisição das 5 operações do turno (formato de duração do k6) — dimensiona `maxDuration` da VU, ver abaixo | `10s` |
 | `RESULT_PATH` | caminho do resumo JSON já sanitizado (opcional) | nenhum — só imprime no terminal |
-| `SETUP_TIMEOUT` | timeout de `setup()` (formato de duração do k6, ex. `10m`, `90s`, `0.5m`) — sobe com `VUS` porque `setup()` cria um livro completo por VU em série | `10m` |
+| `SETUP_TIMEOUT` | timeout de `setup()` (formato de duração do k6, ex. `10m`, `90s`, `0.5m`) — sobe com `VUS` porque `setup()` cria um livro completo por VU em série; rejeitado com mensagem clara, antes de criar qualquer dado, se for matematicamente insuficiente para `VUS` (ver [§5](#5-dados-sintéticos-e-limpeza)) | `10m` |
 | `TEARDOWN_TIMEOUT` | timeout de `teardown()`, mesmo formato | `10m` |
 
 **Orçamento de `maxDuration` da VU (achado do Codex, PR #141 — "Let the
@@ -592,12 +611,27 @@ explicitamente como em [§3](#3-autenticação) — nunca via
 `IWRITE_DEMO_AUTOR_A_PASSWORD`, que não existe no shell (só no `.env` lido
 pelo Docker Compose).
 
+**Nenhum comando abaixo passa `-e LOAD_TEST_PASSWORD=...`** (achado do Codex,
+PR #141, "Keep the load-test password out of the process arguments"): o k6
+já expõe toda variável de ambiente do processo em `__ENV` automaticamente —
+confirmado empiricamente (`k6 v2.1.0`, script mínimo lendo `__ENV.FOO` com só
+`export FOO=...` no shell, sem nenhum `-e`) — então `-e LOAD_TEST_PASSWORD=`
+nunca foi necessário para o script enxergar a senha via
+`__ENV.LOAD_TEST_PASSWORD` (`carga.js`). O problema de `-e VAR=valor` é que o
+valor entra na **linha de comando do processo** k6: numa máquina
+multiusuário, qualquer ferramenta que liste processos (`ps`, Gerenciador de
+Tarefas, `/proc/<pid>/cmdline`) consegue ler esse argumento — inclusive de
+outro usuário sem acesso ao seu shell/histórico. `export`/`$env:` continuam
+sendo o único lugar onde a senha existe: no ambiente do processo, nunca em
+`argv`. Confirmado depois de cada execução abaixo que a senha nunca aparece
+na linha de comando do processo `k6` (inspeção de processo durante a
+execução, ver [§10](#10-validado)).
+
 ### Smoke curto
 
 ```bash
 k6 run \
   -e BASE_URL=http://localhost:8085 \
-  -e LOAD_TEST_PASSWORD="$LOAD_TEST_PASSWORD" \
   -e VUS=2 -e WARMUP_DURATION=5s -e STEADY_DURATION=10s -e RAMPDOWN_DURATION=5s \
   loadtest/carga.js
 ```
@@ -605,7 +639,6 @@ k6 run \
 ```powershell
 k6 run `
   -e BASE_URL=http://localhost:8085 `
-  -e "LOAD_TEST_PASSWORD=$env:LOAD_TEST_PASSWORD" `
   -e VUS=2 -e WARMUP_DURATION=5s -e STEADY_DURATION=10s -e RAMPDOWN_DURATION=5s `
   loadtest/carga.js
 ```
@@ -615,7 +648,6 @@ k6 run `
 ```bash
 k6 run \
   -e BASE_URL=http://localhost:8085 \
-  -e LOAD_TEST_PASSWORD="$LOAD_TEST_PASSWORD" \
   -e VUS=10 -e RESULT_PATH=loadtest/resultados/resultado-10vus.json \
   loadtest/carga.js
 ```
@@ -623,7 +655,6 @@ k6 run \
 ```powershell
 k6 run `
   -e BASE_URL=http://localhost:8085 `
-  -e "LOAD_TEST_PASSWORD=$env:LOAD_TEST_PASSWORD" `
   -e VUS=10 -e RESULT_PATH=loadtest/resultados/resultado-10vus.json `
   loadtest/carga.js
 ```
@@ -633,7 +664,6 @@ k6 run `
 ```bash
 k6 run \
   -e BASE_URL=http://localhost:8085 \
-  -e LOAD_TEST_PASSWORD="$LOAD_TEST_PASSWORD" \
   -e VUS=30 -e RESULT_PATH=loadtest/resultados/resultado-30vus.json \
   loadtest/carga.js
 ```
@@ -641,7 +671,6 @@ k6 run \
 ```powershell
 k6 run `
   -e BASE_URL=http://localhost:8085 `
-  -e "LOAD_TEST_PASSWORD=$env:LOAD_TEST_PASSWORD" `
   -e VUS=30 -e RESULT_PATH=loadtest/resultados/resultado-30vus.json `
   loadtest/carga.js
 ```
@@ -930,7 +959,62 @@ documentação/leitura dos dados já coletados.
    "Prova do contrato de status exato" abaixo para a fault injection.
 
 Os dois achados alteram `loadtest/carga.js` e exigiram nova medição
-completa. Ver "Resultados desta rodada" abaixo para os números atuais.
+completa.
+
+### Rodada seguinte — 2 novos P2 do Codex sobre `070d435` (código medido anterior: `56b9303`)
+
+1. **"Bound each orphan-recovery request".** `recoverOrphanedBookIds()`
+   declarava uma janela (`ORPHAN_RECOVERY_WINDOW_MS=5000`) e um loop
+   temporal, mas o `GET /api/books` de cada `scanOnce()` não tinha timeout
+   explícito — uma única consulta lenta podia sozinha consumir (ou
+   ultrapassar) a janela inteira sem que o `while (Date.now() < deadline)`
+   tivesse chance de reagir, e perto do fim de `SETUP_TIMEOUT` isso podia
+   deixar o k6 matar `setup()` externamente antes de `cleanupBooks()` rodar.
+   Corrigido em três níveis: (a) cada GET de recuperação agora usa
+   `timeout: min(ORPHAN_RECOVERY_REQUEST_TIMEOUT_MS, tempo restante até o
+   deadline da janela)` — nunca o timeout default de 60s do k6, nem o
+   `HTTP_REQUEST_TIMEOUT` cheio do loop principal quando este exceder a
+   própria janela; (b) o `sleep()` entre polls nunca ultrapassa o deadline
+   (dorme só o que resta, ou nem dorme); (c) `setup()` calcula um deadline
+   absoluto (`setupDeadlineAt`) e, antes de cada nova operação de
+   provisionamento, verifica se o orçamento restante cobre
+   request-em-andamento + janela de recuperação inteira + cleanup
+   sequencial dos livros já conhecidos (`cleanupBudgetMs()`) — se não
+   cobrir, falha de forma controlada (preservando o erro original) em vez
+   de esperar `SETUP_TIMEOUT` matar `setup()` de fora. Uma validação
+   fail-fast rejeita, no carregamento do script, um `SETUP_TIMEOUT`
+   matematicamente insuficiente para o `VUS` pedido, antes de criar
+   qualquer dado. Os 4 `POST`s de provisionamento (book/section/
+   chapter/scene) e o `DELETE` de `cleanupBooks()` passam a usar timeout
+   explícito (`HTTP_REQUEST_TIMEOUT`/`CLEANUP_DELETE_TIMEOUT_MS`) — sem
+   isso, o cálculo de orçamento acima não teria como ser matematicamente
+   defensável, e o achado do Codex explicitamente pedia para não apenas
+   deslocar o bloqueio de GET para DELETE. Ver "Prova do bound de
+   recuperação de órfãos" e "Prova do orçamento de cleanup" abaixo para a
+   fault injection.
+2. **"Keep the load-test password out of the process arguments".** Os
+   comandos do README passavam `-e LOAD_TEST_PASSWORD="$LOAD_TEST_PASSWORD"`
+   (bash) / `-e "LOAD_TEST_PASSWORD=$env:LOAD_TEST_PASSWORD"` (PowerShell)
+   mesmo já carregando a senha no ambiente sem eco — isso expande a senha
+   como argumento da linha de comando do processo `k6`, visível para
+   qualquer ferramenta de inspeção de processo numa máquina multiusuário
+   (`ps`, Gerenciador de Tarefas, `/proc/<pid>/cmdline`). Corrigido
+   removendo os 6 usos de `-e LOAD_TEST_PASSWORD=...` do README (smoke/10
+   VUs/30 VUs × bash/PowerShell): confirmado empiricamente que o k6 já
+   expõe toda variável de ambiente do processo via `__ENV` automaticamente,
+   sem precisar de `-e` — a senha continua chegando a
+   `__ENV.LOAD_TEST_PASSWORD` (`carga.js` não mudou nesse ponto) só que
+   agora nunca aparece em `argv`. Não há exemplo de k6 via Docker no
+   repositório (escopo não ampliado só para criar um). Ver "Prova da senha
+   fora do argv" abaixo.
+
+Só o achado 1 altera `loadtest/carga.js` e exigiu nova medição completa
+(novo `measured_code_commit`, novo blob, novo SHA-256, smoke/10 VUs/30 VUs
+remedidos nesta rodada) — a janela de recuperação/cleanup fica fora do loop
+medido, então a remedição não é esperada para mudar as latências do loop
+principal (ver "Comparação com a medição anterior" em
+[`resultado.json`](resultado.json)). O achado 2 é só documentação dos
+comandos.
 
 **Hierarquia de confiança pós-squash** (achado do Codex, PR #141: um squash
 anterior nesta mesma PR — `e8ffa7b`, único pai `c9921c9` — já provou que
@@ -938,17 +1022,19 @@ anterior nesta mesma PR — `e8ffa7b`, único pai `c9921c9` — já provou que
 onde a medição rodou pode deixar de ser alcançável assim que a branch de
 desenvolvimento for removida):
 
-- **`measured_code_commit`**: `56b9303e53a5087dbc744a03eea7fe48f11a5efa` — o
+- **`measured_code_commit`**: `746cdbb59147ff11a9bd22d1c2da4c9a37c9bc80` — o
   commit de `loadtest/carga.js` exatamente como executado para gerar os
   números abaixo, working tree limpo, sem nenhuma mudança de código depois.
   **Só serve como proveniência histórica de desenvolvimento** — não é o
   mecanismo de reprodutibilidade pós-squash. Depois que esta PR for
   squash-merged e a branch `feature/k6-realistic-baseline` removida, um
   clone novo não tem garantia de conseguir rodar `git checkout
-  56b9303e53a5087dbc744a03eea7fe48f11a5efa -- loadtest/carga.js` — o commit
-  pode não estar mais alcançável a partir de `master`.
+  746cdbb59147ff11a9bd22d1c2da4c9a37c9bc80 -- loadtest/carga.js` — o commit
+  pode não estar mais alcançável a partir de `master` (mesma ressalva já
+  confirmada uma vez nesta PR: `e8ffa7b`, único pai `c9921c9`, tornou
+  `3bb79ce` inalcançável).
 - **`measured_script_path`**: `loadtest/carga.js`.
-- **`measured_script_git_blob`**: `91fc59f76227f95139054e15ce00125436172550`
+- **`measured_script_git_blob`**: `8b8a53ebe4207ee7f8ea951dde273cdd741b5154`
   — a âncora **estável** de reprodutibilidade, que sobrevive ao squash desde
   que o conteúdo de `loadtest/carga.js` no commit final seja byte-a-byte
   igual ao medido aqui (é o caso: nenhum commit de evidência depois deste
@@ -958,23 +1044,23 @@ desenvolvimento for removida):
   ```bash
   # no commit que você quer auditar (ex.: HEAD de master, depois do merge):
   git rev-parse HEAD:loadtest/carga.js
-  # deve imprimir exatamente 91fc59f76227f95139054e15ce00125436172550 —
+  # deve imprimir exatamente 8b8a53ebe4207ee7f8ea951dde273cdd741b5154 —
   # se imprimir outro valor, loadtest/carga.js mudou desde a medição.
   ```
   Reconstrua o arquivo medido diretamente do objeto Git (o blob sobrevive
   independente de qual commit o referencia):
   ```bash
-  git cat-file blob 91fc59f76227f95139054e15ce00125436172550 > carga-medida.js
+  git cat-file blob 8b8a53ebe4207ee7f8ea951dde273cdd741b5154 > carga-medida.js
   ```
 - **`measured_script_sha256`**:
-  `3d2023d4b39c04969955056fdf4b7091820f5a115f9522cc06dee45efa02e81d` — SHA-256
+  `18bb2fdc32fe5f4d3e483dc7d7ccfdad7e37d58eab745f22d5d657e5f4292b9f` — SHA-256
   dos bytes do blob acima, calculado com:
   ```bash
-  python -c "import hashlib,subprocess; d=subprocess.check_output(['git','cat-file','blob','91fc59f76227f95139054e15ce00125436172550']); print(hashlib.sha256(d).hexdigest())"
+  python -c "import hashlib,subprocess; d=subprocess.check_output(['git','cat-file','blob','8b8a53ebe4207ee7f8ea951dde273cdd741b5154']); print(hashlib.sha256(d).hexdigest())"
   ```
   ou, direto do blob, sem Python:
   ```bash
-  git cat-file blob 91fc59f76227f95139054e15ce00125436172550 | sha256sum
+  git cat-file blob 8b8a53ebe4207ee7f8ea951dde273cdd741b5154 | sha256sum
   ```
   **Não** use `sha256sum loadtest/carga.js` nem `Get-FileHash` sobre o
   arquivo já checked-out como prova — mesma ressalva de CRLF/LF de rodadas
@@ -1033,7 +1119,139 @@ registradas em "Resultados desta rodada" abaixo — energia AC confirmada
 `Online` antes e depois, `crm-marketing-*` parado. Nenhuma tentativa foi
 descartada nesta rodada.
 
-### Prova da janela de preparação de autenticação (achado 1 desta rodada) — instrumentação temporária + fault injection
+### Ambiente da rodada seguinte (`746cdbb`)
+
+Stack `iwrite-k6-*` já em execução havia 11h+ (`healthy`, reaproveitada sem
+reiniciar) — `docker stats` confirmou os 3 containers em CPU `~0%` momentos
+antes de cada uma das três execuções. `crm-marketing-*` e a stack de outro
+worktree do IWrite (`iwrite-backend-1`/`iwrite-db-1`/`iwrite-frontend-1`)
+confirmados `Exited` (`docker ps -a`) durante toda a execução — nenhuma das
+duas rodando. Energia AC confirmada `Online`
+(`[System.Windows.Forms.SystemInformation]::PowerStatus.PowerLineStatus`)
+imediatamente antes das três execuções aqui registradas. Nenhuma tentativa
+foi descartada nesta rodada.
+
+### Prova do bound de recuperação de órfãos (achado 1 desta rodada) — fault injection não versionada
+
+Proxy HTTP local throwaway (`fi_proxy.py`, poucas linhas, `http.server` +
+`urllib`) na frente do backend real: encaminha cada requisição
+imediatamente, mas pode segurar a resposta de uma rota específica por um
+tempo configurável antes de repassá-la ao cliente k6 — simula "o servidor
+processou, a resposta é que atrasou/se perdeu", sem modificar o backend.
+
+Execução: `VUS=1`, `HTTP_REQUEST_TIMEOUT=2s`, `SETUP_TIMEOUT=15s`, regras do
+proxy: `POST /api/books` segura a resposta por `6s` (força timeout
+client-side, ambíguo) e **todo** `GET /api/books` (o caminho de
+`setup_recover_books`) segura a resposta por `30s` — muito acima de
+`ORPHAN_RECOVERY_WINDOW_MS=5000ms`.
+
+Timeline observada nos logs do k6 (timestamps reais):
+
+```
+18:14:10  runId gerado, POST /api/books despachado
+18:14:12  POST /api/books: "request timeout"           (~2000ms, == HTTP_REQUEST_TIMEOUT — nunca os 6s injetados)
+18:14:14  GET /api/books (scan 1): "request timeout"    (~2000ms depois, == ORPHAN_RECOVERY_REQUEST_TIMEOUT_MS — nunca os 30s injetados)
+18:14:16  GET /api/books (scan 2): "request timeout"    (~2000ms depois — poll respeitou o intervalo e o teto por request)
+18:14:17  "setup() falhou ... após criar 0 livro(s)"     (~1s depois — janela fechou em ~5s totais, sem 3º scan)
+```
+
+Confirmado: nenhuma request individual (nem a `POST` ambígua, nem os dois
+`GET` de recuperação) esperou perto dos delays injetados (`6s`/`30s`) — cada
+uma foi cortada exatamente no teto calculado. A janela de recuperação inteira
+durou `~5s` (18:14:12 → 18:14:17), batendo com `ORPHAN_RECOVERY_WINDOW_MS`,
+não com o delay injetado. Nenhum terceiro scan foi disparado depois que o
+orçamento acabou (a lógica de sleep bounded parou o loop antes do deadline
+ser cruzado de novo). Como o `GET` de recuperação também estava bloqueado
+nesta injeção deliberadamente adversarial (o próprio mecanismo de
+reconciliação ficou sem capacidade de responder dentro da janela), o livro
+criado ambiguamente pelo backend real (a injeção segura a resposta, não o
+processamento) não pôde ser reconciliado a tempo — resíduo esperado sob esta
+condição especificamente adversarial, removido manualmente após a validação
+(`DELETE FROM books WHERE title LIKE 'LOADTEST-%'` no Postgres do stack
+isolado). Isso demonstra a propriedade que o achado pedia — teto de tempo
+por request e pela janela — não uma garantia de que a reconciliação sempre
+terá sucesso sob condições arbitrariamente adversas.
+
+### Prova do orçamento de cleanup (achado 1 desta rodada, continuação) — fault injection não versionada
+
+Mesmo proxy, regra diferente: `VUS=5`, `HTTP_REQUEST_TIMEOUT=2s`,
+`SETUP_TIMEOUT=20s` (acima do mínimo matemático de `19000ms` para `VUS=5`,
+então a validação fail-fast não rejeita a configuração de saída) — todo
+`POST /api/books` segura a resposta por `1.7s` (abaixo do timeout, então
+cada livro ainda é criado com sucesso, só mais devagar).
+
+Resultado real:
+
+```
+18:15:11  runId gerado
+18:15:21  "setup() falhou (runId ...) após criar 3 livro(s) sintético(s): Orçamento de
+           SETUP_TIMEOUT insuficiente para provisionar com segurança o livro 4/5
+           (restam 13653ms, precisa de pelo menos 17000ms ...)"
+18:15:21  "Limpeza automática removeu todos os 3 livro(s) órfão(s)."
+18:15:22  k6 encerra com código de falha (exit 107)
+```
+
+`17000ms` bate exatamente com a fórmula (`HTTP_REQUEST_TIMEOUT_MS(2000) +
+ORPHAN_RECOVERY_WINDOW_MS(5000) + cleanupBudgetMs(4)(10000) = 17000`).
+Tempo total decorrido: `~11s` (18:15:11 → 18:15:22) — bem abaixo dos `20s`
+de `SETUP_TIMEOUT`, confirmando que `setup()` se encerrou pelo próprio
+guard-rail, **nunca** pelo k6 matando a função externamente por
+`SETUP_TIMEOUT`. Os 3 livros conhecidos foram limpos por completo antes do
+`throw` (confirmado via consulta direta ao Postgres: zero resíduo do
+`runId`). `k6 run` saiu com código diferente de zero, sem hanging.
+
+### Prova da corrida de commit tardio (achado 1 desta rodada, continuação) — fault injection não versionada
+
+Mesmo proxy, regra de **pré-delay** (atraso antes de encaminhar ao backend
+real, não depois): `VUS=1`, `HTTP_REQUEST_TIMEOUT=2s`, `SETUP_TIMEOUT=15s`,
+`POST /api/books` só é encaminhado ao backend `2.3s` depois de chegar no
+proxy — ou seja, o cliente k6 já desiste (timeout em `2.0s`) antes mesmo do
+backend real receber a requisição, e o commit só acontece por volta de
+`2.35s`. Um livro decoy de outro `runId`
+(`LOADTEST-OTHERRUNDECOY-vu1`, criado manualmente via `curl` antes do teste)
+foi deixado no tenant para validar isolamento entre execuções concorrentes.
+
+Resultado: `setup() falhou ... após criar 1 livro(s) sintético(s)` — o `1`
+aqui é o `bookIds.length` passado a `cleanupBooks()`, ou seja, `createdBookIds`
+estava vazio (a criação nunca foi confirmada como bem-sucedida no cliente)
+mas a **recuperação encontrou e removeu** o livro que só commitou
+tardiamente — exatamente a corrida "scan 1 → 0 livros, commit tardio, scan
+posterior → encontra livro" que a lógica de polling existe para cobrir,
+preservada depois do refactor de bounding desta rodada. Confirmado via
+consulta direta ao Postgres depois do teste: o livro da execução em falha
+foi removido, e o livro decoy `LOADTEST-OTHERRUNDECOY-vu1` (outro `runId`,
+título sem o marcador `LOADTEST-<runId>-vu` desta execução) permaneceu
+intocado — isolamento entre `runId`s concorrentes confirmado. Ambos os
+livros de teste foram removidos manualmente depois da validação.
+
+### Prova da senha fora do argv (achado 2 desta rodada) — validação real
+
+Script mínimo (`__ENV.FOO`) confirmou primeiro que o k6 v2.1.0 expõe
+variáveis de ambiente do processo via `__ENV` **mesmo sem nenhum `-e`**:
+`export FOO=bar_secret` no shell, `console.log(__ENV.FOO)` no script, sem
+`-e FOO=...` na linha de comando — o valor apareceu normalmente no log.
+
+Depois de remover os 6 usos de `-e LOAD_TEST_PASSWORD=...` do README, um
+smoke real (`VUS=2`, só `export LOAD_TEST_PASSWORD`, sem `-e` para a senha)
+rodou de ponta a ponta: `checks: 100.00% (80/80)`, `http_req_failed: 0.00%`,
+teardown removeu os 2 livros — confirmando que `setup()`, cada VU e
+`teardown()` continuam autenticando normalmente só com a variável de
+ambiente. Durante uma segunda execução idêntica, a linha de comando do
+processo `k6.exe` em execução foi inspecionada via
+`Get-CimInstance Win32_Process -Filter "Name='k6.exe'" | Select-Object CommandLine`:
+
+```
+"C:\Program Files\k6\k6.exe" run -e BASE_URL=http://localhost:8093 -e VUS=2 -e
+WARMUP_DURATION=5s -e STEADY_DURATION=10s -e RAMPDOWN_DURATION=5s loadtest/carga.js
+```
+
+Confirmado: só flags não sensíveis na linha de comando — nenhuma ocorrência
+da senha. `bash`/PowerShell disponíveis na mesma máquina (Git Bash +
+PowerShell 5.1) — os dois shells foram exercitados de fato (bash para rodar
+o smoke acima, PowerShell para a inspeção de processo e a checagem de
+`PowerLineStatus`), não só revisão estática.
+
+### Prova da janela de preparação de autenticação (achado 1 da rodada anterior) — instrumentação temporária + fault injection
 
 Cópia throwaway de `carga.js` logando `auth_start`/`auth_end` (relativos a
 `exec.scenario.startTime`) e o instante real de ativação de cada VU,
@@ -1067,7 +1285,7 @@ Em todos os casos, `max(auth_end)` ficou ordens de grandeza abaixo de
 `2×HTTP_REQUEST_TIMEOUT_MS`, `load_start` com margem sobre esse teto) se
 confirmou empiricamente nos três cenários.
 
-### Prova do contrato de status exato (achado 2 desta rodada) — fault injection não versionada
+### Prova do contrato de status exato (achado 2 da rodada anterior) — fault injection não versionada
 
 Servidor HTTP local mínimo (`status204_server.py`, poucas linhas) que
 responde `200` a `96%` dos `PATCH` recebidos e `204` aos outros `4%`
@@ -1659,3 +1877,56 @@ injection do refresh degradado, hoje só documentada na PR #141.
 - [x] Zero resíduo `LOADTEST-` confirmado após as 3 execuções medidas
       (smoke, 10 VUs, 30 VUs) desta rodada, via `SELECT count(*) FROM books
       WHERE title LIKE 'LOADTEST-%'`
+- [x] Recuperação de órfãos bounded por request (PR #141, finding "Bound
+      each orphan-recovery request"): fault injection contra um proxy local
+      throwaway que segura a resposta de `GET /api/books` por `30s`
+      confirmou que cada `scanOnce()` nunca esperou mais que
+      `ORPHAN_RECOVERY_REQUEST_TIMEOUT_MS` (`2000ms` com
+      `HTTP_REQUEST_TIMEOUT=2s`) e que a janela inteira de recuperação
+      terminou em `~5s` (o valor de `ORPHAN_RECOVERY_WINDOW_MS`), nunca perto
+      do delay injetado — ver "Prova do bound de recuperação de órfãos" em
+      [§9](#9-resultados-obtidos)
+- [x] Orçamento de cleanup reservado dentro de `SETUP_TIMEOUT` (mesmo
+      finding): fault injection com `VUS=5`/`SETUP_TIMEOUT=20s` e cada `POST
+      /api/books` artificialmente lento (`1.7s`, abaixo do
+      `HTTP_REQUEST_TIMEOUT=2s`) confirmou que `setup()` recusou a 4ª
+      tentativa de provisionamento com uma mensagem explícita
+      ("Orçamento de SETUP_TIMEOUT insuficiente...") após só `~10s`
+      decorridos — nunca chegando perto dos `20s` de `SETUP_TIMEOUT` — e que
+      os 3 livros já criados foram limpos por completo antes do `throw`; ver
+      "Prova do orçamento de cleanup" em [§9](#9-resultados-obtidos)
+- [x] Corrida de commit tardio continua resolvida após o refactor de
+      bounding (mesmo finding): fault injection atrasando a chegada do `POST
+      /api/books` ao backend real além do `HTTP_REQUEST_TIMEOUT` (commit só
+      acontece depois que o cliente já desistiu) confirmou que uma consulta
+      de recuperação posterior — dentro da janela — encontrou e removeu o
+      livro; ver "Prova da corrida de commit tardio" em
+      [§9](#9-resultados-obtidos)
+- [x] Isolamento entre `runId`s concorrentes preservado (mesmo finding): um
+      livro decoy sob outro marcador (`LOADTEST-OTHERRUNDECOY-vu1`) sobreviveu
+      intocado à recuperação/cleanup de uma execução com falha — confirmado
+      via consulta direta ao Postgres antes/depois
+- [x] Timeout explícito nos 4 `POST`s de provisionamento e no `DELETE` de
+      `cleanupBooks()` (mesmo finding, "não desloque o bloqueio de GET para
+      DELETE"): confirmado via `k6 inspect` e pela fault injection do
+      orçamento de cleanup acima, que depende exatamente desses timeouts
+      para o cálculo de `cleanupBudgetMs()` bater com o comportamento real
+- [x] Senha fora da linha de comando do processo (PR #141, finding "Keep the
+      load-test password out of the process arguments"): confirmado
+      empiricamente que o k6 expõe toda variável de ambiente do processo via
+      `__ENV` mesmo sem nenhum `-e` (script mínimo lendo `__ENV.FOO` com só
+      `export FOO=...` no shell); depois de remover os 6 usos de `-e
+      LOAD_TEST_PASSWORD=...` do README, um smoke real (`VUS=2`) autenticou
+      normalmente (setup, VU e teardown, checks 100%) usando só
+      `export LOAD_TEST_PASSWORD`; inspeção da linha de comando do processo
+      `k6.exe` em execução (`Get-CimInstance Win32_Process`) confirmou
+      ausência da senha — só flags não sensíveis (`BASE_URL`, `VUS`,
+      `WARMUP_DURATION`, ...) — ver "Prova da senha fora do argv" em
+      [§9](#9-resultados-obtidos)
+- [x] `measured_script_git_blob`/`measured_script_sha256` desta rodada
+      (`8b8a53ebe4207ee7f8ea951dde273cdd741b5154`/
+      `18bb2fdc32fe5f4d3e483dc7d7ccfdad7e37d58eab745f22d5d657e5f4292b9f`)
+      conferidos sobre os bytes do blob do Git (`git rev-parse
+      746cdbb59147ff11a9bd22d1c2da4c9a37c9bc80:loadtest/carga.js` e `git
+      cat-file blob 8b8a53ebe4207ee7f8ea951dde273cdd741b5154 | sha256sum`),
+      nunca do working tree
