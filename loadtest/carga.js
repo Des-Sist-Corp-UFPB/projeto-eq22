@@ -215,30 +215,81 @@ const WARMUP_MS = k6DurationToMs(WARMUP_DURATION);
 const STEADY_MS = k6DurationToMs(STEADY_DURATION);
 const RAMPDOWN_MS = k6DurationToMs(RAMPDOWN_DURATION);
 
+// Timeout explícito por requisição das 5 operações principais do laço
+// (list_books/load_outline/load_scene/save_scene/refresh_outline_after_save):
+// sem isso, cada requisição usaria o timeout padrão do k6 (60s), que sozinho
+// já dominaria o orçamento de drenagem do último turno calculado abaixo
+// (MAIN_LOOP_GRACE_MS) e o infla muito além do que um ambiente local saudável
+// precisa. Formato de duração do k6 (validateK6Duration) — o default é
+// pensado para localhost, não para uma rede real de alta latência.
+const HTTP_REQUEST_TIMEOUT = validateK6Duration(__ENV.HTTP_REQUEST_TIMEOUT || '10s', 'HTTP_REQUEST_TIMEOUT');
+const HTTP_REQUEST_TIMEOUT_MS = k6DurationToMs(HTTP_REQUEST_TIMEOUT);
+
 // O executor per-vu-iterations (ver options.scenarios abaixo) inicia as VUS
 // VUs simultaneamente em exec.scenario.startTime — sem o escalonamento
 // automático de VU que options.stages/ramping-vus fazia. default() escalona
 // manualmente sua própria ativação (rampa de subida) e desativação (rampa de
-// descida) por VU, proporcional ao índice __VU (1..VUS), reproduzindo a MESMA
-// curva agregada de VUs ativas ao longo do tempo que ramping-vus produzia:
-// sobe linear de 0→VUS em WARMUP_MS, mantém VUS em STEADY_MS, desce linear de
-// VUS→0 em RAMPDOWN_MS (a prova algébrica está no commit que introduziu isto,
-// ver PR #141). Cada VU calcula os dois deslocamentos em relação ao início do
-// cenário (exec.scenario.startTime) uma única vez, no topo de default().
+// descida) por VU, proporcional ao índice __VU (1..VUS): a k-ésima VU (por
+// índice, 1..VUS) entra em t=(k/VUS)×WARMUP_MS e sai em
+// t=WARMUP_MS+STEADY_MS+(k/VUS)×RAMPDOWN_MS.
+//
+// Essa é a discretização exata do alvo contínuo VUs_ativas(t)=VUS×t/WARMUP_MS
+// (rampa linear 0→VUS): o alvo contínuo cruza o inteiro k exatamente em
+// t=(k/VUS)×WARMUP_MS, então a k-ésima VU só "conta" a partir desse instante.
+// Usar k/VUS (em vez de (k-1)/VUS, usado antes) garante que a última VU
+// (k=VUS) entre exatamente em WARMUP_MS — não antes — e saia exatamente no
+// fim de RAMPDOWN_MS — não antes —, cobrindo os dois extremos do intervalo
+// configurado sem cauda ociosa. (k-1)/VUS varia só de 0 a (VUS-1)/VUS, nunca
+// alcança 1, e por isso deixava a última VU desativar RAMPDOWN_MS/VUS antes
+// do fim nominal da rampa (ex.: VUS=2/ramp=5s desativava aos 2.5s de um
+// ramp-down de 5s; achado do Codex, PR #141).
+//
+// Tabela de verificação (offset da última VU, k=VUS, em fração da duração
+// configurada — sempre 1, ou seja, sempre no limite exato):
+//   VUS=1:  ativa em 1×WARMUP_MS/1  = WARMUP_MS  | desativa em RAMPDOWN_MS/1  = RAMPDOWN_MS
+//   VUS=2:  ativa em 2×WARMUP_MS/2  = WARMUP_MS  | desativa em RAMPDOWN_MS
+//   VUS=10: ativa em 10×WARMUP_MS/10 = WARMUP_MS | desativa em RAMPDOWN_MS
+//   VUS=30: ativa em 30×WARMUP_MS/30 = WARMUP_MS | desativa em RAMPDOWN_MS
+// (confirmado também por instrumentação temporária não versionada — ver PR
+// #141 — logando activation/deactivation time real para VUS=1/2/10.)
+//
+// É uma aproximação discreta EQUIVALENTE ao ramping-vus só nesses pontos de
+// ativação/desativação — não uma cópia bit-a-bit do algoritmo interno do
+// executor; a ordem exata de qual VU entra/sai primeiro pode diferir.
 function activationOffsetMs(vuIndex) {
-  return ((vuIndex - 1) / VUS) * WARMUP_MS;
+  return (vuIndex / VUS) * WARMUP_MS;
 }
 function deactivationOffsetMs(vuIndex) {
-  return WARMUP_MS + STEADY_MS + ((vuIndex - 1) / VUS) * RAMPDOWN_MS;
+  return WARMUP_MS + STEADY_MS + (vuIndex / VUS) * RAMPDOWN_MS;
 }
 
 // Folga além de warmup+steady+rampdown antes do k6 interromper à força a
-// iteração única de uma VU: cobre o último turno disparado perto do limiar de
-// desativação (debounce de 1200ms + PATCH + refresh) e a drenagem final do
-// event loop (ver comentário grande acima) — nunca usada para estender as
-// fases medidas em si (currentPhase() só olha para WARMUP_MS/STEADY_MS,
-// nunca para este valor).
-const MAIN_LOOP_GRACE_MS = 60000;
+// iteração única de uma VU — nunca usada para estender as fases medidas em si
+// (currentPhase() só olha para WARMUP_MS/STEADY_MS, nunca para este valor).
+//
+// O laço de default() só verifica o limite ANTES de iniciar um turno (nunca
+// interrompe um turno em andamento), então o pior caso é um turno iniciado a
+// poucos milissegundos de deactivateAt, que ainda precisa completar, em
+// sequência: list_books + load_outline + load_scene (3 leituras síncronas,
+// cada uma limitada a HTTP_REQUEST_TIMEOUT_MS), o debounce do AUTO_SAVE
+// (AUTO_SAVE_DELAY_MS), o PATCH save_scene (mais um HTTP_REQUEST_TIMEOUT_MS)
+// e o think time do próprio turno (até THINK_TIME_MAX_S) — mais a drenagem
+// do refresh_outline_after_save fire-and-forget que esse turno disparou.
+//
+// O refresh NÃO soma um HTTP_REQUEST_TIMEOUT_MS por turno pendente: não
+// importa quantos refreshes de turnos anteriores ainda estejam em voo quando
+// a VU retorna, todos — inclusive o do último turno — já estão limitados ao
+// mesmo deadline individual (o instante em que cada um foi disparado +
+// HTTP_REQUEST_TIMEOUT_MS), então o pior caso de drenagem final é UM
+// HTTP_REQUEST_TIMEOUT_MS a partir do último refresh disparado, nunca a soma
+// de vários.
+const MAIN_LOOP_MARGIN_MS = 5000; // margem técnica: agendamento de VU, parsing de JSON, GC do k6 — não modelado nos termos acima
+const MAIN_LOOP_GRACE_MS =
+  4 * HTTP_REQUEST_TIMEOUT_MS + // list_books + load_outline + load_scene + save_scene, síncronos e sequenciais
+  AUTO_SAVE_DELAY_MS +
+  THINK_TIME_MAX_S * 1000 +
+  HTTP_REQUEST_TIMEOUT_MS + // drenagem do refresh_outline_after_save pendente
+  MAIN_LOOP_MARGIN_MS;
 const MAIN_LOOP_MAX_DURATION = `${WARMUP_MS + STEADY_MS + RAMPDOWN_MS + MAIN_LOOP_GRACE_MS}ms`;
 
 // setup() cria 1 livro/seção/capítulo/cena por VU, em loop serial: o número
@@ -335,7 +386,12 @@ export const options = {
     'http_req_duration{operation:setup_create_scene}': ['p(95)<2000'],
     'http_req_duration{operation:teardown_delete_book}': ['p(95)<2000'],
   },
-  summaryTrendStats: ['avg', 'min', 'med', 'p(90)', 'p(95)', 'p(99)', 'max'],
+  // 'count' habilita ler diretamente de cada Trend com threshold (inclusive
+  // http_req_duration{operation:save_scene,phase:steady}) quantas amostras
+  // ela recebeu — é a fonte de verdade usada em resultado.json para separar
+  // turnos_steady (só phase:steady) de turnos_execucao_total (checks/5, todas
+  // as fases, ver loadtest/README.md §8) sem precisar de um Counter dedicado.
+  summaryTrendStats: ['avg', 'min', 'med', 'p(90)', 'p(95)', 'p(99)', 'max', 'count'],
 };
 
 // UUID v4 local (sem dependência externa): o backend só exige o formato
@@ -710,6 +766,7 @@ async function runTurn(jar, resource, turn) {
   const listRes = http.get(`${BASE}/api/books`, {
     jar,
     headers: jsonHeaders(jar),
+    timeout: HTTP_REQUEST_TIMEOUT,
     tags: { operation: 'list_books', name: 'GET /api/books', phase: currentPhase() },
   });
   if (!check(listRes, { 'list_books status 200': (r) => r.status === 200 })) {
@@ -720,6 +777,7 @@ async function runTurn(jar, resource, turn) {
   const outlineRes = http.get(`${BASE}/api/books/${bookId}/outline`, {
     jar,
     headers: jsonHeaders(jar),
+    timeout: HTTP_REQUEST_TIMEOUT,
     tags: { operation: 'load_outline', name: 'GET /api/books/{bookId}/outline', phase: currentPhase() },
   });
   if (!check(outlineRes, { 'load_outline status 200': (r) => r.status === 200 })) {
@@ -734,6 +792,7 @@ async function runTurn(jar, resource, turn) {
   const sceneRes = http.get(`${BASE}/api/scenes/${sceneId}`, {
     jar,
     headers: jsonHeaders(jar),
+    timeout: HTTP_REQUEST_TIMEOUT,
     tags: { operation: 'load_scene', name: 'GET /api/scenes/{sceneId}', phase: currentPhase() },
   });
   if (!check(sceneRes, { 'load_scene status 200': (r) => r.status === 200 })) {
@@ -765,7 +824,7 @@ async function runTurn(jar, resource, turn) {
       expectedContentRevision: revision,
       operationId: uuidv4(),
     }),
-    { jar, headers: jsonHeaders(jar), tags: { operation: 'save_scene', name: 'PATCH /api/scenes/{sceneId}/content', phase: currentPhase() } }
+    { jar, headers: jsonHeaders(jar), timeout: HTTP_REQUEST_TIMEOUT, tags: { operation: 'save_scene', name: 'PATCH /api/scenes/{sceneId}/content', phase: currentPhase() } }
   );
   const saveSucceeded = check(saveRes, { 'save_scene status 200': (r) => r.status === 200 });
 
@@ -794,6 +853,7 @@ async function runTurn(jar, resource, turn) {
     http.asyncRequest('GET', `${BASE}/api/books/${bookId}/outline`, null, {
       jar,
       headers: jsonHeaders(jar),
+      timeout: HTTP_REQUEST_TIMEOUT,
       tags: { operation: 'refresh_outline_after_save', name: 'GET /api/books/{bookId}/outline', phase: currentPhase() },
     }).then((refreshRes) => {
       check(refreshRes, { 'refresh_outline_after_save status 200': (r) => r.status === 200 });
