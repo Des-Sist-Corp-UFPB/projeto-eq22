@@ -29,9 +29,14 @@ const vuAuthSuccess = new Rate('vu_auth_success');
 
 const BASE = (__ENV.BASE_URL || 'http://localhost:8085').replace(/\/+$/, '');
 
-// Hosts controlados aceitos sem override. Qualquer outro exige
-// ALLOW_UNSAFE_TARGET=eu-autorizo-um-destino-externo explicitamente.
-const SAFE_HOSTS = ['localhost', '127.0.0.1', '::1', 'host.docker.internal', 'backend'];
+// Hosts controlados aceitos sem override. Qualquer outro — incluindo o
+// hostname genérico `backend` do Compose — exige
+// ALLOW_UNSAFE_TARGET=eu-autorizo-um-destino-externo explicitamente:
+// `parseSafeHost()` só resolve a autoridade léxica da URL, nunca o endereço
+// para o qual `backend` de fato resolve; numa máquina com domain search DNS
+// fora da rede do Compose pretendida, `backend` pode apontar para um serviço
+// remoto não relacionado, e essa allowlist não teria como diferenciar.
+const SAFE_HOSTS = ['localhost', '127.0.0.1', '::1', 'host.docker.internal'];
 const DANGEROUS_OVERRIDE_VALUE = 'eu-autorizo-um-destino-externo';
 
 /**
@@ -111,13 +116,14 @@ const LOGIN_EMAIL = __ENV.LOAD_TEST_EMAIL || 'autor-a@iwrite.local';
 const LOGIN_PASSWORD = __ENV.LOAD_TEST_PASSWORD;
 
 /**
- * Valida um think time (THINK_TIME_MIN_S/THINK_TIME_MAX_S) antes de montar
- * `options` ou disparar qualquer requisição: um valor não numérico ou
- * negativo faria thinkTime() sortear um delay inválido/zero silenciosamente,
+ * Valida um valor numérico (THINK_TIME_MIN_S/THINK_TIME_MAX_S/
+ * AUTO_SAVE_DELAY_MS) antes de montar `options` ou disparar qualquer
+ * requisição: um valor não numérico ou negativo faria o delay
+ * correspondente sortear/aplicar um valor inválido/zero silenciosamente,
  * inflando a taxa de requisições da VU sem que nada nas métricas explicasse
  * por quê.
  */
-function validateThinkTime(raw, value, name) {
+function validateNonNegativeNumber(raw, value, name) {
   if (!Number.isFinite(value)) {
     throw new Error(`${name} inválido: "${raw}" não é um número finito.`);
   }
@@ -129,11 +135,23 @@ function validateThinkTime(raw, value, name) {
 
 const THINK_TIME_MIN_S_RAW = __ENV.THINK_TIME_MIN_S || '0.3';
 const THINK_TIME_MAX_S_RAW = __ENV.THINK_TIME_MAX_S || '1';
-const THINK_TIME_MIN_S = validateThinkTime(THINK_TIME_MIN_S_RAW, Number(THINK_TIME_MIN_S_RAW), 'THINK_TIME_MIN_S');
-const THINK_TIME_MAX_S = validateThinkTime(THINK_TIME_MAX_S_RAW, Number(THINK_TIME_MAX_S_RAW), 'THINK_TIME_MAX_S');
+const THINK_TIME_MIN_S = validateNonNegativeNumber(THINK_TIME_MIN_S_RAW, Number(THINK_TIME_MIN_S_RAW), 'THINK_TIME_MIN_S');
+const THINK_TIME_MAX_S = validateNonNegativeNumber(THINK_TIME_MAX_S_RAW, Number(THINK_TIME_MAX_S_RAW), 'THINK_TIME_MAX_S');
 if (THINK_TIME_MIN_S > THINK_TIME_MAX_S) {
   throw new Error(`THINK_TIME_MIN_S (${THINK_TIME_MIN_S}s) não pode ser maior que THINK_TIME_MAX_S (${THINK_TIME_MAX_S}s).`);
 }
+
+// Debounce do AUTO_SAVE: o editor real só dispara o PATCH depois de
+// AUTO_SAVE_DELAY_MS sem nova alteração — mesmo debounce que
+// CONTENT_AUTOSAVE_DELAY_MS em
+// web/src/features/scenes/components/scene-editor.tsx. Não é think time (que
+// modela o intervalo de atividade do usuário DEPOIS do save concluído): é o
+// atraso entre a última tecla digitada e o envio do PATCH. Sem modelar isso,
+// a VU dispara AUTO_SAVE mais rápido do que qualquer editor real permite.
+// Valores menores que 1200 são modo de estresse deliberado, não baseline
+// realista.
+const AUTO_SAVE_DELAY_MS_RAW = __ENV.AUTO_SAVE_DELAY_MS || '1200';
+const AUTO_SAVE_DELAY_MS = validateNonNegativeNumber(AUTO_SAVE_DELAY_MS_RAW, Number(AUTO_SAVE_DELAY_MS_RAW), 'AUTO_SAVE_DELAY_MS');
 
 // Um único par (número, unidade) do formato de duração do k6 (Go duration:
 // ms/s/m/h, parte fracionária opcional) — fonte única reaproveitada tanto
@@ -687,6 +705,14 @@ export default async function (data) {
   // progresso diário — o caminho real de save nunca é exercitado sob carga.
   const extraWord = __ITER % 2 === 0 ? ' progresso' : '';
   const contentText = `LOADTEST conteúdo sintético VU ${__VU} iteração ${__ITER}${extraWord}`;
+
+  // Debounce do AUTO_SAVE (ver AUTO_SAVE_DELAY_MS acima): aguarda antes de
+  // enviar o PATCH, simulando o intervalo que o editor real espera após a
+  // última alteração antes de persistir. Nunca sleep() aqui — default() é
+  // async e sleep() bloquearia a thread, o que impediria as Promises
+  // paralelas do refetch mais abaixo de avançar.
+  await delay(AUTO_SAVE_DELAY_MS / 1000);
+
   const saveRes = http.patch(
     `${BASE}/api/scenes/${sceneId}/content`,
     JSON.stringify({

@@ -1,3 +1,7 @@
 # Scripts sh precisam de LF para funcionar no container (shebang quebra com CRLF).
 *.sh text eol=lf
 mvnw text eol=lf
+
+# LF fixo para que o hash de reprodutibilidade do loadtest (measured_script_sha256)
+# não dependa de core.autocrlf do cliente que fez o checkout — ver loadtest/README.md.
+loadtest/carga.js text eol=lf
