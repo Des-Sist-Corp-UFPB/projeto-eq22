@@ -4,7 +4,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.iwrite.auth.dto.AuthenticatedUserResponse;
 import com.iwrite.support.TestDatabaseInitializer;
 import com.iwrite.tenant.repository.TenantMembershipRepository;
+import com.iwrite.tenant.repository.TenantRepository;
 import com.iwrite.user.repository.UserCredentialRepository;
+import com.iwrite.user.repository.UserPersonaRepository;
 import com.iwrite.user.repository.UserRepository;
 import jakarta.servlet.http.Cookie;
 import org.junit.jupiter.api.AfterEach;
@@ -109,6 +111,14 @@ class RegistrationSessionOwnershipRaceIntegrationTest {
     private ObjectMapper objectMapper;
     @Autowired
     private UserRepository userRepository;
+    @Autowired
+    private UserCredentialRepository credentialRepository;
+    @Autowired
+    private TenantRepository tenantRepository;
+    @Autowired
+    private TenantMembershipRepository membershipRepository;
+    @Autowired
+    private UserPersonaRepository personaRepository;
 
     @AfterEach
     void resetRaceState() {
@@ -229,6 +239,139 @@ class RegistrationSessionOwnershipRaceIntegrationTest {
         mockMvc.perform(get("/api/auth/me").session(sharedSession))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.user.email").value(existingEmail));
+    }
+
+    /**
+     * Scenario A (#149 review, round 10, fresh finding): same shared, initially anonymous session as
+     * the scenario above, but this time registration's own re-authentication is allowed to succeed
+     * after the pause — reaching, before this round, the point where it would have unconditionally
+     * overwritten the session a concurrent login just finished establishing. {@code
+     * establishRegistrationSession}'s revalidation (under the same lock as its own mutation) must
+     * catch that a real {@link SecurityContext} is already on the shared session, refuse with 409, and
+     * roll back — leaving the login's session untouched and none of registration's five entities
+     * behind (scenario B folded into this same test: {@code User}, {@code UserCredential}, {@code
+     * Tenant}, {@code TenantMembership} and {@code UserPersona} counts are unchanged).
+     */
+    @Test
+    void loginConcorrenteEstabelecidoAntesDaFaseFinalDoCadastroFazEsteDetectarSessaoAutenticadaERecusar() throws Exception {
+        String existingEmail = registerNewAccount();
+        String racingEmail = uniqueEmail();
+        MockHttpSession sharedSession = new MockHttpSession();
+
+        long usersBefore = userRepository.count();
+        long credentialsBefore = credentialRepository.count();
+        long tenantsBefore = tenantRepository.count();
+        long membershipsBefore = membershipRepository.count();
+        long personasBefore = personaRepository.count();
+
+        emailToPauseInAuthenticate = racingEmail;
+        failAfterAuthenticatePause = false;
+        registrationReachedAuthenticate = new CountDownLatch(1);
+        loginCompletedForAuthenticate = new CountDownLatch(1);
+
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+        try {
+            Future<MvcResult> registrationFuture = pool.submit(() ->
+                    mockMvc.perform(withCsrf(post("/api/auth/register")).session(sharedSession)
+                                    .contentType(MediaType.APPLICATION_JSON)
+                                    .content(objectMapper.writeValueAsString(registerBody(racingEmail))))
+                            .andReturn());
+
+            assertThat(registrationReachedAuthenticate.await(10, TimeUnit.SECONDS))
+                    .as("registration passed its initial thread-local check and reached its own re-authentication call")
+                    .isTrue();
+
+            // The concurrent login, on the same session, finishes completely before registration
+            // resumes: its SecurityContext is fully persisted on the shared session by the time this
+            // andExpect returns.
+            mockMvc.perform(withCsrf(post("/api/auth/login")).session(sharedSession)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(objectMapper.writeValueAsString(Map.of("email", existingEmail, "password", VALID_PASSWORD))))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.user.email").value(existingEmail));
+
+            loginCompletedForAuthenticate.countDown();
+
+            MvcResult registrationResult = registrationFuture.get(10, TimeUnit.SECONDS);
+            assertThat(registrationResult.getResponse().getStatus()).isEqualTo(409);
+        } finally {
+            pool.shutdown();
+        }
+
+        assertThat(userRepository.findByEmail(racingEmail)).isEmpty();
+        assertThat(userRepository.count()).isEqualTo(usersBefore);
+        assertThat(credentialRepository.count()).isEqualTo(credentialsBefore);
+        assertThat(tenantRepository.count()).isEqualTo(tenantsBefore);
+        assertThat(membershipRepository.count()).isEqualTo(membershipsBefore);
+        assertThat(personaRepository.count()).isEqualTo(personasBefore);
+
+        // The login's own session survives untouched: still the login's identity, not rolled back or
+        // rotated by registration's refusal.
+        mockMvc.perform(get("/api/auth/me").session(sharedSession))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.user.email").value(existingEmail));
+    }
+
+    /** Scenario D (#149 review, round 10): two unrelated sessions racing registration/login at the
+     *  HTTP level must never block each other — the per-session lock only ever excludes flows sharing
+     *  the exact same session (already proven at the lock-mechanism level by {@code
+     *  AuthControllerSessionOwnershipConcurrencyTest#sessoesDistintasEstabelecemConcorrentementeSemSeBloquear};
+     *  this exercises the same guarantee through the real HTTP endpoints). */
+    @Test
+    void sessoesDistintasRegistramSeConcorrentementeSemSeBloquear() throws Exception {
+        String emailA = uniqueEmail();
+        String emailB = uniqueEmail();
+        MockHttpSession sessionA = new MockHttpSession();
+        MockHttpSession sessionB = new MockHttpSession();
+
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+        try {
+            Future<MvcResult> futureA = pool.submit(() ->
+                    mockMvc.perform(withCsrf(post("/api/auth/register")).session(sessionA)
+                                    .contentType(MediaType.APPLICATION_JSON)
+                                    .content(objectMapper.writeValueAsString(registerBody(emailA))))
+                            .andReturn());
+            Future<MvcResult> futureB = pool.submit(() ->
+                    mockMvc.perform(withCsrf(post("/api/auth/register")).session(sessionB)
+                                    .contentType(MediaType.APPLICATION_JSON)
+                                    .content(objectMapper.writeValueAsString(registerBody(emailB))))
+                            .andReturn());
+
+            assertThat(futureA.get(10, TimeUnit.SECONDS).getResponse().getStatus()).isEqualTo(200);
+            assertThat(futureB.get(10, TimeUnit.SECONDS).getResponse().getStatus()).isEqualTo(200);
+        } finally {
+            pool.shutdown();
+        }
+
+        assertThat(userRepository.findByEmail(emailA)).isPresent();
+        assertThat(userRepository.findByEmail(emailB)).isPresent();
+    }
+
+    /** Scenario E (#149 review, round 10): the existing session-swap contract is unaffected by this
+     *  round's change — once registration has fully established its own session (no concurrency here,
+     *  strictly sequential), a later {@code /api/auth/login} for a *different* account on that same
+     *  session must still be free to swap it, exactly as it could before this round. */
+    @Test
+    void loginAposCadastroConcluidoAindaTrocaASessaoConformeOContratoDeSessionSwap() throws Exception {
+        String registeredEmail = uniqueEmail();
+        String otherEmail = registerNewAccount();
+        MockHttpSession session = new MockHttpSession();
+
+        mockMvc.perform(withCsrf(post("/api/auth/register")).session(session)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(registerBody(registeredEmail))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.user.email").value(registeredEmail));
+
+        mockMvc.perform(withCsrf(post("/api/auth/login")).session(session)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("email", otherEmail, "password", VALID_PASSWORD))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.user.email").value(otherEmail));
+
+        mockMvc.perform(get("/api/auth/me").session(session))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.user.email").value(otherEmail));
     }
 
     /** Registers a brand-new account (its own unique email) and returns that email, for use as the

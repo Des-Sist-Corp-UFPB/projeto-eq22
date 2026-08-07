@@ -19,6 +19,7 @@ import org.springframework.security.core.context.SecurityContext;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.web.authentication.session.SessionAuthenticationException;
 import org.springframework.security.web.authentication.session.SessionAuthenticationStrategy;
+import org.springframework.security.web.context.HttpSessionSecurityContextRepository;
 import org.springframework.security.web.context.SecurityContextRepository;
 import org.springframework.security.web.csrf.CsrfToken;
 import org.springframework.transaction.annotation.Transactional;
@@ -186,8 +187,15 @@ public class AuthController {
      * letting it run over one that already exists would rotate the caller's own session id and, on
      * any failure, risk tearing that pre-existing session down for a mistake ({@code discardPartialSession}
      * below is only ever safe to invoke against a session this method itself touched). The caller
-     * must log out first.
+     * must log out first. That check reads only {@link SecurityContextHolder}, this thread's own copy
+     * of this one request's authentication — it cannot see a concurrent login finishing on a *shared*
+     * session after this check ran but before database work and re-authentication below complete
+     * (#149 review, fresh finding). {@link #establishRegistrationSession} is the authoritative guard
+     * against that race: it rereads the session's actually-persisted {@link SecurityContext} once
+     * more, inside the same lock as the mutation that follows, immediately before taking the session
+     * over.
      *
+
      * <p>A transaction rollback only undoes the database side; it does not by itself undo a session
      * id already rotated by {@link #establishSession} or a {@link SecurityContext} already installed
      * on this thread. The {@link TransactionSynchronization} below is what erases both whenever the
@@ -199,17 +207,23 @@ public class AuthController {
      * <p>Comparing session ids alone cannot tell "this session changed because registration mutated
      * it" from "this session changed because a concurrent login mutated it" — either rotates the id
      * the same way. {@link #SESSION_OWNER_TOKEN_ATTRIBUTE} (#149 review) is the tie-breaker: a fresh
-     * token minted for this one attempt, written by {@link #establishSession} before and after the
-     * mutation, so whichever flow's {@code establishSession} call ran last is whichever token is
-     * still on the session when this one's rollback callback runs.
+     * token minted for this one attempt, written by {@link #establishSessionStateLocked} before and
+     * after the mutation, so whichever flow's establishment ran last is whichever token is still on
+     * the session when this one's rollback callback runs. Registration's own establishment never
+     * writes that token at all if {@link #establishRegistrationSession}'s recheck finds the session
+     * already authenticated — so a login that won that race is never at risk of the token comparison
+     * misfiring in registration's favor.
      *
      * <p>That comparison and {@code invalidate()} form one critical section (#149 review, round 8),
-     * and so does the entirety of {@link #establishSession} (round 9) — every touch of the ownership
-     * token or the session it mutates, here, in {@link #login}, and inside {@link
+     * and so does the entirety of {@link #establishRegistrationSession} — its own revalidation and the
+     * mutation that follows, together (round 9 widened {@link #establishSession}'s critical section
+     * the same way; round 10 split the shared mutation out into {@link #establishSessionStateLocked}
+     * so registration's wider section could wrap a revalidation around it too). Every touch of the
+     * ownership token or the session it mutates, here, in {@link #login}, and inside {@link
      * #discardPartialSession}/{@link #releaseSessionOwnerIfStillOwned}, runs under the same {@link
      * #sessionLock}. A concurrent login can therefore never write its own token, run {@code
      * onAuthentication}, or save its {@link SecurityContext} partway through this method's own
-     * establishment or rollback decision — the two are fully serialized, not just their token writes.
+     * revalidation, establishment or rollback decision — all three are fully serialized against it.
      */
     @PostMapping("/register")
     @Transactional
@@ -254,7 +268,7 @@ public class AuthController {
         Authentication authentication = authenticationManager.authenticate(
                 UsernamePasswordAuthenticationToken.unauthenticated(email, request.password()));
 
-        return establishSession(authentication, registrationToken, httpRequest, httpResponse, lock);
+        return establishRegistrationSession(authentication, registrationToken, httpRequest, httpResponse, lock);
     }
 
     /** A caller counts as already authenticated only if the security context carries IWrite's own
@@ -326,27 +340,12 @@ public class AuthController {
     /**
      * Rotates the session id, persists the {@link SecurityContext} (Spring Security 6 no longer
      * does this implicitly — {@code requireExplicitSave} — so skipping it would leave the very next
-     * request anonymous), and returns the session payload. Shared by {@link #login} and
-     * {@link #register}: both end the same way, with a freshly authenticated principal that needs
-     * a real, persisted session built for it.
-     *
-     * <p>{@code ownershipToken} is written to whatever session already exists before the mutation
-     * (a no-op if none does yet — this method, not its caller, is what may create one, and a fault
-     * injected inside {@code sessionAuthenticationStrategy.onAuthentication} below must still leave
-     * no session behind when none existed before) and reasserted after {@code saveContext}, which is
-     * guaranteed to have a session by then. Two writes, not one, because the mutation in between can
-     * itself create or rotate the session the first write landed on.
+     * request anonymous), and returns the session payload. Used by {@link #login} directly, and by
+     * {@link #establishRegistrationSession} as the last step of its own, wider critical section.
      *
      * <p>{@code lock} must be the object {@code sessionLock} returns for the session that existed
      * before this call — the same one {@link #discardPartialSession} and {@link
-     * #releaseSessionOwnerIfStillOwned} synchronize on for this same session. Round 8 held it only
-     * around each attribute touch; round 9 (#149 review) widened it to the whole method body below —
-     * the marker, {@code onAuthentication}, the {@link SecurityContext} creation and {@code
-     * saveContext}, and the final reassertion all run as one atomic unit, so no other flow sharing
-     * this session can observe or mutate it partway through. Only the database round trip in {@link
-     * #currentSession}, after the session is fully established and the lock released, is deliberately
-     * outside — it needs no cross-flow atomicity, and holding the lock across it would needlessly
-     * block unrelated requests.
+     * #releaseSessionOwnerIfStillOwned} synchronize on for this same session.
      */
     private AuthenticatedUserResponse establishSession(
             Authentication authentication,
@@ -357,27 +356,122 @@ public class AuthController {
     ) {
         IWriteUserDetails principal;
         synchronized (lock) {
-            HttpSession preexisting = httpRequest.getSession(false);
-            if (preexisting != null) {
-                preexisting.setAttribute(SESSION_OWNER_TOKEN_ATTRIBUTE, ownershipToken);
+            principal = establishSessionStateLocked(authentication, ownershipToken, httpRequest, httpResponse);
+        }
+        return currentSession(principal);
+    }
+
+    /**
+     * Registration's own counterpart to {@link #establishSession}: revalidates, under the same lock,
+     * that no concurrent flow has authenticated this shared session since {@link #register} did its
+     * one-time, thread-local {@code isAuthenticatedPrincipal()} check at the top of the request — and
+     * only then runs the exact same mutation {@link #establishSessionStateLocked} performs for login,
+     * inside that same critical section (#149 review, fresh finding).
+     *
+     * <p>That thread-local check cannot by itself catch a login racing on the same anonymous
+     * {@code HttpSession}: two tabs sharing one session can both pass it before either has written
+     * anything, because {@link SecurityContextHolder} only ever reflects *this* request's own thread,
+     * never what a concurrent request on another thread has since saved onto the *shared* session. By
+     * the time registration reaches this method, database work and a full {@code bcrypt} hash/verify
+     * cycle have run — plenty of time for a concurrent login on the same session to finish first and
+     * leave a real, authenticated {@link SecurityContext} sitting in the session registration is about
+     * to overwrite.
+     *
+     * <p>{@link #sessionAlreadyAuthenticated} reads that {@link SecurityContext} straight off the
+     * {@link HttpSession} Spring Security itself persisted it to — not {@code SecurityContextHolder}
+     * and not a {@code DeferredSecurityContext} captured at the start of the request, both of which
+     * are this thread's own copy and cannot see a concurrent thread's write to the shared session. The
+     * read and the mutation that follows run inside one {@code synchronized(lock)} block, with no
+     * release in between: nothing can authenticate this session between the recheck and registration
+     * taking it over. Found already authenticated, this throws {@link ConflictException} with {@link
+     * RegistrationMessages#ALREADY_AUTHENTICATED} — before {@link #establishSessionStateLocked} ever
+     * runs, so registration's own token is never written to the session. That is exactly what keeps
+     * {@link #discardPartialSession}'s rollback safe: its ownership comparison only ever invalidates a
+     * session still marked with *this* registration's token, and a token that was never written can
+     * never match.
+     */
+    private AuthenticatedUserResponse establishRegistrationSession(
+            Authentication authentication,
+            UUID ownershipToken,
+            HttpServletRequest httpRequest,
+            HttpServletResponse httpResponse,
+            Object lock
+    ) {
+        IWriteUserDetails principal;
+        synchronized (lock) {
+            if (sessionAlreadyAuthenticated(httpRequest.getSession(false))) {
+                throw new ConflictException(RegistrationMessages.ALREADY_AUTHENTICATED);
             }
+            principal = establishSessionStateLocked(authentication, ownershipToken, httpRequest, httpResponse);
+        }
+        return currentSession(principal);
+    }
 
-            sessionAuthenticationStrategy.onAuthentication(authentication, httpRequest, httpResponse);
+    /**
+     * True only if {@code session} carries a {@link SecurityContext}, itself carrying an {@link
+     * Authentication} that is non-null, {@link Authentication#isAuthenticated()} and whose principal
+     * is IWrite's own {@link IWriteUserDetails} — the same three conditions {@link
+     * #isAuthenticatedPrincipal()} checks against the thread-local context, applied here to the
+     * session's actually-persisted one (#149 review). {@link
+     * HttpSessionSecurityContextRepository#SPRING_SECURITY_CONTEXT_KEY} is the exact attribute {@link
+     * #securityContextRepository} (an {@link HttpSessionSecurityContextRepository} in production)
+     * writes under in {@link #establishSessionStateLocked}, so a concurrent flow's completed
+     * establishment is visible here the moment its own critical section ends. Must only ever be called
+     * from inside the same {@code synchronized(lock)} section as the mutation it gates.
+     */
+    private boolean sessionAlreadyAuthenticated(HttpSession session) {
+        if (session == null) {
+            return false;
+        }
+        Object stored = session.getAttribute(HttpSessionSecurityContextRepository.SPRING_SECURITY_CONTEXT_KEY);
+        if (!(stored instanceof SecurityContext securityContext)) {
+            return false;
+        }
+        Authentication authentication = securityContext.getAuthentication();
+        return authentication != null
+                && authentication.isAuthenticated()
+                && authentication.getPrincipal() instanceof IWriteUserDetails;
+    }
 
-            SecurityContext context = SecurityContextHolder.createEmptyContext();
-            context.setAuthentication(authentication);
-            SecurityContextHolder.setContext(context);
-            securityContextRepository.saveContext(context, httpRequest, httpResponse);
-
-            // Reasserted, not just written once above: saveContext (or the strategy call before it)
-            // may have created a brand-new session, or rotated the id of the one the first write
-            // landed on — either way, the marker must end up on whichever session this request is
-            // actually left with.
-            httpRequest.getSession(true).setAttribute(SESSION_OWNER_TOKEN_ATTRIBUTE, ownershipToken);
-            principal = (IWriteUserDetails) authentication.getPrincipal();
+    /**
+     * The actual session mutation shared by {@link #login} (via {@link #establishSession}) and {@link
+     * #register} (via {@link #establishRegistrationSession}): writes {@code ownershipToken} to
+     * whatever session already exists (a no-op if none does yet — this method, not its caller, is
+     * what may create one, and a fault injected inside {@code sessionAuthenticationStrategy}'s call
+     * below must still leave no session behind when none existed before), rotates the session id,
+     * persists the {@link SecurityContext}, and reasserts the token on whatever session the request
+     * is actually left with afterward. Two token writes, not one, because the mutation in between can
+     * itself create or rotate the session the first write landed on.
+     *
+     * <p><b>Assumes the caller already holds {@code lock}</b> — this method never synchronizes on it
+     * itself (#149 review, round 10 refactor of round 9's widened critical section): {@link
+     * #establishSession} acquires it around this call alone, while {@link
+     * #establishRegistrationSession} acquires it once around both its own revalidation and this call,
+     * so the two never observe or mutate the session partway through either flow.
+     */
+    private IWriteUserDetails establishSessionStateLocked(
+            Authentication authentication,
+            UUID ownershipToken,
+            HttpServletRequest httpRequest,
+            HttpServletResponse httpResponse
+    ) {
+        HttpSession preexisting = httpRequest.getSession(false);
+        if (preexisting != null) {
+            preexisting.setAttribute(SESSION_OWNER_TOKEN_ATTRIBUTE, ownershipToken);
         }
 
-        return currentSession(principal);
+        sessionAuthenticationStrategy.onAuthentication(authentication, httpRequest, httpResponse);
+
+        SecurityContext context = SecurityContextHolder.createEmptyContext();
+        context.setAuthentication(authentication);
+        SecurityContextHolder.setContext(context);
+        securityContextRepository.saveContext(context, httpRequest, httpResponse);
+
+        // Reasserted, not just written once above: saveContext (or the strategy call before it) may
+        // have created a brand-new session, or rotated the id of the one the first write landed on —
+        // either way, the marker must end up on whichever session this request is actually left with.
+        httpRequest.getSession(true).setAttribute(SESSION_OWNER_TOKEN_ATTRIBUTE, ownershipToken);
+        return (IWriteUserDetails) authentication.getPrincipal();
     }
 
     @GetMapping("/me")

@@ -82,6 +82,8 @@ class CredentialProvisioningRunnerIntegrationTest {
         login(LEGACY_EMAIL, PASSWORD);
     }
 
+    // Also the round-10 (#149 review) coverage for replace-existing=false (the default): a second
+    // boot with a different configured password must still leave the first hash intact.
     @Test
     void runningTwiceDoesNotOverwriteTheExistingCredential() throws Exception {
         runner(LEGACY_EMAIL, PASSWORD).run(null);
@@ -94,6 +96,69 @@ class CredentialProvisioningRunnerIntegrationTest {
         UserCredential unchanged = credentialRepository.findById(userId).orElseThrow();
         assertThat(unchanged.getPasswordHash()).isEqualTo(firstHash);
         login(LEGACY_EMAIL, PASSWORD);
+    }
+
+    // #149 review, round 10 (fresh P2 finding): before this slice, this runner hashed any configured
+    // password with no bcrypt-safety check, so an installation can already hold a credential for a
+    // password longer than the 72-byte limit the new login contract now enforces. This end-to-end
+    // sequence reproduces exactly that upgrade scenario: a legacy oversized credential created
+    // directly (bypassing the runner's own guard, the way the pre-review runner would have), refused
+    // by the new login contract, then recovered with replace-existing=true.
+
+    @Test
+    void legacyCredentialWithOversizedPasswordIsRejectedByTheNewLoginContract() throws Exception {
+        String oversizedPassword = "a1" + "b".repeat(71); // 73 UTF-8 bytes
+        insertCredentialDirectly(LEGACY_EMAIL, oversizedPassword);
+
+        mockMvc.perform(withCsrf(post("/api/auth/login"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("email", LEGACY_EMAIL, "password", oversizedPassword))))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void replaceExistingTrueRotatesTheHashAndTheNewPasswordAuthenticates() throws Exception {
+        String oversizedPassword = "a1" + "b".repeat(71);
+        insertCredentialDirectly(LEGACY_EMAIL, oversizedPassword);
+        String newPassword = "senha-nova-de-upgrade-1";
+
+        runner(LEGACY_EMAIL, newPassword, true).run(null);
+
+        login(LEGACY_EMAIL, newPassword);
+    }
+
+    @Test
+    void replaceExistingTrueSubstituiOHashNaMesmaLinhaSemCriarNovaECredencialAntigaParaDeAutenticar() throws Exception {
+        String oldPassword = "senha-antiga-valida-1";
+        runner(LEGACY_EMAIL, oldPassword).run(null);
+        UUID userId = userRepository.findByEmail(LEGACY_EMAIL).orElseThrow().getId();
+        String hashBeforeRotation = credentialRepository.findById(userId).orElseThrow().getPasswordHash();
+        long credentialCountBefore = credentialRepository.count();
+        String newPassword = "senha-nova-de-upgrade-2";
+
+        runner(LEGACY_EMAIL, newPassword, true).run(null);
+
+        UserCredential rotated = credentialRepository.findById(userId).orElseThrow();
+        assertThat(rotated.getPasswordHash()).isNotEqualTo(hashBeforeRotation);
+        assertThat(credentialRepository.count()).isEqualTo(credentialCountBefore);
+
+        login(LEGACY_EMAIL, newPassword);
+        // The old password (and, by construction, any prefix of it) must no longer authenticate.
+        mockMvc.perform(withCsrf(post("/api/auth/login"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("email", LEGACY_EMAIL, "password", oldPassword))))
+                .andExpect(status().isUnauthorized());
+    }
+
+    /** Inserts a credential the way the pre-review runner would have: hashing {@code password}
+     *  directly, with no {@link BcryptInputPolicy} guard — reproducing what an installation already
+     *  holds if it provisioned a credential before this slice. */
+    private void insertCredentialDirectly(String email, String password) {
+        UUID userId = userRepository.findByEmail(email).orElseThrow().getId();
+        UserCredential credential = new UserCredential();
+        credential.setUserId(userId);
+        credential.setPasswordHash(passwordEncoder.encode(password));
+        credentialRepository.save(credential);
     }
 
     @Test
@@ -146,7 +211,12 @@ class CredentialProvisioningRunnerIntegrationTest {
     }
 
     private CredentialProvisioningRunner runner(String email, String password) {
-        return new CredentialProvisioningRunner(userRepository, credentialRepository, passwordEncoder, email, password);
+        return runner(email, password, false);
+    }
+
+    private CredentialProvisioningRunner runner(String email, String password, boolean replaceExisting) {
+        return new CredentialProvisioningRunner(
+                userRepository, credentialRepository, passwordEncoder, email, password, replaceExisting);
     }
 
     private void login(String email, String password) throws Exception {

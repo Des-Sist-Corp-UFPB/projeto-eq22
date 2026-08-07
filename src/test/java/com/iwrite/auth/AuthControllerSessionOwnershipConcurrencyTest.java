@@ -1,14 +1,18 @@
 package com.iwrite.auth;
 
+import com.iwrite.common.exception.ConflictException;
 import com.iwrite.tenant.entity.TenantMembershipRole;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import jakarta.servlet.http.HttpSession;
 import org.junit.jupiter.api.Test;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.mock.web.MockHttpSession;
 import org.springframework.security.authentication.TestingAuthenticationToken;
 import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContext;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.web.authentication.session.ChangeSessionIdAuthenticationStrategy;
 import org.springframework.security.web.authentication.session.SessionAuthenticationStrategy;
 import org.springframework.security.web.context.HttpSessionSecurityContextRepository;
@@ -21,6 +25,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Deterministic, no-sleep coverage of {@link AuthController#sessionLock} and the private
@@ -306,6 +311,120 @@ class AuthControllerSessionOwnershipConcurrencyTest {
         threadA.join(10_000);
         assertThat(threadA.isAlive()).isFalse();
         assertThat(sessionA.getAttribute(TOKEN_ATTRIBUTE)).isEqualTo(tokenA);
+    }
+
+    // #149 review, fresh finding: establishRegistrationSession must revalidate, under the same lock
+    // as its own mutation, that no concurrent flow has authenticated the shared session since
+    // register()'s one-time thread-local check — never on SecurityContextHolder (this thread's own
+    // copy) or a snapshot captured earlier, only the SecurityContext actually persisted on the
+    // session itself.
+
+    /** {@link AuthController#sessionAlreadyAuthenticated} reads straight off the session attribute
+     *  {@link HttpSessionSecurityContextRepository} itself writes — proven here by using the real
+     *  repository to save a context, exactly like {@link AuthController#establishSessionStateLocked}
+     *  does, then reading it back through the method under test via reflection. */
+    @Test
+    void sessionAlreadyAuthenticatedDetectaContextoPersistidoPelaMesmaRepository() throws Exception {
+        MockHttpSession session = new MockHttpSession();
+        MockHttpServletRequest request = requestWithSession(session);
+        Authentication authentication = new TestingAuthenticationToken(
+                new IWriteUserDetails(UUID.randomUUID(), UUID.randomUUID(), "someone@iwrite.local",
+                        TenantMembershipRole.OWNER, null),
+                null);
+        authentication.setAuthenticated(true);
+        SecurityContext context = SecurityContextHolder.createEmptyContext();
+        context.setAuthentication(authentication);
+        SECURITY_CONTEXT_REPOSITORY.saveContext(context, request, new MockHttpServletResponse());
+
+        assertThat(invokeSessionAlreadyAuthenticated(session)).isTrue();
+    }
+
+    @Test
+    void sessionAlreadyAuthenticatedEhFalsoParaSessaoNulaOuSemContexto() throws Exception {
+        assertThat(invokeSessionAlreadyAuthenticated(null)).isFalse();
+        assertThat(invokeSessionAlreadyAuthenticated(new MockHttpSession())).isFalse();
+    }
+
+    /** The exact race the finding describes: a login has already saved its {@link SecurityContext}
+     *  onto the shared session (simulating a concurrent login that finished first) before registration
+     *  ever reaches {@code establishRegistrationSession}. Must throw {@link ConflictException} and —
+     *  critically — must never have written registration's own ownership token, since that token is
+     *  what {@code discardPartialSession}'s rollback compares against to decide whether to invalidate
+     *  the (login's) session. */
+    @Test
+    void establishRegistrationSessionLancaConflitoQuandoSessaoJaAutenticadaSemEscreverSeuProprioToken() throws Exception {
+        MockHttpSession session = new MockHttpSession();
+        MockHttpServletRequest request = requestWithSession(session);
+        Authentication loginAuthentication = new TestingAuthenticationToken(
+                new IWriteUserDetails(UUID.randomUUID(), UUID.randomUUID(), "login-concorrente@iwrite.local",
+                        TenantMembershipRole.OWNER, null),
+                null);
+        loginAuthentication.setAuthenticated(true);
+        SecurityContext loginContext = SecurityContextHolder.createEmptyContext();
+        loginContext.setAuthentication(loginAuthentication);
+        SECURITY_CONTEXT_REPOSITORY.saveContext(loginContext, request, new MockHttpServletResponse());
+
+        Object lock = AuthController.sessionLock(session);
+        AuthController registrationController = controllerWithImmediateStrategy();
+        UUID registrationToken = UUID.randomUUID();
+
+        assertThatThrownBy(() -> invokeEstablishRegistrationSession(registrationController, request, registrationToken, lock))
+                .isInstanceOf(ConflictException.class)
+                .hasMessage(RegistrationMessages.ALREADY_AUTHENTICATED);
+
+        assertThat(session.getAttribute(TOKEN_ATTRIBUTE)).isNotEqualTo(registrationToken);
+    }
+
+    /** No concurrent authentication: registration establishes normally, exactly like {@link
+     *  AuthController#establishSession} would for login on an anonymous session. */
+    @Test
+    void establishRegistrationSessionEstabelecidaNormalmenteSemSessaoAutenticadaConcorrente() throws Exception {
+        MockHttpSession session = new MockHttpSession();
+        MockHttpServletRequest request = requestWithSession(session);
+        Object lock = AuthController.sessionLock(session);
+        AuthController registrationController = controllerWithImmediateStrategy();
+        UUID registrationToken = UUID.randomUUID();
+
+        callEstablishRegistrationSession(registrationController, request, registrationToken, lock);
+
+        assertThat(session.getAttribute(TOKEN_ATTRIBUTE)).isEqualTo(registrationToken);
+    }
+
+    private boolean invokeSessionAlreadyAuthenticated(HttpSession session) throws Exception {
+        Method method = AuthController.class.getDeclaredMethod("sessionAlreadyAuthenticated", HttpSession.class);
+        method.setAccessible(true);
+        return (boolean) method.invoke(controller, (Object) session);
+    }
+
+    private void invokeEstablishRegistrationSession(AuthController controller, MockHttpServletRequest request, UUID token, Object lock) throws Exception {
+        Authentication authentication = new TestingAuthenticationToken(
+                new IWriteUserDetails(UUID.randomUUID(), UUID.randomUUID(), "nova-conta@iwrite.local",
+                        TenantMembershipRole.OWNER, null),
+                null);
+        Method method = AuthController.class.getDeclaredMethod(
+                "establishRegistrationSession", Authentication.class, UUID.class,
+                HttpServletRequest.class, HttpServletResponse.class, Object.class);
+        method.setAccessible(true);
+        try {
+            method.invoke(controller, authentication, token, request, new MockHttpServletResponse(), lock);
+        } catch (InvocationTargetException e) {
+            if (e.getCause() instanceof RuntimeException runtimeException) {
+                throw runtimeException;
+            }
+            throw new RuntimeException(e.getCause());
+        }
+    }
+
+    /** Same NullPointerException-swallowing shape as {@link #callEstablishSession}: {@code
+     *  currentSession} runs strictly after the lock is released and is irrelevant here. */
+    private void callEstablishRegistrationSession(AuthController controller, MockHttpServletRequest request, UUID token, Object lock) {
+        try {
+            invokeEstablishRegistrationSession(controller, request, token, lock);
+        } catch (NullPointerException expectedFromNullAuthSessionService) {
+            // currentSession() ran after the lock was released, exactly as intended; ignored.
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
     }
 
     /** Real default impl, same as production: only {@code saveContext} matters to these tests (it

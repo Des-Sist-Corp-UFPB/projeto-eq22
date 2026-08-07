@@ -187,6 +187,38 @@ rollout de uma instalação existente quanto no fluxo local de desenvolvimento:
 Depois de provisionar, remova as três variáveis do ambiente: elas não têm efeito quando a credencial
 já existe (o runner é idempotente), mas deixar a senha configurada no processo não tem motivo.
 
+### Rotação de credencial legada (`replace-existing`)
+
+Antes desta fatia, este runner hasheava qualquer senha configurada sem o limite efetivo do bcrypt (72
+bytes UTF-8) nem a checagem de UTF-16 malformado que `/api/auth/login` passou a exigir depois
+(`BcryptInputPolicy`). Uma instalação que provisionou uma credencial antes dessa mudança pode ter uma
+senha armazenada que o login atual recusa de cara — sem um endpoint de redefinição de senha, essa
+conta ficaria permanentemente sem acesso.
+
+`iwrite.auth.credential-provisioning.replace-existing` (`IWRITE_CREDENTIAL_PROVISIONING_REPLACE_EXISTING`,
+padrão `false`) é a válvula de escape:
+
+- **sem credencial**: comportamento inalterado — valida `BcryptInputPolicy` e cria normalmente;
+- **com credencial e `replace-existing=false`** (padrão): preserva o hash existente; a senha
+  configurada **não é validada nem hasheada**, já que não seria usada — uma senha antiga insegura
+  configurada por engano não bloqueia o boot;
+- **com credencial e `replace-existing=true`**: exige uma senha nova bem-formada e de até 72 bytes
+  (mesma `BcryptInputPolicy`), substitui o hash **na mesma linha**, na mesma transação — nunca cria
+  uma linha nova, nunca toca `User`/`Tenant`/`TenantMembership`/`UserPersona` ou qualquer livro. Senha
+  e hash nunca são logados, só a confirmação de que a rotação ocorreu.
+
+Nunca reabilita login com senha acima de 72 bytes: bcrypt não distingue sufixos além desse limite, e
+aceitar temporariamente reabriria a mesma colisão de prefixo que a política atual fecha.
+
+Procedimento de upgrade para uma conta presa atrás de uma senha legada grande demais:
+
+1. configure `IWRITE_CREDENTIAL_PROVISIONING_EMAIL` com o email da conta;
+2. escolha uma senha nova segura de até 72 bytes UTF-8;
+3. suba a aplicação uma vez com `IWRITE_CREDENTIAL_PROVISIONING_ENABLED=true`,
+   `IWRITE_CREDENTIAL_PROVISIONING_REPLACE_EXISTING=true` e as três variáveis preenchidas;
+4. confirme que a nova senha autentica em `/api/auth/login`;
+5. remova todas as variáveis (`_ENABLED`, `_EMAIL`, `_PASSWORD`, `_REPLACE_EXISTING`).
+
 No fluxo local (perfil `development`), o alvo natural é o usuário legado da V20
 (`carlos.legacy@iwrite.local`, id `00000000-0000-0000-0000-000000000002`), que também é o id padrão de
 `IWRITE_DEVELOPMENT_CURRENT_USER_ID`. Depois de logar com a credencial provisionada, o

@@ -476,6 +476,30 @@ class RegistrationIntegrationTest {
         assertThat(userRepository.findByEmail(email)).isEmpty();
     }
 
+    // #149 review, fresh finding — not reproduced as described. The finding's own HTTP example (a
+    // displayName consisting only of a NUL) does not reach RegistrationService: @NotBlank on
+    // RegisterRequest already rejects it, because Hibernate Validator's current @NotBlank
+    // implementation itself calls CharSequence.toString().trim().length() > 0, which trims the sole
+    // NUL away to nothing before RegistrationService#validateDisplayName is ever invoked. This pins
+    // that contract at the HTTP layer; RegistrationServiceTest
+    // #displayNameQueNormalizaParaVazioAposTrimRetornaBadRequestSemQualquerInteracao covers the
+    // service-level defense in depth added alongside it, for a value @NotBlank does not itself catch.
+    @Test
+    void displayNameFeitoSoDeNulJaEhRecusadoPorNotBlankAntesDoServico() throws Exception {
+        String email = uniqueEmail();
+
+        String json = literalDisplayNameRegisterBody("\\u0000", email);
+
+        String responseBody = mockMvc.perform(withCsrf(post("/api/auth/register"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json))
+                .andExpect(status().isBadRequest())
+                .andReturn().getResponse().getContentAsString();
+
+        assertThat(responseBody).contains("displayName");
+        assertThat(userRepository.findByEmail(email)).isEmpty();
+    }
+
     // Codex P3 (round 8): an unpaired surrogate is not Character.isISOControl and codePointCount
     // counts it as one ordinary character, so RegistrationService's existing checks never caught it
     // before this round. Built as a literal JSON escape (\ud800), never via ObjectMapper on a Java

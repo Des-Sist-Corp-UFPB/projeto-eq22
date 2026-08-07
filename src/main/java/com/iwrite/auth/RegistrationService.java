@@ -156,6 +156,18 @@ public class RegistrationService {
     }
 
     private void validateDisplayName(String displayName) {
+        // Checked first, right after String.trim() (RegistrationService#register): @NotBlank on
+        // RegisterRequest already rejects a raw displayName that is empty or all whitespace by its
+        // own definition (CharSequence.toString().trim().length() > 0 in the current Hibernate
+        // Validator), but that definition is not identical to Java's String.trim(): a value made up
+        // only of control code points trim() removes (e.g. an embedded NUL alongside plain letters
+        // is not blank to @NotBlank, since @NotBlank never inspects interior characters — trim()
+        // does) can still normalize to an empty string here. Defense in depth, not a reproduction of
+        // any particular bypass: this must never depend solely on the controller/validation layer
+        // (#149 review, fresh finding).
+        if (displayName.isEmpty()) {
+            throw new BadRequestException(RegistrationMessages.INVALID_DISPLAY_NAME);
+        }
         // Checked first: an unpaired surrogate is not Character.isISOControl and codePointCount
         // counts it as one ordinary character, so neither check below ever catches it. PostgreSQL
         // cannot represent a surrogate code point at all, and the JDBC UTF-8 conversion could

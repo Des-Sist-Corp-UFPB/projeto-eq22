@@ -536,6 +536,26 @@ class RegistrationServiceTest {
         verifyNoInteractions(userRepository, credentialRepository, tenantRepository, membershipRepository, personaRepository);
     }
 
+    // #149 review, fresh finding (not reproduced as described — see class-level note in the PR
+    // response; @NotBlank on RegisterRequest already rejects the finding's own literal example,
+    // " ", before this service ever runs, since Hibernate Validator's current @NotBlank
+    // implementation itself uses String.trim()). This is defense in depth, not a bug reproduction:
+    // a value made only of control code points RegistrationService's own String.trim() (in
+    // #register) removes, but that is not blank under @NotBlank's char-by-char definition (which
+    // never inspects interior characters), must still be refused here rather than persisted as an
+    // empty users.display_name.
+    @Test
+    void displayNameQueNormalizaParaVazioAposTrimRetornaBadRequestSemQualquerInteracao() {
+        RegisterRequest request = new RegisterRequest(
+                "\t\n" + (char) 0x0000 + " ", "nova@iwrite.local", RAW_PASSWORD, RAW_PASSWORD, "writer", "America/Sao_Paulo");
+
+        assertThatThrownBy(() -> service.register(request))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessage(RegistrationMessages.INVALID_DISPLAY_NAME);
+
+        verifyNoInteractions(userRepository, credentialRepository, tenantRepository, membershipRepository, personaRepository, passwordEncoder, timeZoneValidator);
+    }
+
     @Test
     void displayNameComParSurrogateValidoContinuaAceito() {
         stubHappyPathCollaborators();
