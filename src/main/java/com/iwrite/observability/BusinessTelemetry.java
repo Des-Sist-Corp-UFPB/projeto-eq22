@@ -45,7 +45,7 @@ import java.util.regex.Pattern;
  * family — is validated against a small closed vocabulary in
  * {@link #CLOSED_VOCABULARIES}: a value outside that vocabulary is dropped,
  * never forwarded as-is. This is what stops a misconfigured value (e.g. a
- * credential placed in {@code OPENAI_MODEL}) from being exported;
+ * credential placed in a model environment variable) from being exported;
  * {@link #modelFamily(String)} in particular never lets the raw model string
  * reach a span. The one remaining open-ended string attribute,
  * {@code iwrite.error.type}, only ever receives an exception's simple class
@@ -114,6 +114,7 @@ public class BusinessTelemetry {
     public static final String SOURCE_OTHER = "other";
 
     public static final String PROVIDER_OPENAI = "openai";
+    public static final String PROVIDER_ANTHROPIC = "anthropic";
     public static final String PROVIDER_DISABLED = "disabled";
     /** Log-only stand-in for a provider outside the closed vocabulary; never a span value. */
     public static final String PROVIDER_UNKNOWN = "unknown";
@@ -126,6 +127,7 @@ public class BusinessTelemetry {
     public static final String MODEL_FAMILY_GPT_4O = "gpt-4o";
     public static final String MODEL_FAMILY_GPT_4_1 = "gpt-4.1";
     public static final String MODEL_FAMILY_GPT_5 = "gpt-5";
+    public static final String MODEL_FAMILY_CLAUDE = "claude";
     public static final String MODEL_FAMILY_OTHER = "other";
     public static final String MODEL_FAMILY_UNKNOWN = "unknown";
 
@@ -200,9 +202,9 @@ public class BusinessTelemetry {
             SCENE_SOURCE, Set.of(SOURCE_MANUAL_SAVE, SOURCE_AUTOSAVE, SOURCE_RESTORE, SOURCE_OTHER),
             SCENE_CONTENT_SIZE_BUCKET, SIZE_BUCKETS,
             AI_INPUT_SIZE_BUCKET, SIZE_BUCKETS,
-            AI_PROVIDER, Set.of(PROVIDER_OPENAI, PROVIDER_DISABLED),
+            AI_PROVIDER, Set.of(PROVIDER_OPENAI, PROVIDER_ANTHROPIC, PROVIDER_DISABLED),
             AI_MODEL_FAMILY, Set.of(
-                    MODEL_FAMILY_GPT_4O, MODEL_FAMILY_GPT_4_1, MODEL_FAMILY_GPT_5,
+                    MODEL_FAMILY_GPT_4O, MODEL_FAMILY_GPT_4_1, MODEL_FAMILY_GPT_5, MODEL_FAMILY_CLAUDE,
                     MODEL_FAMILY_OTHER, MODEL_FAMILY_UNKNOWN)
     );
 
@@ -290,11 +292,9 @@ public class BusinessTelemetry {
     }
 
     /**
-     * Normalizes a configured model identifier (e.g. {@code OPENAI_MODEL})
-     * into one of {@link #MODEL_FAMILY_GPT_4O}, {@link #MODEL_FAMILY_GPT_4_1},
-     * {@link #MODEL_FAMILY_GPT_5}, {@link #MODEL_FAMILY_OTHER} or
-     * {@link #MODEL_FAMILY_UNKNOWN}. {@code rawModel} is read only for this
-     * prefix comparison and is never attached to a span or metric.
+     * Normalizes a configured model identifier into a small model-family vocabulary.
+     * {@code rawModel} is read only for prefix comparison and is never attached
+     * to a span or metric.
      */
     public static String modelFamily(String rawModel) {
         if (rawModel == null || rawModel.isBlank()) {
@@ -309,6 +309,9 @@ public class BusinessTelemetry {
         }
         if (normalized.startsWith("gpt-5")) {
             return MODEL_FAMILY_GPT_5;
+        }
+        if (normalized.startsWith("claude")) {
+            return MODEL_FAMILY_CLAUDE;
         }
         return MODEL_FAMILY_OTHER;
     }
