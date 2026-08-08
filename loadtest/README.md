@@ -426,22 +426,45 @@ execução concorrente (outro `runId`).
 
 **Bounded em três níveis, não só pela janela declarada** (achado do Codex,
 PR #141, "Bound each orphan-recovery request"): (1) cada `GET` de
-recuperação individual usa `timeout: min(ORPHAN_RECOVERY_REQUEST_TIMEOUT_MS,
-tempo restante até o deadline da janela)` — sem isso, uma única consulta
-lenta podia sozinha consumir a janela inteira sem que o loop tivesse chance
-de reagir; (2) o `sleep()` entre polls nunca ultrapassa o deadline; (3) a
+recuperação individual usa `timeout: min(ORPHAN_RECOVERY_SINGLE_REQUEST_MAX_MS,
+HTTP_REQUEST_TIMEOUT_MS, tempo restante até o deadline da janela)` — sem um
+teto individual **menor que a própria janela** (`ORPHAN_RECOVERY_SINGLE_REQUEST_MAX_MS
+= 2000ms`, achado de follow-up pós-#141: com os defaults antigos,
+`min(HTTP_REQUEST_TIMEOUT_MS=10000, ORPHAN_RECOVERY_WINDOW_MS=5000)` dava
+`5000ms` — uma única consulta lenta podia sozinha consumir a janela de `5s`
+inteira, sem sobrar chance para nenhum poll seguinte capturar um commit
+tardio); (2) o `sleep()` entre polls nunca ultrapassa o deadline; (3) a
 própria janela nunca é maior que o orçamento que `setup()` ainda pode gastar
 dentro de `SETUP_TIMEOUT` sem comprometer o cleanup dos livros já
-conhecidos — `setup()` recusa iniciar mais uma operação de provisionamento
-(falha controlada, preservando o erro original) sempre que o restante não
-cobrir request-em-andamento + janela de recuperação + cleanup sequencial
-(`cleanupBudgetMs()`), em vez de deixar o k6 matar `setup()` de fora por
-`SETUP_TIMEOUT`. Uma validação fail-fast rejeita, antes de criar qualquer
-dado, um `SETUP_TIMEOUT` matematicamente insuficiente para o `VUS` pedido.
-O `DELETE` de `cleanupBooks()` e os 4 `POST`s de provisionamento também usam
-timeout explícito — ver "Prova do bound de recuperação de órfãos" e "Prova
-do orçamento de cleanup" em [§9](#9-resultados-obtidos) para a fault
-injection.
+conhecidos.
+
+`setup()` recusa iniciar a próxima operação de provisionamento (falha
+controlada, preservando o erro original) sempre que o restante não cobrir
+request-em-andamento + cleanup sequencial dos livros já conhecidos —
+verificado **imediatamente antes de cada `POST`** (livro, seção, capítulo e
+cena), não só uma vez por livro (achado de follow-up pós-#141: um guard que
+só roda antes do `POST /api/books` não impede que seção/capítulo consumam o
+orçamento restante antes de disparar a cena sem sobrar tempo para limpar).
+Antes de `POST /api/books` a reserva inclui também a janela de recuperação
+de órfãos inteira (`ORPHAN_RECOVERY_WINDOW_MS`) — só essa request pode gerar
+um órfão de ID desconhecido; seção/capítulo/cena já sabem o `bookId` (já em
+`createdBookIds`) e vão direto para o cleanup, sem precisar de varredura, por
+isso não reservam essa janela. O deadline (`setupDeadlineAt`) é capturado na
+**primeira linha de `setup()`**, antes até da validação de
+`LOAD_TEST_PASSWORD`/`GET /ping`/login — o `setupTimeout` do k6 já conta
+desde a entrada real da função, então calcular o deadline depois do handshake
+de autenticação faria o orçamento achar que sobra mais tempo do que o k6
+realmente ainda concede. Nunca redefinido depois — é a mesma referência
+temporal usada em toda checagem de orçamento do `setup()` inteiro. Em vez de
+deixar o k6 matar `setup()` de fora por `SETUP_TIMEOUT`, o guard falha
+controladamente antes. Uma validação fail-fast rejeita, antes de criar
+qualquer dado, um `SETUP_TIMEOUT` matematicamente insuficiente para o `VUS`
+pedido. O `GET /ping`, o `DELETE` de `cleanupBooks()` e os 4 `POST`s de
+provisionamento também usam timeout explícito — ver "Prova do bound de
+recuperação de órfãos" e "Prova do orçamento de cleanup" em
+[§9](#9-resultados-obtidos) para a fault injection original da #141, e o
+follow-up de orçamento de setup em [§9](#9-resultados-obtidos) para a fault
+injection desta rodada.
 
 `teardown()` autentica de novo (sessão própria, não reaproveita a de nenhuma
 VU nem a de `setup()`) e apaga **todos** os livros da execução (cascata apaga
@@ -1713,6 +1736,74 @@ segundo cenário explícito de estresse (`AUTO_SAVE_DELAY_MS` baixo) para
 medir o teto de throughput de escrita separadamente do baseline realista.
 Considerar versionar (ou converter em teste automatizado leve) a fault
 injection do refresh degradado, hoje só documentada na PR #141.
+
+### Follow-up pós-#141 — orçamento de setup (`setupDeadlineAt` tardio, guard só antes do livro, teto de recovery de `5s`)
+
+PR pequena e estritamente delimitada, aberta depois do merge da #141, para
+três inconsistências de robustez do lifecycle de `setup()` encontradas na
+revisão pós-merge — **não muda o steady-state loop, thresholds de
+performance, nem qualquer código de backend/frontend**, por isso a validação
+foi dirigida (fault injection contra o guard e a recuperação), sem repetir a
+bateria completa de `10`/`30 VUs` da #141.
+
+1. **`setupDeadlineAt` capturado tarde demais.** `setupDeadlineAt` era
+   calculado só depois da validação de `LOAD_TEST_PASSWORD`, do `GET /ping` e
+   do `login()` inteiro — mas o `setupTimeout` do k6 já conta desde a entrada
+   real de `setup()`. Corrigido: `setupStartedAt`/`setupDeadlineAt` agora são
+   a primeira coisa calculada em `setup()`, nunca redefinidos depois. `GET
+   /ping` passou a usar `HTTP_REQUEST_TIMEOUT` explícito (antes dependia do
+   timeout default do k6). Prova (`VUS=1`, `SETUP_TIMEOUT=28s`, `5s` de
+   latência injetada via `sleep()` logo após o login): o guard antes do
+   primeiro `POST /api/books` mediu `remaining=22868ms` (não os `28000ms`
+   cheios) — confirmando que o tempo de login foi de fato descontado do MESMO
+   deadline usado depois, e o `setup()` recusou criar o livro antes de
+   qualquer `POST /api/books`.
+2. **Guard de orçamento só rodava antes do `POST /api/books`.** Nada impedia
+   `POST section`/`chapter`/`scene` de consumir o orçamento restante e ainda
+   assim disparar a request seguinte sem sobrar tempo para limpar. Corrigido:
+   `ensureSetupBudget()` roda imediatamente antes de cada um dos 4 `POST`s de
+   provisionamento — só o de `/api/books` reserva a janela de recuperação de
+   órfãos inteira (`ORPHAN_RECOVERY_WINDOW_MS`), porque só ele pode gerar um
+   órfão de ID desconhecido. Prova (`VUS=1`, `SETUP_TIMEOUT=30s`, `15s` de
+   latência injetada após a criação do capítulo): os guards de
+   livro/seção/capítulo passaram normalmente, mas o guard antes de `POST
+   scene` mediu `remaining=14882ms < required=22000ms` e recusou — `POST
+   scene` nunca foi enviado, e a limpeza automática removeu o único livro
+   órfão (`Limpeza automática removeu todos os 1 livro(s) órfão(s).`), zero
+   resíduo `LOADTEST-` confirmado depois. Repetido com a falha movida para
+   antes do `POST chapter` (borda anterior) com o mesmo resultado.
+3. **Teto individual do `GET` de recuperação não era realmente `2s`.**
+   `ORPHAN_RECOVERY_REQUEST_TIMEOUT_MS = min(HTTP_REQUEST_TIMEOUT_MS,
+   ORPHAN_RECOVERY_WINDOW_MS)` dava `min(10000, 5000) = 5000ms` com os
+   defaults — uma única consulta lenta podia consumir a janela de `5s`
+   inteira sem sobrar chance para um poll seguinte capturar um commit tardio.
+   Corrigido: novo teto `ORPHAN_RECOVERY_SINGLE_REQUEST_MAX_MS = 2000`,
+   incluído no `Math.min()` junto dos outros dois. Prova (servidor local que
+   dorme `4s` antes de responder, apontado no lugar de `GET /api/books`
+   dentro de `recoverOrphanedBookIds()`): cada tentativa terminou em
+   `~2000-2008ms` (`"request timeout"`, nunca os `4s` do servidor nem os
+   `5s` da janela), e **duas tentativas** couberram dentro da janela de `5s`
+   — confirmando que um único `GET` não monopoliza mais a recuperação.
+
+A prova da corrida de commit tardio e do isolamento por `runId` (mesmo
+proxy de pré-delay da #141: `VUS=1`, `HTTP_REQUEST_TIMEOUT=2s`,
+`SETUP_TIMEOUT=15s`, `POST /api/books` só encaminhado ao backend real `2.3s`
+depois de chegar no proxy, cliente k6 já desistindo em `2s`) foi revalidada
+sobre o código desta rodada: `setup() falhou ... após criar 1 livro(s)
+sintético(s)` com `createdBookIds` vazio no momento da falha — a
+recuperação encontrou e removeu o livro que só commitou tardiamente. Um
+livro decoy de outro `runId` (`LOADTEST-OTHERRUNDECOY-vu1`) permaneceu
+intocado, confirmando isolamento entre execuções concorrentes.
+
+Smoke (`VUS=2`) e regressão de `10 VUs` (padrão de estágios) rodados sobre o
+código desta rodada, sem fault injection: `checks: 100%`,
+`http_req_failed: 0%`, todos os thresholds passaram, teardown removeu todos
+os livros, zero `429`, zero resíduo `LOADTEST-` — evidência bruta em
+[`resultados/resultado-10vus-setup-budget-followup.json`](resultados/resultado-10vus-setup-budget-followup.json).
+**Este arquivo é evidência nova, medida sobre o código deste follow-up —
+não substitui nem reinterpreta
+[`resultados/resultado-10vus.json`](resultados/resultado-10vus.json), que
+continua sendo a evidência histórica da #141 sobre o código daquela PR.**
 
 ---
 
