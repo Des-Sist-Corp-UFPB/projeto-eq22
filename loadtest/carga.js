@@ -374,16 +374,19 @@ const SETUP_TIMEOUT_MS = k6DurationToMs(SETUP_TIMEOUT);
 const ORPHAN_RECOVERY_WINDOW_MS = 5000;
 const ORPHAN_RECOVERY_POLL_INTERVAL_S = 0.5;
 
-// Timeout individual de cada GET de recuperação (achado do Codex, PR #141,
-// "Bound each orphan-recovery request"): sem um teto por requisição MENOR
-// que a própria janela, uma única consulta lenta podia sozinha consumir (ou
-// ultrapassar) ORPHAN_RECOVERY_WINDOW_MS inteiro sem que o loop `while
-// (Date.now() < deadline)` de recoverOrphanedBookIds() tivesse chance de
-// reagir — "a recuperação dura no máximo 5s" era falso na prática. Nunca o
-// HTTP_REQUEST_TIMEOUT cheio (pensado para o loop principal, e tipicamente
-// >= a janela de recuperação inteira com os defaults de ambos) — sempre
-// limitado também pelo teto da própria janela.
-const ORPHAN_RECOVERY_REQUEST_TIMEOUT_MS = Math.min(HTTP_REQUEST_TIMEOUT_MS, ORPHAN_RECOVERY_WINDOW_MS);
+// Teto individual de cada GET de recuperação, MENOR que a própria janela
+// (achado de follow-up pós-PR #141: com os defaults de então, HTTP_REQUEST_
+// TIMEOUT_MS=10000 e ORPHAN_RECOVERY_WINDOW_MS=5000, min(10000, 5000) dava
+// 5000ms — uma única consulta lenta podia sozinha consumir a janela inteira,
+// sem sobrar tempo para nenhum poll seguinte capturar um commit tardio).
+// 2000ms deixa espaço para mais de uma tentativa dentro dos 5000ms da janela
+// e ainda é suficiente para um ambiente local saudável.
+const ORPHAN_RECOVERY_SINGLE_REQUEST_MAX_MS = 2000;
+const ORPHAN_RECOVERY_REQUEST_TIMEOUT_MS = Math.min(
+  ORPHAN_RECOVERY_SINGLE_REQUEST_MAX_MS,
+  HTTP_REQUEST_TIMEOUT_MS,
+  ORPHAN_RECOVERY_WINDOW_MS
+);
 
 // Mesmo timeout do loop principal para o DELETE de limpeza de setup() —
 // reaproveita HTTP_REQUEST_TIMEOUT (já dimensionado para ambiente local) em
@@ -415,21 +418,70 @@ function cleanupBudgetMs(knownBookCount) {
 }
 
 /**
+ * Orçamento mínimo para tentar criar mais UM livro novo (POST /api/books),
+ * dado que `knownBookCount` livros já existem: a request de provisionamento
+ * potencialmente em andamento (`HTTP_REQUEST_TIMEOUT_MS`) + a janela de
+ * recuperação de órfãos inteira (`ORPHAN_RECOVERY_WINDOW_MS` — só um POST
+ * /api/books pode gerar um órfão ambíguo, por isso só esta fórmula reserva
+ * essa janela) + o cleanup sequencial de até `knownBookCount + 1` livros (o
+ * +1 cobre o livro cuja criação está prestes a começar). É sempre >= a
+ * fórmula de requiredBudgetForKnownBookMs() para o mesmo `knownBookCount`,
+ * então é ela quem domina a validação fail-fast abaixo.
+ */
+function requiredBudgetForNewBookMs(knownBookCount) {
+  return HTTP_REQUEST_TIMEOUT_MS + ORPHAN_RECOVERY_WINDOW_MS + cleanupBudgetMs(knownBookCount + 1);
+}
+
+/**
+ * Orçamento mínimo para tentar mais uma request de provisionamento
+ * (seção/capítulo/cena) de um livro cujo ID já é conhecido (já está em
+ * `createdBookIds`): a request potencialmente em andamento
+ * (`HTTP_REQUEST_TIMEOUT_MS`) + o cleanup sequencial de até `knownBookCount`
+ * livros. Sem reserva de `ORPHAN_RECOVERY_WINDOW_MS` — diferente de
+ * requiredBudgetForNewBookMs(), essas requests nunca geram órfão
+ * desconhecido: o bookId a limpar em caso de falha já está em
+ * `createdBookIds`, não depende de nenhuma varredura para ser descoberto.
+ */
+function requiredBudgetForKnownBookMs(knownBookCount) {
+  return HTTP_REQUEST_TIMEOUT_MS + cleanupBudgetMs(knownBookCount);
+}
+
+/**
+ * Guard de orçamento verificado imediatamente ANTES de cada request de
+ * provisionamento que pode bloquear (achado de follow-up pós-PR #141: o
+ * guard original só rodava uma vez por livro, antes do POST /api/books —
+ * nada impedia POST section/chapter/scene de consumir o orçamento restante e
+ * ainda assim disparar a request seguinte sem sobrar tempo para cleanup).
+ * NUNCA inicia a request se o orçamento restante for insuficiente — lança um
+ * erro controlado, que o `catch` de setup() converte em recovery + cleanup
+ * do que já foi criado, preservando o erro original.
+ */
+function ensureSetupBudget(setupDeadlineAt, operationLabel, requiredMs, createdBookCount, runId) {
+  const remainingSetupMs = setupDeadlineAt - Date.now();
+  if (remainingSetupMs < requiredMs) {
+    throw new Error(
+      `Orçamento de SETUP_TIMEOUT insuficiente para tentar ${operationLabel} com segurança ` +
+      `(restam ${remainingSetupMs}ms, precisa de pelo menos ${requiredMs}ms para tentar mais uma ` +
+      `operação e ainda garantir recuperação/cleanup dos ${createdBookCount} livro(s) já criado(s), ` +
+      `runId ${runId}). Aumente SETUP_TIMEOUT.`
+    );
+  }
+}
+
+/**
  * Orçamento mínimo matematicamente necessário para SETUP_TIMEOUT cobrir,
  * partindo do pior caso de UMA falha na última VU (i = VUS-1, já com VUS-1
- * livros conhecidos): a request de provisionamento potencialmente em
- * andamento no momento da falha (`HTTP_REQUEST_TIMEOUT_MS`, nunca mais que
- * isso porque todo POST de setup() agora usa esse timeout explícito — ver
- * setup()) + a janela de recuperação de órfãos inteira
- * (`ORPHAN_RECOVERY_WINDOW_MS`) + o cleanup sequencial de até `VUS` livros
- * (`cleanupBudgetMs(VUS)`, que já inclui a margem técnica). Validado UMA
- * única vez, no carregamento do script — antes de setup() criar qualquer
- * dado — porque o orçamento necessário cresce com `VUS` (achado do Codex, PR
- * #141): rejeitar cedo com uma mensagem que já sugere o valor mínimo é
- * melhor que deixar `setup()` entrar num estado impossível de limpar depois
- * de já ter criado livros.
+ * livros conhecidos): requiredBudgetForNewBookMs(VUS-1), que se reduz a
+ * HTTP_REQUEST_TIMEOUT_MS + ORPHAN_RECOVERY_WINDOW_MS + cleanupBudgetMs(VUS).
+ * Validado UMA única vez, no carregamento do script — antes de setup() criar
+ * qualquer dado — porque o orçamento necessário cresce com `VUS` (achado do
+ * Codex, PR #141): rejeitar cedo com uma mensagem que já sugere o valor
+ * mínimo é melhor que deixar `setup()` entrar num estado impossível de
+ * limpar depois de já ter criado livros. Domina (é sempre >=) qualquer
+ * checagem de requiredBudgetForKnownBookMs() feita depois em runtime, então
+ * basta validar esta aqui uma vez só.
  */
-const MIN_SETUP_BUDGET_MS = HTTP_REQUEST_TIMEOUT_MS + ORPHAN_RECOVERY_WINDOW_MS + cleanupBudgetMs(VUS);
+const MIN_SETUP_BUDGET_MS = requiredBudgetForNewBookMs(VUS - 1);
 if (SETUP_TIMEOUT_MS < MIN_SETUP_BUDGET_MS) {
   throw new Error(
     `SETUP_TIMEOUT (${SETUP_TIMEOUT}) é insuficiente para VUS=${VUS}: o pior caso de request-em-` +
@@ -780,11 +832,21 @@ function cleanupBooks(jar, runId, bookIds, originalError) {
  * nativo que ignora handleSummary() por completo.
  */
 export function setup() {
+  // Capturado ANTES de qualquer outra linha de setup() — fonte temporal
+  // única do orçamento de setup, nunca redefinida/resetada depois (achado de
+  // follow-up pós-PR #141: o `setupDeadlineAt` antigo só era calculado depois
+  // da validação de LOGIN_PASSWORD, do GET /ping e do login() inteiro — o
+  // `setupTimeout` do k6, por outro lado, já conta desde a entrada real de
+  // setup(), então o orçamento calculado tarde podia achar que sobrava mais
+  // tempo do que o k6 realmente ainda concederia).
+  const setupStartedAt = Date.now();
+  const setupDeadlineAt = setupStartedAt + SETUP_TIMEOUT_MS;
+
   if (!LOGIN_PASSWORD) {
     throw new Error('LOAD_TEST_PASSWORD não definida. Nunca versione a senha; exporte a variável de ambiente antes de rodar (ver loadtest/README.md).');
   }
 
-  const ping = http.get(`${BASE}/ping`, { tags: { operation: 'smoke', name: 'GET /ping' } });
+  const ping = http.get(`${BASE}/ping`, { timeout: HTTP_REQUEST_TIMEOUT, tags: { operation: 'smoke', name: 'GET /ping' } });
   if (ping.status !== 200) {
     throw new Error(`Smoke check falhou: GET /ping retornou ${ping.status}. Suba o ambiente antes de rodar a carga.`);
   }
@@ -806,40 +868,24 @@ export function setup() {
   // BookRepository.findByIdAndTenantIdForUpdate), medindo contenção do
   // harness, não latência real de escritas concorrentes de usuários
   // diferentes.
-  // Deadline absoluto de setup() (ver MIN_SETUP_BUDGET_MS acima para a
-  // validação fail-fast de que SETUP_TIMEOUT_MS já é matematicamente
-  // suficiente para VUS). Checado no topo de cada iteração — nunca no meio
-  // do provisionamento de uma VU — porque só o POST /api/books pode gerar um
-  // órfão que precise de recoverOrphanedBookIds(); uma falha em
-  // seção/capítulo/cena já sabe o bookId (createdBookIds já o contém) e vai
-  // direto para cleanupBooks().
-  const setupDeadlineAt = Date.now() + SETUP_TIMEOUT_MS;
-
   const createdBookIds = [];
   const resources = [];
   try {
     for (let i = 0; i < VUS; i++) {
-      // Não inicia mais um livro se, no pior caso (esta request ficar
-      // pendurada até HTTP_REQUEST_TIMEOUT_MS e resultar ambígua), não
-      // sobrar orçamento de SETUP_TIMEOUT para reconciliar (janela de
-      // recuperação inteira) E limpar os livros já conhecidos + este que
-      // está prestes a começar — falha controlada aqui, preservando o erro
-      // original, em vez de esperar o k6 matar setup() de fora (achado do
-      // Codex, PR #141, "Bound each orphan-recovery request").
-      const remainingSetupMs = setupDeadlineAt - Date.now();
-      const requiredForSafeAttemptMs =
-        HTTP_REQUEST_TIMEOUT_MS + ORPHAN_RECOVERY_WINDOW_MS + cleanupBudgetMs(createdBookIds.length + 1);
-      if (remainingSetupMs < requiredForSafeAttemptMs) {
-        throw new Error(
-          `Orçamento de SETUP_TIMEOUT insuficiente para provisionar com segurança o livro ${i + 1}/${VUS} ` +
-          `(restam ${remainingSetupMs}ms, precisa de pelo menos ${requiredForSafeAttemptMs}ms para tentar mais uma ` +
-          `operação e ainda garantir recuperação/cleanup dos ${createdBookIds.length} livro(s) já criado(s), runId ${runId}). ` +
-          `Aumente SETUP_TIMEOUT.`
-        );
-      }
-
       const marker = `LOADTEST-${runId}-vu${i + 1}`;
 
+      // Guard imediatamente ANTES do POST /api/books, não só uma vez por
+      // livro no topo do loop: esta é a única request do laço que pode gerar
+      // um órfão de bookId desconhecido, por isso reserva
+      // ORPHAN_RECOVERY_WINDOW_MS além do cleanup (achado do Codex, PR #141,
+      // "Bound each orphan-recovery request").
+      ensureSetupBudget(
+        setupDeadlineAt,
+        `o livro ${i + 1}/${VUS}`,
+        requiredBudgetForNewBookMs(createdBookIds.length),
+        createdBookIds.length,
+        runId
+      );
       const bookRes = http.post(
         `${BASE}/api/books`,
         JSON.stringify({ title: marker, status: 'WRITING', targetWordCount: 1000 }),
@@ -851,6 +897,18 @@ export function setup() {
       const bookId = bookRes.json('id');
       createdBookIds.push(bookId);
 
+      // Seção/capítulo/cena já sabem o bookId (createdBookIds já o contém):
+      // uma falha aqui vai direto para cleanupBooks() sem precisar de
+      // recoverOrphanedBookIds(), então o guard não reserva
+      // ORPHAN_RECOVERY_WINDOW_MS — só a request em andamento + o cleanup dos
+      // livros já conhecidos (ver requiredBudgetForKnownBookMs()).
+      ensureSetupBudget(
+        setupDeadlineAt,
+        `a seção do livro ${i + 1}/${VUS}`,
+        requiredBudgetForKnownBookMs(createdBookIds.length),
+        createdBookIds.length,
+        runId
+      );
       const sectionRes = http.post(
         `${BASE}/api/books/${bookId}/sections`,
         JSON.stringify({ title: `${marker}-section`, type: 'PART', sortOrder: 0 }),
@@ -861,6 +919,13 @@ export function setup() {
       }
       const sectionId = sectionRes.json('id');
 
+      ensureSetupBudget(
+        setupDeadlineAt,
+        `o capítulo do livro ${i + 1}/${VUS}`,
+        requiredBudgetForKnownBookMs(createdBookIds.length),
+        createdBookIds.length,
+        runId
+      );
       const chapterRes = http.post(
         `${BASE}/api/sections/${sectionId}/chapters`,
         JSON.stringify({ title: `${marker}-chapter`, sortOrder: 0 }),
@@ -871,6 +936,13 @@ export function setup() {
       }
       const chapterId = chapterRes.json('id');
 
+      ensureSetupBudget(
+        setupDeadlineAt,
+        `a cena do livro ${i + 1}/${VUS}`,
+        requiredBudgetForKnownBookMs(createdBookIds.length),
+        createdBookIds.length,
+        runId
+      );
       const sceneRes = http.post(
         `${BASE}/api/chapters/${chapterId}/scenes`,
         JSON.stringify({ title: `${marker}-scene`, sortOrder: 0 }),
