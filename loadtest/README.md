@@ -1131,6 +1131,74 @@ duas rodando. Energia AC confirmada `Online`
 imediatamente antes das três execuções aqui registradas. Nenhuma tentativa
 foi descartada nesta rodada.
 
+### Revalidação pós-integração da master (PR #149) — `measured_code_commit` permanece `746cdbb`
+
+A branch `feature/k6-realistic-baseline` recebeu um merge de `origin/master`
+(`0ea05c5a24ceed65938a1df05c7f2f5e15a360cc`), que já contém a PR #149
+(autenticação, cadastro público, sessão e rate limiting), através do commit de
+merge `1dd985b39d4e018f938edccccfa1522d87625d49` — exclusivamente um merge,
+sem edição manual de conteúdo. Isso **não é uma nova medição de código**: o
+harness k6 não mudou, só o backend alvo mudou, então esta seção documenta uma
+revalidação, não uma remedição.
+
+Confirmado antes de medir:
+
+- `git merge-base --is-ancestor origin/master HEAD` (a partir de `1dd985b`) —
+  sucesso: `master@0ea05c5` é ancestral do HEAD da PR.
+- `git diff 76e536264f4c763baae7b295f6ab4ab6dae4055a..1dd985b -- loadtest/` —
+  vazio: **todo** o diretório `loadtest/` (não só `carga.js`) permaneceu
+  byte-a-byte idêntico através do merge.
+- `git rev-parse 746cdbb59147ff11a9bd22d1c2da4c9a37c9bc80:loadtest/carga.js`
+  e `git rev-parse HEAD:loadtest/carga.js` (com `HEAD=1dd985b`) — o mesmo blob
+  (`8b8a53ebe4207ee7f8ea951dde273cdd741b5154`).
+- `git cat-file blob 8b8a53ebe4207ee7f8ea951dde273cdd741b5154 | sha256sum` —
+  reproduz exatamente `measured_script_sha256`
+  (`18bb2fdc32fe5f4d3e483dc7d7ccfdad7e37d58eab745f22d5d657e5f4292b9f`).
+
+Por isso `measured_code_commit` **permanece** `746cdbb59147ff11a9bd22d1c2da4c9a37c9bc80`
+— nenhum commit novo foi criado só por causa do merge da master.
+
+**O que mudou no backend integrado, relevante a este cenário:** 4 migrations
+novas (`V31__create_user_personas`, `V32__normalize_user_emails`,
+`V33__canonicalize_user_emails`,
+`V34__backfill_legacy_user_persona_after_email_normalization`), aplicadas com
+sucesso no boot do backend isolado (Flyway: schema `30` → `v34`, confirmado no
+log de startup). As chaves de configuração do rate limiter de login
+(`iwrite.auth.login-rate-limit.max-attempts-per-account/max-attempts-per-origin/window`)
+**não mudaram** — o overlay `docker-compose.loadtest.yml` (que eleva esse
+limite só na stack isolada, ver [§1](#1-o-que-o-teste-faz)) continuou válido
+sem nenhuma alteração, confirmado por zero `429` nas três execuções abaixo. A
+PR #149 só adicionou um bloco de configuração novo e independente
+(`iwrite.auth.registration-rate-limit`) para `POST /api/auth/register` — não
+exercitado por este script, que só autentica via login, nunca registra conta
+nova.
+
+**Ambiente desta revalidação:** a stack `iwrite-k6-*` foi recriada do zero
+(`docker compose ... up -d --build`) já com o código integrado. A checagem
+inicial de energia acusou `Offline` (bateria) — a execução foi **pausada**
+até o notebook ser conectado à tomada e o status ser reconfirmado `Online`
+antes de qualquer execução medida (smoke, 10 VUs, 30 VUs). Os containers
+`crm-marketing-frontend-1`/`backend-1`/`db-1` subiram sozinhos junto com o
+Docker Desktop (restart policy) e foram parados (`docker stop`) antes de
+medir. As stacks de outros worktrees do IWrite permaneceram `Exited` durante
+toda a sessão. Zero resíduo `LOADTEST-` confirmado no Postgres do stack
+isolado após cada uma das três execuções.
+
+**Resultado:** smoke, 10 VUs e 30 VUs passaram — 100% dos checks, `0%` de
+`http_req_failed`, `vu_auth_success==100%` sem tolerância, zero `429`, os 21
+thresholds (5 latência + 5 contrato de status exato em `phase:steady`, 4
+globais, 7 auxiliares de auth/setup/teardown) todos `ok:true`, teardown
+autenticou e removeu todos os livros sintéticos das duas execuções (10 e 30).
+Números completos, comparação com a medição pré-integração e ressalva sobre
+variação normal de execução em
+[`resultado.json`](resultado.json)`.resumo_comparativo.integracao_master_pr149`
+e `.comparacao_com_medicao_anterior_746cdbb_pre_integracao`; JSONs brutos
+desta revalidação em
+[`resultados/resultado-10vus.json`](resultados/resultado-10vus.json) e
+[`resultados/resultado-30vus.json`](resultados/resultado-30vus.json)
+(sobrescreveram os da rodada `746cdbb` pré-integração, que media exatamente o
+mesmo script contra um backend anterior à PR #149).
+
 ### Prova do bound de recuperação de órfãos (achado 1 desta rodada) — fault injection não versionada
 
 Proxy HTTP local throwaway (`fi_proxy.py`, poucas linhas, `http.server` +
@@ -1930,3 +1998,13 @@ injection do refresh degradado, hoje só documentada na PR #141.
       746cdbb59147ff11a9bd22d1c2da4c9a37c9bc80:loadtest/carga.js` e `git
       cat-file blob 8b8a53ebe4207ee7f8ea951dde273cdd741b5154 | sha256sum`),
       nunca do working tree
+- [x] Revalidação pós-integração da master/PR #149 (ver "Revalidação
+      pós-integração da master (PR #149)" em [§9](#9-resultados-obtidos)):
+      `origin/master@0ea05c5` confirmado ancestral do merge commit
+      `1dd985b`; `loadtest/` inteiro confirmado byte-a-byte idêntico
+      através do merge (`git diff` vazio, blob de `carga.js` idêntico); as 4
+      migrations novas da PR #149 aplicadas com sucesso no boot; smoke, 10
+      VUs e 30 VUs contra o backend integrado — checks 100%,
+      `vu_auth_success==100%`, zero `429`, zero resíduo `LOADTEST-`, os 21
+      thresholds `ok:true` nas duas execuções; `measured_code_commit`
+      permaneceu `746cdbb` (nenhuma medição de código nova, só de backend)
