@@ -9,3 +9,5 @@ web/coverage/
 
 .idea/
 .vscode/
+
+docker-compose.*.local.yml
