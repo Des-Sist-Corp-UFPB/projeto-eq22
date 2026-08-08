@@ -187,6 +187,38 @@ rollout de uma instalação existente quanto no fluxo local de desenvolvimento:
 Depois de provisionar, remova as três variáveis do ambiente: elas não têm efeito quando a credencial
 já existe (o runner é idempotente), mas deixar a senha configurada no processo não tem motivo.
 
+### Rotação de credencial legada (`replace-existing`)
+
+Antes desta fatia, este runner hasheava qualquer senha configurada sem o limite efetivo do bcrypt (72
+bytes UTF-8) nem a checagem de UTF-16 malformado que `/api/auth/login` passou a exigir depois
+(`BcryptInputPolicy`). Uma instalação que provisionou uma credencial antes dessa mudança pode ter uma
+senha armazenada que o login atual recusa de cara — sem um endpoint de redefinição de senha, essa
+conta ficaria permanentemente sem acesso.
+
+`iwrite.auth.credential-provisioning.replace-existing` (`IWRITE_CREDENTIAL_PROVISIONING_REPLACE_EXISTING`,
+padrão `false`) é a válvula de escape:
+
+- **sem credencial**: comportamento inalterado — valida `BcryptInputPolicy` e cria normalmente;
+- **com credencial e `replace-existing=false`** (padrão): preserva o hash existente; a senha
+  configurada **não é validada nem hasheada**, já que não seria usada — uma senha antiga insegura
+  configurada por engano não bloqueia o boot;
+- **com credencial e `replace-existing=true`**: exige uma senha nova bem-formada e de até 72 bytes
+  (mesma `BcryptInputPolicy`), substitui o hash **na mesma linha**, na mesma transação — nunca cria
+  uma linha nova, nunca toca `User`/`Tenant`/`TenantMembership`/`UserPersona` ou qualquer livro. Senha
+  e hash nunca são logados, só a confirmação de que a rotação ocorreu.
+
+Nunca reabilita login com senha acima de 72 bytes: bcrypt não distingue sufixos além desse limite, e
+aceitar temporariamente reabriria a mesma colisão de prefixo que a política atual fecha.
+
+Procedimento de upgrade para uma conta presa atrás de uma senha legada grande demais:
+
+1. configure `IWRITE_CREDENTIAL_PROVISIONING_EMAIL` com o email da conta;
+2. escolha uma senha nova segura de até 72 bytes UTF-8;
+3. suba a aplicação uma vez com `IWRITE_CREDENTIAL_PROVISIONING_ENABLED=true`,
+   `IWRITE_CREDENTIAL_PROVISIONING_REPLACE_EXISTING=true` e as três variáveis preenchidas;
+4. confirme que a nova senha autentica em `/api/auth/login`;
+5. remova todas as variáveis (`_ENABLED`, `_EMAIL`, `_PASSWORD`, `_REPLACE_EXISTING`).
+
 No fluxo local (perfil `development`), o alvo natural é o usuário legado da V20
 (`carlos.legacy@iwrite.local`, id `00000000-0000-0000-0000-000000000002`), que também é o id padrão de
 `IWRITE_DEVELOPMENT_CURRENT_USER_ID`. Depois de logar com a credencial provisionada, o
@@ -242,13 +274,136 @@ via `MockMvc` (`LoginRateLimitingIntegrationTest`).
   seletor de tenant está fora do escopo de #136 e permanece na visão completa da #63.
 - **Sessões em memória.** A sessão vive no servlet container; reiniciar o backend derruba todas as
   sessões e exige novo login. Não há armazenamento externo de sessão.
-- **Sem cadastro público**, recuperação de senha, verificação de email ou SSO — ver #63.
+- Cadastro público existe desde a #143 — ver "Cadastro público (#143)" abaixo. Ainda não há
+  recuperação de senha, verificação de email ou SSO — ver #63.
 - **Sem seed de demonstração** nesta fatia; é a #137. O `docker-compose.yml` já roda com
   `IWRITE_DEVELOPMENT_CURRENT_USER_ENABLED=false`, porque com a identidade fixa ligada todo usuário
   autenticado cairia no mesmo workspace. A consequência é que, até a #137, subir o compose não dá
-  nenhuma conta com a qual entrar — as credenciais de demonstração são criadas lá.
-- A tela de login **não** oferece cadastro, recuperação de senha nem login social, porque nada disso
-  existe no backend. Botão que não faz nada é pior que ausência.
+  nenhuma conta com a qual entrar além das criadas pelo próprio cadastro — as credenciais de
+  demonstração são criadas lá.
+- A tela de login oferece cadastro (`/register`, #143), mas ainda não recuperação de senha nem
+  login social, porque nada disso existe no backend. Botão que não faz nada é pior que ausência.
+
+## Cadastro público (#143)
+
+`POST /api/auth/register` cria o workspace pessoal completo em uma única transação
+(`RegistrationService`, `com.iwrite.auth`) e devolve o mesmo contrato de `/api/auth/login` e
+`/api/auth/me` — a sessão já sai autenticada, sem exigir um segundo login.
+
+Entrada: `displayName`, `email`, `password`, `passwordConfirmation`, `primaryPersona`
+(`WRITER`, `EDITOR`, `REVIEWER`, `BETA_READER` ou `OTHER`) e `timeZone` (IANA, detectado pelo
+navegador com fallback seguro no frontend). Sem username: o login continua por email.
+
+Ordem da transação, tudo ou nada:
+
+1. normaliza e valida o formato do email (mesma normalização do login, `EmailNormalizer` —
+   `trim` + minúsculas; nenhum dos dois duplica essa regra);
+2. valida a política de senha e a confirmação;
+3. valida a persona e o fuso horário;
+4. verifica duplicidade (pré-checagem rápida antes de qualquer escrita) e cria `User` via
+   `saveAndFlush`, capturando `DataIntegrityViolationException` da constraint `uk_users_email`
+   para o caso de corrida concorrente — os dois casos (sequencial e concorrente) respondem `409`
+   com a mesma mensagem estável, nunca `500`;
+5. cria `UserCredential` (hash adaptativo, mesmo `PasswordEncoder` do login);
+6. cria o `Tenant` pessoal e a `TenantMembership` `OWNER`;
+7. registra a `UserPersona` principal.
+
+Qualquer falha em qualquer etapa reverte a transação inteira; nenhuma entidade parcial sobrevive.
+Depois de persistir, o controller reautentica com a própria credencial recém-criada pelo mesmo
+`AuthenticationManager` que `/api/auth/login` usa (`AuthController#register` reaproveita
+`establishSession`, extraído de `login`) — a sessão resultante é indistinguível de uma sessão de
+login, não uma cópia construída à mão. `tenantId`, `userId` e `role` enviados pelo cliente nunca são
+lidos; tudo é decidido pelo servidor.
+
+### Persona
+
+`user_personas` (`V31__create_user_personas.sql`): `user_id`, `persona`, `is_primary`,
+`created_at`, `updated_at`; único em `(user_id, persona)` e um índice único parcial garante no
+máximo uma persona principal por usuário. A migration faz backfill do usuário legado
+(`carlos.legacy@iwrite.local`, localizado por email, não por id fixo) como `WRITER` principal.
+
+Persona é puramente declarativa: personaliza o produto, nunca autoriza nada. Nenhuma consulta de
+autorização existente ou futura deve inspecionar `user_personas` — a fundação foi desenhada para
+suportar múltiplas personas por usuário mais tarde sem remodelagem destrutiva, mas esta fatia grava
+só a principal, no cadastro.
+
+### Política de senha
+
+Aplicada em `PasswordPolicy` (`com.iwrite.auth`), única fonte de verdade: no mínimo 10 code points,
+no máximo `MAX_UTF8_BYTES` = 72 bytes UTF-8, com ao menos uma letra e um dígito (por code point,
+`Character.isLetter(int)`/`isDigit(int)`, não os overloads `char`). O frontend replica a mesma
+checagem apenas como conveniência (`[...password].length`, `\p{L}`/`\p{Nd}`, `TextEncoder` para os
+bytes) — o backend nunca confia nela. `passwordConfirmation` é comparada e descartada; nunca chega à
+persistência nem é logada.
+
+O limite de 72 bytes existe porque o `DelegatingPasswordEncoder` usa bcrypt, que ignora silenciosamente
+qualquer byte além do 72º — sem o limite, duas senhas diferentes que compartilhem o mesmo prefixo de
+72 bytes hashariam de forma idêntica. Recusar de vez (nunca truncar) fecha essa colisão pela raiz.
+Aplicado em qualquer caminho que chame `passwordEncoder.encode` diretamente, inclusive
+`CredentialProvisioningRunner` (que valida só o limite de bytes, não a política completa — a senha
+provisionada por um operador nunca precisou de letra+dígito).
+
+### Política de email: ASCII apenas
+
+`EmailNormalizer.normalize` (trim + `toLowerCase(Locale.ROOT)`) e o `lower()` do PostgreSQL não são
+garantidamente equivalentes para todo code point Unicode — só concordam sempre dentro do intervalo
+ASCII (`U+0000`–`U+007F`). Em vez de reimplementar suporte parcial a EAI (email internacionalizado)
+nesta fatia, o email de conta é restrito a ASCII de ponta a ponta: `EmailNormalizer.isAscii`,
+verificado antes de qualquer lookup, chamada a bcrypt ou escrita, em `RegistrationService` e em
+`CredentialProvisioningRunner`. Só o email — `displayName` e senha continuam aceitando Unicode
+completo.
+
+No banco, `V32`/`V33` (ver abaixo) abortam a migração inteira, antes de qualquer `UPDATE`, se
+encontrarem um email legado não-ASCII — nunca escolhem uma conversão silenciosa para uma linha que
+pode perder informação. `V33` também adiciona `chk_users_email_ascii`, fechando o mesmo espaço no
+nível de banco (nenhuma escrita futura, aplicação ou SQL manual, pode reintroduzir um email
+não-ASCII).
+
+### Limitação de tentativas de cadastro
+
+`RegistrationRateLimiter` tem orçamento próprio, nunca o do `LoginRateLimiter` — os dois agora
+compartilham a mesma engine de janela fixa (`FixedWindowRateLimiter`, extraída do que antes vivia
+só dentro de `LoginRateLimiter`), mas cada um com seu próprio estado e sua própria configuração.
+Só a dimensão de origem: um cadastro sempre mira um email nunca visto, então uma dimensão de conta
+não agregaria proteção — abuso distribuído por muitos emails diferentes da mesma origem já é pego
+pela dimensão de origem. A checagem roda antes do bcrypt e das quatro escritas da transação.
+
+Variáveis: `IWRITE_REGISTRATION_RATE_LIMIT_MAX_PER_ORIGIN` (padrão 10),
+`IWRITE_REGISTRATION_RATE_LIMIT_MAX_TRACKED_KEYS` (padrão 10000),
+`IWRITE_REGISTRATION_RATE_LIMIT_WINDOW` (padrão `1m`). Excedido, responde `429` com
+`RegistrationMessages.TOO_MANY_REGISTRATION_ATTEMPTS` — mensagem própria, nunca a de login.
+
+### Atribuição de propriedade da sessão em corridas
+
+Um `session.getId()` que mudou não diz, sozinho, *qual* fluxo mudou — um login concorrente na mesma
+sessão (a mesma aba/navegador) rotaciona o id exatamente da mesma forma que o próprio cadastro
+rotacionaria. Comparar apenas ids faria o rollback de um cadastro que falhou depois de um login
+concorrente invalidar a sessão do login por engano.
+
+`AuthController#establishSession` (compartilhado por `login` e `register`) grava um `UUID` próprio
+daquela chamada em `SESSION_OWNER_TOKEN_ATTRIBUTE` — um atributo de sessão do lado do servidor,
+nunca serializado em nenhuma resposta — antes da mutação (se já existir uma sessão) e de novo depois
+de `saveContext` (que pode ter criado ou rotacionado a sessão que o primeiro registro atingiu). O
+rollback do cadastro (`discardPartialSession`) só invalida a sessão quando *ambos* são verdade: o id
+mudou desde antes do cadastro **e** o marcador atual ainda é o token daquele cadastro — um login
+concorrente que tenha assumido a sessão depois falha a segunda checagem, preservando-o. No commit,
+o marcador é removido só se ainda pertencer àquele cadastro (`releaseSessionOwnerIfStillOwned`);
+`login` faz o mesmo logo após estabelecer sua própria sessão, já que nada depois precisa mais dele.
+
+Coberto por `RegistrationSessionOwnershipRaceIntegrationTest` (dois pontos de injeção deterministas,
+por latch, chaveados pelo email do cadastro em corrida, para não afetar a chamada do login
+concorrente) e, para o caso sem corrida, por
+`RegistrationWhileAuthenticatedIntegrationTest#falhaAposMutacaoRealDaSessaoContinuaInvalidandoASessaoParcial`.
+
+### Frontend
+
+`/register` (`web/src/app/register/page.tsx` + `RegisterForm`) segue o mesmo estilo visual de
+`/login`. Ao concluir, `useRegister` (`features/auth/session.ts`) executa exatamente a mesma
+sequência de `useLogin` — cancela queries em voo, purga caches autenticados, avança a geração de
+reconciliação, grava a sessão confirmada pelo servidor e só então navega para `/library` — via um
+helper (`applyNewSession`) compartilhado entre os dois hooks. `SessionGuard` trata `/register` como
+trata `/login`: renderiza sem esperar sessão, e quem já está autenticado é redirecionado para
+`/library` em vez de permanecer na tela.
 
 ## Isolamento do banco de testes entre worktrees
 

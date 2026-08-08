@@ -1,25 +1,13 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { LoginForm } from "@/features/auth/components/login-form";
+import { RegisterForm } from "@/features/auth/components/register-form";
 import { ManuscriptArtwork } from "@/features/auth/components/manuscript-artwork";
 
 export const metadata: Metadata = {
-  title: "Entrar — IWrite",
+  title: "Criar conta — IWrite",
 };
 
-/**
- * Reads `?reason=expired` on the server and hands it down. Doing it with useSearchParams instead
- * would force this subtree to render on the client, and the form would be missing from the
- * server-rendered HTML - a visible flash of a login page with no login form.
- */
-export default async function LoginPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ reason?: string }>;
-}) {
-  const { reason } = await searchParams;
-
-
+export default function RegisterPage() {
   return (
     <main className="min-h-screen bg-[#f7f7f2] text-zinc-950 lg:grid lg:grid-cols-2">
       <section className="flex flex-col justify-center gap-6 px-5 py-10 md:px-10 lg:px-14 lg:py-16">
@@ -32,28 +20,28 @@ export default async function LoginPage({
             Organize manuscritos, cenas, personagens e ideias em um espaço criado para escrever.
           </p>
         </div>
-        {/* Decorative, and the first thing to go when the viewport gets short: on mobile the form
-            is what the reader came for. */}
         <ManuscriptArtwork className="hidden lg:block" />
       </section>
 
       <section className="flex items-center justify-center border-t border-zinc-200 bg-white px-5 py-10 md:px-10 lg:border-l lg:border-t-0 lg:py-16">
         <div className="grid w-full max-w-sm gap-6">
           <div className="grid gap-2">
-            <h2 className="text-2xl font-semibold tracking-tight text-zinc-950">Bem-vindo de volta</h2>
-            <p className="text-sm leading-6 text-zinc-600">Entre para continuar de onde parou.</p>
+            <h2 className="text-2xl font-semibold tracking-tight text-zinc-950">Crie sua conta</h2>
+            <p className="text-sm leading-6 text-zinc-600">
+              Seu espaço pessoal é criado automaticamente, pronto para o primeiro livro.
+            </p>
           </div>
 
-          <LoginForm expired={reason === "expired"} />
+          <RegisterForm />
 
           <p className="text-xs leading-5 text-zinc-500">
             Seus manuscritos permanecem privados em seu espaço de trabalho.
           </p>
 
           <p className="text-sm text-zinc-600">
-            Ainda não tem uma conta?{" "}
-            <Link href="/register" className="font-medium text-zinc-900 underline-offset-2 hover:underline">
-              Criar conta
+            Já tem uma conta?{" "}
+            <Link href="/login" className="font-medium text-zinc-900 underline-offset-2 hover:underline">
+              Entrar
             </Link>
           </p>
         </div>

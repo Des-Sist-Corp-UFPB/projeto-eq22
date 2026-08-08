@@ -142,6 +142,35 @@ describe("SessionGuard", () => {
     expect(navigation.replace).toHaveBeenCalledTimes(1);
   });
 
+  test("não redireciona em loop quando já está no cadastro", async () => {
+    navigation.pathname = "/register";
+    authApi.fetchSession.mockResolvedValue(null);
+
+    renderWithClient(
+      <SessionGuard>
+        <p>Formulário de cadastro</p>
+      </SessionGuard>,
+    );
+
+    expect(await screen.findByText("Formulário de cadastro")).toBeInTheDocument();
+    await waitFor(() => expect(authApi.fetchSession).toHaveBeenCalled());
+    expect(navigation.replace).not.toHaveBeenCalled();
+  });
+
+  test("quem já tem sessão não permanece em /register", async () => {
+    navigation.pathname = "/register";
+    authApi.fetchSession.mockResolvedValue(session);
+
+    renderWithClient(
+      <SessionGuard>
+        <p>Formulário de cadastro</p>
+      </SessionGuard>,
+    );
+
+    await waitFor(() => expect(navigation.replace).toHaveBeenCalledWith("/library"));
+    expect(navigation.replace).toHaveBeenCalledTimes(1);
+  });
+
   test("backend fora do ar não é tratado como falta de sessão", async () => {
     authApi.fetchSession.mockRejectedValue(new TypeError("Failed to fetch"));
 

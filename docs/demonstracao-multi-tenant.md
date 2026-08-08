@@ -84,6 +84,22 @@ curl -b cookies.txt -H "X-XSRF-TOKEN: <token do cookie XSRF-TOKEN>" \
 
 O livro nasce no Tenant A.
 
+## 3b. Cadastro público (#143)
+
+Não depende do seed de demonstração — qualquer pessoa cria a própria conta pela interface.
+
+| # | Passo | Resultado esperado |
+|---|---|---|
+| 1 | Em `/login`, clicar em **Criar conta** | vai para `/register` |
+| 2 | Preencher nome, email novo, senha, confirmação e perfil principal, enviar | vai direto para `/library` autenticado, sem precisar logar de novo |
+| 3 | Ver a biblioteca | vazia — nenhum livro de outro usuário aparece |
+| 4 | Recarregar a página | continua autenticado (sessão restaurada por `/api/auth/me`) |
+| 5 | Criar o primeiro livro | aparece só ele na biblioteca |
+| 6 | Sair e entrar de novo com o mesmo email/senha | mesmo livro, e só ele |
+
+Detalhes de contrato, transação e segurança em
+[`authentication-multitenancy.md`](authentication-multitenancy.md#cadastro-público-143).
+
 ## 4. Limpeza
 
 ```bash
@@ -131,6 +147,15 @@ semeia os autores, porque a suíte autentica antes de qualquer coisa:
 ```bash
 docker compose -f docker-compose.e2e.yml -p iwrite-e2e up -d --build
 cd web && npm run e2e
+```
+
+`registration-flow.e2e.ts` (#143) roda nessa mesma suíte, sem depender do seed: cria um email único
+a cada execução, cadastra pela interface, confirma sessão após reload, biblioteca vazia, cria o
+primeiro livro, sai e entra de novo — e confirma que os livros dos autores de demonstração nunca
+aparecem. Para rodar só ele:
+
+```bash
+cd web && npx playwright test registration-flow
 ```
 
 ## 7. Evidências
