@@ -168,7 +168,7 @@ class SceneAnalysisTelemetryTest {
     void anUnrecognizedConfiguredModelBecomesOther() {
         UUID sceneId = UUID.randomUUID();
         when(sceneService.getScene(sceneId)).thenReturn(scene(PRIVATE_TEXT));
-        when(writingAssistant.model()).thenReturn("claude-opus-5");
+        when(writingAssistant.model()).thenReturn("llama-3-70b");
         when(writingAssistant.analyzeScene(any())).thenReturn(analysis());
 
         service.analyze(sceneId, null);
