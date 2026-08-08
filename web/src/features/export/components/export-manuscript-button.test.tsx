@@ -1,7 +1,18 @@
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, test, vi } from "vitest";
+import { QueryProvider } from "@/components/providers/query-provider";
 import { ExportManuscriptButton } from "@/features/export/components/export-manuscript-button";
+import { SessionGuard } from "@/features/auth/components/session-guard";
 import { renderWithClient } from "@/test/test-utils";
+
+const authApi = vi.hoisted(() => ({ fetchSession: vi.fn(), login: vi.fn(), logout: vi.fn() }));
+const navigation = vi.hoisted(() => ({ replace: vi.fn(), pathname: "/library" }));
+
+vi.mock("@/features/auth/api/auth-api", () => authApi);
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ replace: navigation.replace }),
+  usePathname: () => navigation.pathname,
+}));
 
 describe("ExportManuscriptButton", () => {
   beforeEach(() => {
@@ -48,7 +59,8 @@ describe("ExportManuscriptButton", () => {
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
-        "http://localhost:8085/api/books/book-1/exports/manuscript?format=md&includeSceneTitles=true&includeEmptyScenes=true"
+        "/api/books/book-1/exports/manuscript?format=md&includeSceneTitles=true&includeEmptyScenes=true",
+        { credentials: "same-origin" }
       );
     });
   });
@@ -71,7 +83,8 @@ describe("ExportManuscriptButton", () => {
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
-        "http://localhost:8085/api/books/book-1/exports/manuscript?format=docx&includeSceneTitles=true&includeEmptyScenes=true"
+        "/api/books/book-1/exports/manuscript?format=docx&includeSceneTitles=true&includeEmptyScenes=true",
+        { credentials: "same-origin" }
       );
     });
   });
@@ -92,7 +105,8 @@ describe("ExportManuscriptButton", () => {
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
-        "http://localhost:8085/api/books/book-1/exports/manuscript?format=txt&includeSceneTitles=false&includeEmptyScenes=false"
+        "/api/books/book-1/exports/manuscript?format=txt&includeSceneTitles=false&includeEmptyScenes=false",
+        { credentials: "same-origin" }
       );
     });
   });
@@ -119,5 +133,31 @@ describe("ExportManuscriptButton", () => {
     rejectDownload(new Error("falhou"));
 
     expect(await screen.findByText("Nao foi possivel exportar o manuscrito agora. Tente novamente.")).toBeInTheDocument();
+  });
+
+  test("exportacao que recebe 401 encerra a sessao e leva ao login, sem mensagem de falha de exportacao", async () => {
+    navigation.pathname = "/library";
+    authApi.fetchSession.mockResolvedValue({
+      user: { displayName: "Autor A", email: "autor-a@iwrite.local" },
+      activeWorkspace: { name: "Espaço do Autor A", role: "OWNER" },
+    });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ messages: ["Sua sessão expirou."] }), { status: 401 })
+    );
+
+    // The real provider, because the 401 handling that closes the session lives on its caches.
+    render(
+      <QueryProvider>
+        <SessionGuard>
+          <ExportManuscriptButton bookId="book-1" />
+        </SessionGuard>
+      </QueryProvider>
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "Exportar manuscrito" }));
+    fireEvent.click(screen.getByRole("button", { name: "Baixar manuscrito" }));
+
+    await waitFor(() => expect(navigation.replace).toHaveBeenCalledWith("/login?reason=expired"));
+    expect(screen.queryByText("Nao foi possivel exportar o manuscrito agora. Tente novamente.")).not.toBeInTheDocument();
   });
 });

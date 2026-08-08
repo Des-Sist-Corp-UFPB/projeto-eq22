@@ -297,7 +297,7 @@ export function BookWorkspace({ bookId, initialSceneId }: BookWorkspaceProps) {
       <header className="flex min-w-0 items-center justify-between gap-4 border-b border-zinc-200 bg-white px-4 shadow-sm shadow-zinc-200/60 md:px-6">
         <div className="flex min-w-0 items-center gap-4">
           <Link
-            href="/"
+            href="/library"
             className="inline-flex min-h-9 shrink-0 items-center justify-center rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-100 hover:text-zinc-950"
           >
             Voltar
@@ -375,9 +375,6 @@ export function BookWorkspace({ bookId, initialSceneId }: BookWorkspaceProps) {
           </div>
           {typeof outline?.wordCount === "number" ? <Badge>{outline.wordCount} palavras</Badge> : null}
           <ExportManuscriptButton bookId={bookId} />
-          <Badge variant="outline" className="hidden sm:inline-flex">
-            Backend: localhost:8085
-          </Badge>
         </div>
       </header>
       )}

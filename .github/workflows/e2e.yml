@@ -35,13 +35,26 @@ jobs:
         working-directory: web
         run: npx playwright install --with-deps chromium
 
+      - name: Generate ephemeral demo passwords
+        # Fresh, random per run — never a fixed value, never printed. GITHUB_ENV makes both of
+        # these available, unmasked only in-process, to every later step: the Compose stack that
+        # seeds the demo accounts and the Playwright step that logs in with them.
+        run: |
+          for name in IWRITE_DEMO_AUTOR_A_PASSWORD IWRITE_DEMO_AUTOR_B_PASSWORD; do
+            value="$(openssl rand -base64 32)"
+            echo "::add-mask::$value"
+            echo "$name=$value" >> "$GITHUB_ENV"
+          done
+
       - name: Start E2E stack
         run: docker compose -f docker-compose.e2e.yml up -d --build
 
       - name: Wait for backend
         run: |
           for i in {1..60}; do
-            if curl --fail --silent http://localhost:8086/api/books > /dev/null; then
+            # /api/books requires a session now; /ping is the backend's unauthenticated liveness
+            # probe, so readiness no longer depends on the demo seed having finished.
+            if curl --fail --silent http://localhost:8086/ping > /dev/null; then
               exit 0
             fi
             sleep 2

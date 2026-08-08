@@ -32,7 +32,8 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-@AutoConfigureMockMvc
+// Pre-auth domain test: exercises export contracts via CurrentUserProvider, not the session.
+@AutoConfigureMockMvc(addFilters = false)
 class BookDocxExportIntegrationTest extends PostgresIntegrationTest {
 
     private static final String DOCX_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";

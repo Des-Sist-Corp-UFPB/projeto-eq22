@@ -1,6 +1,7 @@
 target/
 .m2/
 *.log
+.env
 node_modules/
 .next/
 web/coverage/
@@ -8,3 +9,5 @@ web/coverage/
 
 .idea/
 .vscode/
+
+docker-compose.*.local.yml

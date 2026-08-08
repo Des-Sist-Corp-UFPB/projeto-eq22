@@ -1,8 +1,13 @@
 "use client";
 
+import { useMutation } from "@tanstack/react-query";
 import { useState } from "react";
 import { downloadBookExport, type ExportFormat } from "@/features/export/api/export-api";
 import { ExportOptionsPopover } from "@/features/export/components/export-options-popover";
+import { trackEvent } from "@/lib/analytics/analytics";
+import { ApiError } from "@/lib/api/client";
+
+const EXPORT_FAILED_MESSAGE = "Nao foi possivel exportar o manuscrito agora. Tente novamente.";
 
 type ExportManuscriptButtonProps = {
   bookId: string;
@@ -13,22 +18,24 @@ export function ExportManuscriptButton({ bookId }: ExportManuscriptButtonProps) 
   const [format, setFormat] = useState<ExportFormat>("md");
   const [includeSceneTitles, setIncludeSceneTitles] = useState(false);
   const [includeEmptyScenes, setIncludeEmptyScenes] = useState(false);
-  const [isExporting, setIsExporting] = useState(false);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  async function handleExport() {
-    setIsExporting(true);
-    setErrorMessage(null);
-
-    try {
-      await downloadBookExport(bookId, { format, includeSceneTitles, includeEmptyScenes });
+  // A mutation, not a plain async call: this is what routes a failed export through the same
+  // status-401 handling every other request in the app gets (QueryProvider's mutation cache),
+  // instead of a download-specific expiration path.
+  const exportMutation = useMutation({
+    mutationFn: () => downloadBookExport(bookId, { format, includeSceneTitles, includeEmptyScenes }),
+    onSuccess: () => {
+      trackEvent({ name: "book_exported", data: { target: "manuscript", format } });
       setIsOptionsOpen(false);
-    } catch {
-      setErrorMessage("Nao foi possivel exportar o manuscrito agora. Tente novamente.");
-    } finally {
-      setIsExporting(false);
-    }
-  }
+    },
+  });
+
+  // A 401 already ends the session and redirects to login through the global handler; showing a
+  // export-failed message on top of that redirect would just be confusing.
+  const errorMessage =
+    exportMutation.isError && !(exportMutation.error instanceof ApiError && exportMutation.error.status === 401)
+      ? EXPORT_FAILED_MESSAGE
+      : null;
 
   return (
     <ExportOptionsPopover
@@ -37,16 +44,16 @@ export function ExportManuscriptButton({ bookId }: ExportManuscriptButtonProps) 
       submitLabel="Baixar manuscrito"
       pendingLabel="Exportando..."
       isOpen={isOptionsOpen}
-      isPending={isExporting}
+      isPending={exportMutation.isPending}
       format={format}
       formatGroupName="manuscript-export-format"
       errorMessage={errorMessage}
       onToggle={() => {
-          setErrorMessage(null);
+          exportMutation.reset();
           setIsOptionsOpen((current) => !current);
       }}
       onFormatChange={setFormat}
-      onSubmit={handleExport}
+      onSubmit={() => exportMutation.mutate()}
     >
       <label className="flex items-start gap-3 text-sm text-zinc-700">
         <input

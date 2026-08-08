@@ -29,7 +29,8 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-@AutoConfigureMockMvc
+// Pre-auth domain test: exercises controller contracts via CurrentUserProvider, not the session.
+@AutoConfigureMockMvc(addFilters = false)
 class NotebookControllerIntegrationTest extends PostgresIntegrationTest {
 
     @Autowired

@@ -17,6 +17,7 @@ import { SceneMetadataForm } from "@/features/scenes/components/scene-metadata-f
 import { ScenePlanningPanel } from "@/features/scenes/components/scene-planning-panel";
 import { SceneVersionHistoryPanel, type SceneVersionRestoreMode } from "@/features/scenes/components/scene-version-history-panel";
 import type { Scene, SceneStatus, SceneVersionSource } from "@/features/scenes/types";
+import { trackEvent } from "@/lib/analytics/analytics";
 import { queryKeys } from "@/lib/query/keys";
 
 const SCENE_STATUSES: SceneStatus[] = ["IDEA", "PLANNED", "DRAFT", "WRITTEN", "REVISED", "FINAL"];
@@ -415,6 +416,7 @@ export function SceneEditor({
 
     try {
       const savedScene = await savePromise;
+      trackEvent({ name: "scene_saved", data: { source: source === "AUTO_SAVE" ? "AUTO_SAVE" : "MANUAL_SAVE" } });
       void queryClient.setQueryData(queryKeys.scene(savedScene.id), savedScene);
       void queryClient.invalidateQueries({ queryKey: queryKeys.outline(bookId) });
 

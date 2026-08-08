@@ -1,0 +1,13 @@
+# Overlay de demonstração (#137). Use junto do compose base:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.demo.yml up -d --build
+#
+# As senhas vêm do .env (ignorado pelo Git) e não têm padrão: sem elas o compose recusa subir,
+# em vez de criar contas conhecidas com senha previsível.
+services:
+  backend:
+    environment:
+      SPRING_PROFILES_ACTIVE: demo
+      IWRITE_DEMO_SEED_ENABLED: "true"
+      IWRITE_DEMO_AUTOR_A_PASSWORD: ${IWRITE_DEMO_AUTOR_A_PASSWORD:?defina no .env, sem valor padrão}
+      IWRITE_DEMO_AUTOR_B_PASSWORD: ${IWRITE_DEMO_AUTOR_B_PASSWORD:?defina no .env, sem valor padrão}

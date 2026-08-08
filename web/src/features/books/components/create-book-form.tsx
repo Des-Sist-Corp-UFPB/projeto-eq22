@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { FeedbackMessage } from "@/components/ui/feedback-message";
 import { TextAreaField, TextField } from "@/components/ui/text-field";
 import { createBook } from "@/features/books/api/books-api";
+import { trackEvent } from "@/lib/analytics/analytics";
 import { queryKeys } from "@/lib/query/keys";
 
 export function CreateBookForm() {
@@ -25,6 +26,7 @@ export function CreateBookForm() {
       setSubtitle("");
       setDescription("");
       setSuccessMessage("Livro criado com sucesso.");
+      trackEvent({ name: "book_created" });
       void queryClient.invalidateQueries({ queryKey: queryKeys.books });
     },
   });
@@ -71,7 +73,7 @@ export function CreateBookForm() {
 
       {mutation.isError ? (
         <FeedbackMessage variant="error">
-          Não foi possível criar o livro agora. Verifique se o backend está rodando em localhost:8085.
+          Não foi possível criar o livro agora. Tente novamente em instantes.
         </FeedbackMessage>
       ) : null}
     </form>

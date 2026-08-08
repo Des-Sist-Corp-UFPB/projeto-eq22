@@ -50,7 +50,7 @@ describe("downloadFile", () => {
 
     await downloadFile({ path: "/api/export", fallbackFileName: "fallback.md" });
 
-    expect(fetchMock).toHaveBeenCalledWith("http://localhost:8085/api/export");
+    expect(fetchMock).toHaveBeenCalledWith("/api/export", { credentials: "same-origin" });
     expect(window.URL.createObjectURL).toHaveBeenCalledTimes(1);
     const [blob] = vi.mocked(window.URL.createObjectURL).mock.calls[0];
     expect(blob).toBeDefined();

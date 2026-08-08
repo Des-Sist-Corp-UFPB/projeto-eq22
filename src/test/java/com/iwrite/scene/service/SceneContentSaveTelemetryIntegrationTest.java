@@ -1,0 +1,423 @@
+package com.iwrite.scene.service;
+
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import com.iwrite.common.exception.BadRequestException;
+import com.iwrite.common.exception.ConflictException;
+import com.iwrite.common.exception.ResourceNotFoundException;
+import com.iwrite.observability.BusinessTelemetry;
+import com.iwrite.observability.CapturedLogs;
+import com.iwrite.observability.RecordingTelemetry;
+import com.iwrite.scene.dto.SceneContentRequest;
+import com.iwrite.scene.dto.SceneResponse;
+import com.iwrite.sceneversion.entity.SceneVersionSource;
+import com.iwrite.support.PostgresIntegrationTest;
+import io.opentelemetry.api.trace.Span;
+import io.opentelemetry.api.trace.StatusCode;
+import io.opentelemetry.context.Scope;
+import io.opentelemetry.sdk.trace.data.SpanData;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
+
+import java.util.List;
+import java.util.UUID;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+/**
+ * Runs the real scene-content-save flow against PostgreSQL with an in-memory
+ * OpenTelemetry SDK swapped in for the global one, and asserts the spans and
+ * metrics that reach the exporter.
+ *
+ * <p>{@code updateContent} now defers closing its telemetry span until its
+ * own transaction actually completes (see {@link BusinessTelemetry.Operation
+ * #deferEndToTransaction()}). {@link PostgresIntegrationTest} runs every
+ * test inside one outer Spring-managed transaction that only rolls back
+ * *after* the test method returns, which would delay every span past this
+ * class's own assertions. {@code NOT_SUPPORTED} opts this class out of that
+ * wrapper so {@code updateContent}'s own {@code @Transactional} is really the
+ * outermost boundary and commits per call, exactly like a real HTTP request.
+ */
+@SpringBootTest(properties = "spring.main.allow-bean-definition-overriding=true")
+@Transactional(propagation = Propagation.NOT_SUPPORTED)
+class SceneContentSaveTelemetryIntegrationTest extends PostgresIntegrationTest {
+
+    private static final String PRIVATE_TEXT = "A porta se abriu devagar e o quarto prendeu a respiracao.";
+
+    @TestConfiguration
+    static class RecordingTelemetryConfiguration {
+
+        @Bean
+        RecordingTelemetry recordingTelemetry() {
+            return new RecordingTelemetry();
+        }
+
+        @Bean
+        BusinessTelemetry businessTelemetry(RecordingTelemetry recordingTelemetry) {
+            return recordingTelemetry.telemetry();
+        }
+    }
+
+    @Autowired
+    private RecordingTelemetry recording;
+
+    @Autowired
+    private PlatformTransactionManager transactionManager;
+
+    @BeforeEach
+    void resetSpans() {
+        recording.reset();
+    }
+
+    @Test
+    void changedContentIsReportedAsSuccessWithControlledAttributes() {
+        StoryWorld world = createStoryWorld("telemetry save success");
+
+        sceneService.updateContent(
+                world.scene().id(),
+                new SceneContentRequest(
+                        "{}",
+                        PRIVATE_TEXT,
+                        SceneVersionSource.MANUAL_SAVE,
+                        world.scene().contentRevision(),
+                        UUID.randomUUID()
+                )
+        );
+
+        SpanData span = recording.span(BusinessTelemetry.SPAN_SCENE_CONTENT_SAVE);
+        assertThat(span.getAttributes().get(BusinessTelemetry.OPERATION))
+                .isEqualTo(BusinessTelemetry.OPERATION_SCENE_CONTENT_SAVE);
+        assertThat(span.getAttributes().get(BusinessTelemetry.RESULT)).isEqualTo(BusinessTelemetry.RESULT_SUCCESS);
+        assertThat(span.getAttributes().get(BusinessTelemetry.SCENE_SOURCE))
+                .isEqualTo(BusinessTelemetry.SOURCE_MANUAL_SAVE);
+        assertThat(span.getAttributes().get(BusinessTelemetry.SCENE_CONTENT_SIZE_BUCKET))
+                .isEqualTo(BusinessTelemetry.BUCKET_SMALL);
+        assertThat(span.getAttributes().get(BusinessTelemetry.SCENE_CONTENT_CHANGED)).isTrue();
+        assertThat(recording.counterValue(
+                BusinessTelemetry.OPERATION_SCENE_CONTENT_SAVE,
+                BusinessTelemetry.RESULT_SUCCESS)).isPositive();
+        assertThat(recording.durationCount(
+                BusinessTelemetry.OPERATION_SCENE_CONTENT_SAVE,
+                BusinessTelemetry.RESULT_SUCCESS)).isPositive();
+        assertThat(attributeValues(span))
+                .noneMatch(value -> value.contains(PRIVATE_TEXT))
+                .noneMatch(value -> value.contains(world.scene().id().toString()))
+                .noneMatch(value -> value.contains(world.book().id().toString()))
+                .allMatch(value -> value.matches("(?i)true|false|[A-Za-z0-9][A-Za-z0-9._:/-]{0,63}"));
+    }
+
+    @Test
+    void autosaveIsDistinguishedFromManualSave() {
+        StoryWorld world = createStoryWorld("telemetry save autosave");
+
+        sceneService.updateContent(
+                world.scene().id(),
+                new SceneContentRequest("{}", "autosaved words", SceneVersionSource.AUTO_SAVE,
+                        world.scene().contentRevision(), UUID.randomUUID())
+        );
+
+        assertThat(recording.span(BusinessTelemetry.SPAN_SCENE_CONTENT_SAVE).getAttributes()
+                .get(BusinessTelemetry.SCENE_SOURCE)).isEqualTo(BusinessTelemetry.SOURCE_AUTOSAVE);
+    }
+
+    @Test
+    void unchangedContentIsReportedAsNoChange() {
+        StoryWorld world = createStoryWorld("telemetry save unchanged");
+
+        sceneService.updateContent(
+                world.scene().id(),
+                new SceneContentRequest(
+                        world.scene().contentJson(),
+                        world.scene().contentText(),
+                        SceneVersionSource.MANUAL_SAVE,
+                        world.scene().contentRevision(),
+                        UUID.randomUUID()
+                )
+        );
+
+        SpanData span = recording.span(BusinessTelemetry.SPAN_SCENE_CONTENT_SAVE);
+        assertThat(span.getAttributes().get(BusinessTelemetry.RESULT)).isEqualTo(BusinessTelemetry.RESULT_NO_CHANGE);
+        assertThat(span.getAttributes().get(BusinessTelemetry.SCENE_CONTENT_CHANGED)).isFalse();
+        assertThat(recording.counterValue(
+                BusinessTelemetry.OPERATION_SCENE_CONTENT_SAVE,
+                BusinessTelemetry.RESULT_NO_CHANGE)).isPositive();
+    }
+
+    @Test
+    void retryWithTheSameOperationIdIsReportedAsIdempotentRetry() {
+        StoryWorld world = createStoryWorld("telemetry save idempotent");
+        SceneContentRequest request = new SceneContentRequest(
+                "{}",
+                "one two three",
+                SceneVersionSource.AUTO_SAVE,
+                world.scene().contentRevision(),
+                UUID.randomUUID()
+        );
+
+        SceneResponse first = sceneService.updateContent(world.scene().id(), request);
+        SceneResponse retry = sceneService.updateContent(world.scene().id(), request);
+
+        assertThat(retry.contentRevision()).isEqualTo(first.contentRevision());
+        List<SpanData> spans = recording.spans();
+        assertThat(spans).hasSize(2);
+        assertThat(spans.get(0).getAttributes().get(BusinessTelemetry.RESULT))
+                .isEqualTo(BusinessTelemetry.RESULT_SUCCESS);
+        assertThat(spans.get(1).getAttributes().get(BusinessTelemetry.RESULT))
+                .isEqualTo(BusinessTelemetry.RESULT_IDEMPOTENT_RETRY);
+        assertThat(spans.get(1).getAttributes().get(BusinessTelemetry.SCENE_CONTENT_CHANGED)).isFalse();
+        assertThat(recording.counterValue(
+                BusinessTelemetry.OPERATION_SCENE_CONTENT_SAVE,
+                BusinessTelemetry.RESULT_IDEMPOTENT_RETRY)).isPositive();
+    }
+
+    /**
+     * {@code BadRequestException} is handled by {@code GlobalExceptionHandler}
+     * as a 400, not a server defect, so it must not share {@code failure}/
+     * {@code ERROR} with a genuine internal error.
+     */
+    @Test
+    void missingOperationIdIsReportedAsValidationErrorAtWarnWithoutLeakingDetails() {
+        StoryWorld world = createStoryWorld("telemetry save validation error");
+
+        try (CapturedLogs logs = new CapturedLogs()) {
+            assertThatThrownBy(() -> sceneService.updateContent(
+                    world.scene().id(),
+                    new SceneContentRequest("{}", PRIVATE_TEXT, SceneVersionSource.MANUAL_SAVE,
+                            world.scene().contentRevision(), null)
+            )).isInstanceOf(BadRequestException.class);
+
+            SpanData span = recording.span(BusinessTelemetry.SPAN_SCENE_CONTENT_SAVE);
+            assertThat(span.getAttributes().get(BusinessTelemetry.RESULT))
+                    .isEqualTo(BusinessTelemetry.RESULT_VALIDATION_ERROR);
+            assertThat(span.getAttributes().get(BusinessTelemetry.ERROR_TYPE)).isEqualTo("BadRequestException");
+            assertThat(recording.counterValue(
+                    BusinessTelemetry.OPERATION_SCENE_CONTENT_SAVE,
+                    BusinessTelemetry.RESULT_VALIDATION_ERROR)).isPositive();
+
+            ILoggingEvent event = logs.single(BusinessTelemetry.SPAN_SCENE_CONTENT_SAVE);
+            assertThat(event.getLevel()).isEqualTo(Level.WARN);
+            assertThat(event.getThrowableProxy()).isNull();
+            assertThat(CapturedLogs.allSurfaces(event)).doesNotContain("operationId is required");
+        }
+    }
+
+    /**
+     * {@code ResourceNotFoundException} is handled as a 404, not a server
+     * defect — a scene the caller doesn't have access to (wrong tenant or
+     * simply missing) must not raise the same alert as a broken deployment.
+     */
+    @Test
+    void nonExistentSceneIsReportedAsNotFoundAtWarnWithoutLeakingTheId() {
+        UUID missingSceneId = UUID.randomUUID();
+
+        try (CapturedLogs logs = new CapturedLogs()) {
+            assertThatThrownBy(() -> sceneService.updateContent(
+                    missingSceneId,
+                    new SceneContentRequest("{}", PRIVATE_TEXT, SceneVersionSource.MANUAL_SAVE, 0L, UUID.randomUUID())
+            )).isInstanceOf(ResourceNotFoundException.class);
+
+            SpanData span = recording.span(BusinessTelemetry.SPAN_SCENE_CONTENT_SAVE);
+            assertThat(span.getAttributes().get(BusinessTelemetry.RESULT))
+                    .isEqualTo(BusinessTelemetry.RESULT_NOT_FOUND);
+            assertThat(span.getAttributes().get(BusinessTelemetry.ERROR_TYPE)).isEqualTo("ResourceNotFoundException");
+            assertThat(recording.counterValue(
+                    BusinessTelemetry.OPERATION_SCENE_CONTENT_SAVE,
+                    BusinessTelemetry.RESULT_NOT_FOUND)).isPositive();
+
+            ILoggingEvent event = logs.single(BusinessTelemetry.SPAN_SCENE_CONTENT_SAVE);
+            assertThat(event.getLevel()).isEqualTo(Level.WARN);
+            assertThat(event.getThrowableProxy()).isNull();
+            assertThat(CapturedLogs.allSurfaces(event)).doesNotContain(missingSceneId.toString());
+        }
+    }
+
+    @Test
+    void staleRevisionIsReportedAsConflictWithoutTheRevisionNumbers() {
+        StoryWorld world = createStoryWorld("telemetry save conflict");
+        sceneService.updateContent(
+                world.scene().id(),
+                new SceneContentRequest("{}", "first", SceneVersionSource.MANUAL_SAVE,
+                        world.scene().contentRevision(), UUID.randomUUID())
+        );
+        recording.reset();
+
+        try (CapturedLogs logs = new CapturedLogs()) {
+            assertThatThrownBy(() -> sceneService.updateContent(
+                    world.scene().id(),
+                    new SceneContentRequest("{}", "second", SceneVersionSource.MANUAL_SAVE,
+                            world.scene().contentRevision(), UUID.randomUUID())
+            )).isInstanceOf(ConflictException.class);
+
+            SpanData span = recording.span(BusinessTelemetry.SPAN_SCENE_CONTENT_SAVE);
+            assertThat(span.getAttributes().get(BusinessTelemetry.RESULT)).isEqualTo(BusinessTelemetry.RESULT_CONFLICT);
+            assertThat(span.getAttributes().get(BusinessTelemetry.ERROR_TYPE)).isEqualTo("ConflictException");
+            assertThat(span.getEvents()).isEmpty();
+            assertThat(attributeValues(span))
+                    .noneMatch(value -> value.contains("Reload the scene"))
+                    .noneMatch(value -> value.contains("second"));
+            assertThat(recording.counterValue(
+                    BusinessTelemetry.OPERATION_SCENE_CONTENT_SAVE,
+                    BusinessTelemetry.RESULT_CONFLICT)).isPositive();
+
+            ILoggingEvent event = logs.single(BusinessTelemetry.SPAN_SCENE_CONTENT_SAVE);
+            assertThat(event.getLevel())
+                    .as("conflict is an expected outcome of concurrent writes, not a defect")
+                    .isEqualTo(Level.WARN);
+            assertThat(event.getThrowableProxy()).isNull();
+        }
+    }
+
+    @Test
+    void rollbackAfterTheTransactionalMethodReturnsDemotesSuccessToFailure() {
+        StoryWorld world = createStoryWorld("telemetry save rollback after return");
+        TransactionTemplate outerTransaction = new TransactionTemplate(transactionManager);
+
+        /*
+         * updateContent() joins this already-active outer transaction (default
+         * REQUIRED propagation) and returns a successful SceneResponse. The
+         * failure below happens only after that return, entirely outside
+         * updateContent's own body, forcing the surrounding transaction to
+         * roll back the content it already saved.
+         */
+        try (CapturedLogs logs = new CapturedLogs()) {
+            assertThatThrownBy(() -> outerTransaction.execute(status -> {
+                sceneService.updateContent(
+                        world.scene().id(),
+                        new SceneContentRequest("{}", "saved then rolled back", SceneVersionSource.MANUAL_SAVE,
+                                world.scene().contentRevision(), UUID.randomUUID())
+                );
+                throw new IllegalStateException("simulated failure after the transactional method already returned");
+            })).isInstanceOf(IllegalStateException.class);
+
+            SpanData span = recording.span(BusinessTelemetry.SPAN_SCENE_CONTENT_SAVE);
+            assertThat(span.getAttributes().get(BusinessTelemetry.RESULT)).isEqualTo(BusinessTelemetry.RESULT_FAILURE);
+            assertThat(span.getStatus().getStatusCode()).isEqualTo(StatusCode.ERROR);
+
+            ILoggingEvent event = logs.single(BusinessTelemetry.SPAN_SCENE_CONTENT_SAVE);
+            assertThat(event.getLevel())
+                    .as("a rollback that only surfaces after the method returned is an unexpected internal failure")
+                    .isEqualTo(Level.ERROR);
+        }
+    }
+
+    @Test
+    void saveSpanNestsUnderTheActiveHttpSpan() {
+        StoryWorld world = createStoryWorld("telemetry save nesting");
+        Span httpSpan = recording.sdk().getTracer("test-http")
+                .spanBuilder("PATCH /api/scenes/{sceneId}/content").startSpan();
+
+        try (Scope ignored = httpSpan.makeCurrent()) {
+            sceneService.updateContent(
+                    world.scene().id(),
+                    new SceneContentRequest("{}", "nested words", SceneVersionSource.MANUAL_SAVE,
+                            world.scene().contentRevision(), UUID.randomUUID())
+            );
+        } finally {
+            httpSpan.end();
+        }
+
+        SpanData span = recording.span(BusinessTelemetry.SPAN_SCENE_CONTENT_SAVE);
+        assertThat(span.getParentSpanId()).isEqualTo(httpSpan.getSpanContext().getSpanId());
+        assertThat(span.getTraceId()).isEqualTo(httpSpan.getSpanContext().getTraceId());
+    }
+
+    @Test
+    void afterUpdateContentReturnsTheParentSpanIsCurrentAndTheSaveSpanIsStillOpenUntilCommit() {
+        StoryWorld world = createStoryWorld("telemetry scope detach outer");
+        TransactionTemplate outerTransaction = new TransactionTemplate(transactionManager);
+        Span httpSpan = recording.sdk().getTracer("test-http")
+                .spanBuilder("PATCH /api/scenes/{sceneId}/content").startSpan();
+
+        try (Scope ignored = httpSpan.makeCurrent()) {
+            outerTransaction.executeWithoutResult(status -> {
+                sceneService.updateContent(
+                        world.scene().id(),
+                        new SceneContentRequest("{}", "scope detach test", SceneVersionSource.MANUAL_SAVE,
+                                world.scene().contentRevision(), UUID.randomUUID())
+                );
+
+                assertThat(Span.current().getSpanContext().getSpanId())
+                        .as("the Scope must be detached back to the HTTP span as soon as updateContent returns")
+                        .isEqualTo(httpSpan.getSpanContext().getSpanId());
+                assertThat(recording.spans())
+                        .as("the save span must not be exported/ended before the transaction completes")
+                        .noneMatch(span -> span.getName().equals(BusinessTelemetry.SPAN_SCENE_CONTENT_SAVE));
+
+                Span unrelated = recording.sdk().getTracer("test-unrelated")
+                        .spanBuilder("unrelated-work").startSpan();
+                unrelated.end();
+
+                assertThat(recording.span("unrelated-work").getParentSpanId())
+                        .as("work issued after updateContent returns must be a child of the HTTP span, not the save span")
+                        .isEqualTo(httpSpan.getSpanContext().getSpanId());
+            });
+        } finally {
+            httpSpan.end();
+        }
+
+        SpanData saveSpan = recording.span(BusinessTelemetry.SPAN_SCENE_CONTENT_SAVE);
+        assertThat(saveSpan.getAttributes().get(BusinessTelemetry.RESULT)).isEqualTo(BusinessTelemetry.RESULT_SUCCESS);
+        assertThat(saveSpan.getParentSpanId()).isEqualTo(httpSpan.getSpanContext().getSpanId());
+    }
+
+    @Test
+    void twoSequentialSavesInTheSameExternalTransactionShareTheSameParentAndBothCloseOnCommit() {
+        StoryWorld world = createStoryWorld("telemetry scope detach sequential");
+        TransactionTemplate outerTransaction = new TransactionTemplate(transactionManager);
+        Span httpSpan = recording.sdk().getTracer("test-http")
+                .spanBuilder("PATCH /api/scenes/{sceneId}/content").startSpan();
+
+        try (Scope ignored = httpSpan.makeCurrent()) {
+            outerTransaction.executeWithoutResult(status -> {
+                SceneResponse first = sceneService.updateContent(
+                        world.scene().id(),
+                        new SceneContentRequest("{}", "first save", SceneVersionSource.MANUAL_SAVE,
+                                world.scene().contentRevision(), UUID.randomUUID())
+                );
+                assertThat(Span.current().getSpanContext().getSpanId())
+                        .as("the parent Scope must be restored after the first save returns")
+                        .isEqualTo(httpSpan.getSpanContext().getSpanId());
+
+                sceneService.updateContent(
+                        world.scene().id(),
+                        new SceneContentRequest("{}", "second save", SceneVersionSource.MANUAL_SAVE,
+                                first.contentRevision(), UUID.randomUUID())
+                );
+                assertThat(Span.current().getSpanContext().getSpanId())
+                        .as("the parent Scope must be restored after the second save returns")
+                        .isEqualTo(httpSpan.getSpanContext().getSpanId());
+
+                assertThat(recording.spans())
+                        .as("neither save span may be exported/ended before the transaction completes")
+                        .isEmpty();
+            });
+        } finally {
+            httpSpan.end();
+        }
+
+        List<SpanData> saveSpans = recording.spans().stream()
+                .filter(span -> span.getName().equals(BusinessTelemetry.SPAN_SCENE_CONTENT_SAVE))
+                .toList();
+        assertThat(saveSpans).hasSize(2);
+        assertThat(saveSpans).as("both saves must be siblings under the HTTP span, ending exactly once each")
+                .allMatch(span -> span.getParentSpanId().equals(httpSpan.getSpanContext().getSpanId()))
+                .allMatch(span -> span.getAttributes().get(BusinessTelemetry.RESULT).equals(BusinessTelemetry.RESULT_SUCCESS));
+        assertThat(saveSpans.get(0).getSpanId())
+                .as("neither save span may be the other's parent")
+                .isNotEqualTo(saveSpans.get(1).getParentSpanId());
+        assertThat(saveSpans.get(1).getSpanId()).isNotEqualTo(saveSpans.get(0).getParentSpanId());
+    }
+
+    private static List<String> attributeValues(SpanData span) {
+        return span.getAttributes().asMap().values().stream().map(String::valueOf).toList();
+    }
+}

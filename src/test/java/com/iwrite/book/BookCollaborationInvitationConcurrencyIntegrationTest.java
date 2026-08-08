@@ -1,0 +1,124 @@
+package com.iwrite.book;
+
+import com.iwrite.book.dto.BookCollaborationInvitationCreationResult;
+import com.iwrite.book.dto.BookCollaborationInvitationRequest;
+import com.iwrite.book.dto.BookResponse;
+import com.iwrite.book.service.BookCollaborationInvitationService;
+import com.iwrite.common.exception.ConflictException;
+import com.iwrite.support.PostgresIntegrationTest;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.UUID;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+class BookCollaborationInvitationConcurrencyIntegrationTest extends PostgresIntegrationTest {
+
+    @Autowired
+    private BookCollaborationInvitationService invitationService;
+
+    @PersistenceContext
+    private EntityManager entityManager;
+
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    void concurrentEquivalentCreationsProduceExactlyOnePendingInvitation() {
+        BookResponse book = createBook("Concurrent invitation duplicates");
+        BookCollaborationInvitationRequest request =
+                new BookCollaborationInvitationRequest("race@example.com", "COLLABORATOR", null);
+
+        List<Object> outcomes = runConcurrently(
+                () -> invitationService.create(book.id(), request),
+                () -> invitationService.create(book.id(), request)
+        );
+
+        assertThat(outcomes)
+                .filteredOn(BookCollaborationInvitationCreationResult.class::isInstance)
+                .hasSize(1);
+        assertThat(outcomes)
+                .filteredOn(ConflictException.class::isInstance)
+                .hasSize(1);
+        assertThat(pendingCount(book.id(), "race@example.com")).isEqualTo(1L);
+    }
+
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    void concurrentCreationsForDifferentRecipientsBothSucceed() {
+        BookResponse book = createBook("Concurrent invitation distinct recipients");
+
+        List<Object> outcomes = runConcurrently(
+                () -> invitationService.create(
+                        book.id(),
+                        new BookCollaborationInvitationRequest("first@example.com", "COLLABORATOR", null)
+                ),
+                () -> invitationService.create(
+                        book.id(),
+                        new BookCollaborationInvitationRequest("second@example.com", "COLLABORATOR", null)
+                )
+        );
+
+        assertThat(outcomes)
+                .filteredOn(BookCollaborationInvitationCreationResult.class::isInstance)
+                .hasSize(2);
+        assertThat(pendingCount(book.id(), "first@example.com")).isEqualTo(1L);
+        assertThat(pendingCount(book.id(), "second@example.com")).isEqualTo(1L);
+    }
+
+    private long pendingCount(UUID bookId, String recipientEmail) {
+        Number count = (Number) entityManager.createNativeQuery("""
+                        select count(*)
+                        from book_collaboration_invitations
+                        where book_id = :bookId
+                          and recipient_email = :recipientEmail
+                          and status = 'PENDING'
+                        """)
+                .setParameter("bookId", bookId)
+                .setParameter("recipientEmail", recipientEmail)
+                .getSingleResult();
+        return count.longValue();
+    }
+
+    /**
+     * Runs both callables in parallel and returns each outcome as either the
+     * result or the thrown exception, so callers can assert on the mix.
+     */
+    private List<Object> runConcurrently(Callable<?> first, Callable<?> second) {
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        CountDownLatch start = new CountDownLatch(1);
+        try {
+            CompletableFuture<Object> firstFuture = CompletableFuture.supplyAsync(() -> outcomeOf(start, first), executor);
+            CompletableFuture<Object> secondFuture = CompletableFuture.supplyAsync(() -> outcomeOf(start, second), executor);
+            start.countDown();
+            List<Object> outcomes = new ArrayList<>();
+            outcomes.add(firstFuture.orTimeout(10, TimeUnit.SECONDS).join());
+            outcomes.add(secondFuture.orTimeout(10, TimeUnit.SECONDS).join());
+            return outcomes;
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    private Object outcomeOf(CountDownLatch start, Callable<?> callable) {
+        try {
+            if (!start.await(10, TimeUnit.SECONDS)) {
+                throw new IllegalStateException("Timed out waiting to start concurrent workers");
+            }
+            return callable.call();
+        } catch (Exception exception) {
+            return exception;
+        }
+    }
+}

@@ -14,6 +14,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.UUID;
 
@@ -22,7 +24,8 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-@AutoConfigureMockMvc
+// Pre-auth domain test: exercises tenant authorization via CurrentUserProvider, not the session.
+@AutoConfigureMockMvc(addFilters = false)
 class AuditLogIntegrationTest extends PostgresIntegrationTest {
 
     @Autowired
@@ -73,6 +76,7 @@ class AuditLogIntegrationTest extends PostgresIntegrationTest {
     }
 
     @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     void auditsOpenAiOperationWhenIntegrationIsDisabled() throws Exception {
         StoryWorld storyWorld = createStoryWorld("Audit AI");
 

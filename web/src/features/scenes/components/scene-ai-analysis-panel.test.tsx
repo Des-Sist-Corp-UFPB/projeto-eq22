@@ -1,5 +1,5 @@
 import { act, fireEvent, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { ApiError } from "@/lib/api/client";
 import {
   SceneAiAnalysisPanel,
@@ -360,6 +360,123 @@ describe("SceneAiAnalysisPanel", () => {
 
     await waitFor(() => expect(signal.aborted).toBe(true));
     expect(screen.getByRole("button", { name: "Analisar com IA" })).toBeEnabled();
+  });
+});
+
+describe("SceneAiAnalysisPanel — eventos de analytics", () => {
+  let track: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.analyzeScene.mockResolvedValue(analysisResult);
+    vi.stubEnv("NEXT_PUBLIC_UMAMI_ENABLED", "true");
+    vi.stubEnv("NEXT_PUBLIC_UMAMI_SCRIPT_URL", "https://umami.example.com/script.js");
+    vi.stubEnv("NEXT_PUBLIC_UMAMI_WEBSITE_ID", "11111111-1111-1111-1111-111111111111");
+    track = vi.fn();
+    window.umami = { track };
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    delete window.umami;
+  });
+
+  // O tracker recebe um payload com URL sanitizada; o nome do evento vem em payload.name.
+  function trackedNames() {
+    return track.mock.calls.map(([payload]) =>
+      typeof payload === "object" && payload !== null ? (payload as { name?: string }).name : payload
+    );
+  }
+
+  test("registra requested e succeeded apenas após resposta válida", async () => {
+    const pending = deferred<SceneAnalysisResult>();
+    mocks.analyzeScene.mockReturnValue(pending.promise);
+
+    renderPanel();
+    submitAnalysis();
+
+    expect(trackedNames()).toContain("scene_analysis_requested");
+    expect(trackedNames()).not.toContain("scene_analysis_succeeded");
+
+    await act(async () => {
+      pending.resolve(analysisResult);
+      await pending.promise;
+    });
+
+    expect(trackedNames()).toContain("scene_analysis_succeeded");
+  });
+
+  test("registra falha com categoria enumerada, sem mensagem livre", async () => {
+    mocks.analyzeScene.mockRejectedValue(new ApiError("Service unavailable", 503));
+
+    renderPanel();
+    submitAnalysis();
+
+    await screen.findByText("A análise com IA está indisponível no momento. Tente novamente mais tarde.");
+
+    const failedCalls = track.mock.calls.filter(
+      ([payload]) => (payload as { name?: string })?.name === "scene_analysis_failed"
+    );
+    expect(failedCalls).toHaveLength(1);
+    expect((failedCalls[0][0] as { data?: unknown }).data).toEqual({ category: "unavailable" });
+    expect(JSON.stringify(failedCalls)).not.toContain("Service unavailable");
+  });
+
+  test("resposta atrasada de outra cena não gera succeeded", async () => {
+    const pending = deferred<SceneAnalysisResult>();
+    mocks.analyzeScene.mockReturnValue(pending.promise);
+
+    const { rerender } = renderPanel();
+    submitAnalysis();
+
+    rerender(<SceneAiAnalysisPanel sceneId="scene-2" contentRevision={1} contentSyncState="saved" />);
+    await act(async () => pending.resolve(analysisResult));
+
+    expect(trackedNames()).toContain("scene_analysis_requested");
+    expect(trackedNames()).not.toContain("scene_analysis_succeeded");
+    expect(trackedNames()).not.toContain("scene_analysis_failed");
+  });
+
+  test("resposta atrasada após a revisão do conteúdo mudar não gera succeeded nem failed", async () => {
+    const pending = deferred<SceneAnalysisResult>();
+    mocks.analyzeScene.mockReturnValue(pending.promise);
+
+    const { rerender } = renderPanel("saved", 1);
+    submitAnalysis();
+
+    rerender(<SceneAiAnalysisPanel sceneId="scene-1" contentRevision={2} contentSyncState="saved" />);
+    await act(async () => pending.resolve(analysisResult));
+
+    expect(trackedNames()).not.toContain("scene_analysis_succeeded");
+    expect(trackedNames()).not.toContain("scene_analysis_failed");
+  });
+
+  test("falha atrasada de requisição descartada não gera failed", async () => {
+    const pending = deferred<SceneAnalysisResult>();
+    mocks.analyzeScene.mockReturnValue(pending.promise);
+
+    const { rerender } = renderPanel();
+    submitAnalysis();
+
+    rerender(<SceneAiAnalysisPanel sceneId="scene-2" contentRevision={1} contentSyncState="saved" />);
+    await act(async () => pending.reject(new ApiError("Service unavailable", 503)));
+
+    expect(trackedNames()).not.toContain("scene_analysis_failed");
+    expect(trackedNames()).not.toContain("scene_analysis_succeeded");
+  });
+
+  test("requisição cancelada (AbortError) não gera succeeded nem failed", async () => {
+    mocks.analyzeScene.mockRejectedValue(new DOMException("Aborted", "AbortError"));
+
+    renderPanel();
+    submitAnalysis();
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Analisar com IA" })).toBeEnabled();
+    });
+    expect(trackedNames()).toContain("scene_analysis_requested");
+    expect(trackedNames()).not.toContain("scene_analysis_succeeded");
+    expect(trackedNames()).not.toContain("scene_analysis_failed");
   });
 });
 

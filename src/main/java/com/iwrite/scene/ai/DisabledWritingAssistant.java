@@ -1,6 +1,7 @@
 package com.iwrite.scene.ai;
 
-import com.iwrite.common.exception.ServiceUnavailableException;
+import com.iwrite.llm.gateway.LlmCallResult;
+import com.iwrite.llm.gateway.LlmFeatureDisabledException;
 import com.iwrite.scene.dto.SceneAnalysisResponse;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.stereotype.Component;
@@ -10,9 +11,17 @@ import org.springframework.stereotype.Component;
 public class DisabledWritingAssistant implements WritingAssistant {
 
     @Override
-    public SceneAnalysisResponse analyzeScene(SceneAnalysisPrompt prompt) {
-        throw new ServiceUnavailableException(
-                "AI scene analysis is not available. Set spring.ai.model.chat=openai to enable it."
-        );
+    public String provider() {
+        return "disabled";
+    }
+
+    @Override
+    public String model() {
+        return null;
+    }
+
+    @Override
+    public LlmCallResult<SceneAnalysisResponse> analyzeScene(SceneAnalysisPrompt prompt) {
+        throw new LlmFeatureDisabledException();
     }
 }

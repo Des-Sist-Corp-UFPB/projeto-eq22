@@ -1,0 +1,34 @@
+# Overlay exclusivo para carga LOCAL do k6 (loadtest/carga.js, issue #129). Use junto do compose
+# base + demo:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.demo.yml -f docker-compose.loadtest.yml \
+#     up -d --build
+#
+# Por que existe: loadtest/carga.js autentica cada VU individualmente (uma sessão real por VU,
+# não uma sessão de setup() repassada a todas — ver loadtest/README.md §3), então uma execução com
+# VUS=N faz até N+2 logins contra a mesma conta (1 de setup() + N das VUs + 1 de teardown()),
+# concentrados no warmup. O default de produção (application.yml: 8 tentativas/conta, 20/origem
+# por 1 minuto) rejeita esse volume com 429 antes da fase medida terminar de autenticar.
+#
+# O orçamento conservador necessário é VUS + 2. O default abaixo (1000) suporta até VUS=998 caso
+# todos os logins caiam na mesma janela de 1 minuto. Para uma execução maior, defina
+# IWRITE_LOADTEST_LOGIN_RATE_LIMIT com valor >= VUS + 2:
+#
+#   IWRITE_LOADTEST_LOGIN_RATE_LIMIT=1500 docker compose -f docker-compose.yml \
+#     -f docker-compose.demo.yml -f docker-compose.loadtest.yml up -d --build
+#
+# Uma única variável controla os dois limites de propósito (conta/origem) para que não fiquem
+# acidentalmente diferentes — não muda mais nada do backend. NÃO altera os defaults seguros de
+# application.yml/.env.example: este overlay é opt-in, só entra no compose se alguém passar
+# -f docker-compose.loadtest.yml explicitamente.
+#
+# NUNCA use isto contra Render, produção ou o servidor acadêmico compartilhado — é só para a
+# stack Docker isolada e local usada por loadtest/carga.js.
+#
+# Nenhuma senha/segredo pertence a este arquivo — credenciais continuam vindo só do .env
+# (IWRITE_DEMO_AUTOR_A_PASSWORD/_B_PASSWORD via docker-compose.demo.yml) ou de LOAD_TEST_PASSWORD.
+services:
+  backend:
+    environment:
+      IWRITE_LOGIN_RATE_LIMIT_MAX_PER_ACCOUNT: "${IWRITE_LOADTEST_LOGIN_RATE_LIMIT:-1000}"
+      IWRITE_LOGIN_RATE_LIMIT_MAX_PER_ORIGIN: "${IWRITE_LOADTEST_LOGIN_RATE_LIMIT:-1000}"
