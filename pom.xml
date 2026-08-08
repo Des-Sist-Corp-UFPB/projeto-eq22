@@ -139,9 +139,6 @@
                         <phase>test</phase>
                         <goals>
                             <goal>report</goal>
-                        </phase>
-                        <goals>
-                            <goal>report</goal>
                         </goals>
                     </execution>
                 </executions>
