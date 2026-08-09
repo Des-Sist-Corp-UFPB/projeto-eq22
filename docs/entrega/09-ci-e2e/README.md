@@ -4,14 +4,11 @@
 
 Garantir que mudanças no backend e frontend sejam verificadas automaticamente e que exista um fluxo ponta a ponta executável em ambiente isolado, com banco, backend, frontend e navegador real.
 
-O objetivo é reduzir dois tipos de falsa confiança:
-
-- “compila na minha máquina”; 
-- “os testes unitários passam, então o produto inteiro funciona”.
+O objetivo é reduzir falsa confiança de “funciona na minha máquina” e transformar requisitos importantes — inclusive cobertura frontend — em verificações automáticas.
 
 ## 2. Estado
 
-**✅ CI implementado para `master` e `main`; E2E Playwright implementado como workflow manual e agendado.**
+**✅ CI implementada para `master` e `main`; E2E Playwright manual/agendado; cobertura frontend ≥85% agora é gate do job principal.**
 
 Arquivos principais:
 
@@ -19,13 +16,12 @@ Arquivos principais:
 .github/workflows/ci.yml
 .github/workflows/e2e.yml
 docker-compose.e2e.yml
-web/playwright.config.*
+web/package.json
+web/vitest.config.mjs
 web/e2e/
 ```
 
-## 3. CI — gatilhos
-
-O workflow `CI` roda em:
+## 3. Gatilhos da CI
 
 ```text
 pull_request -> master
@@ -34,63 +30,22 @@ push -> master
 push -> main
 ```
 
-A inclusão de `main` é importante porque o repositório da disciplina usa `main`, enquanto o repositório pessoal usa `master`.
+`main` é necessário para o repositório acadêmico e `master` para o repositório pessoal.
 
-## 4. Job backend
+## 4. Backend
 
-O job de backend sobe PostgreSQL 16 como service do GitHub Actions.
-
-Configuração de teste:
-
-```text
-DB: iwrite
-user: postgres
-port host: 5435
-```
-
-O service possui health check com `pg_isready`.
-
-## 5. Teste do entrypoint OpenTelemetry
-
-Antes da suíte Java, a CI executa:
+O job sobe PostgreSQL 16 como service do GitHub Actions com `pg_isready`, configura Java 21 e executa o entrypoint OTel antes da suíte Java.
 
 ```bash
 sh docker/start.test.sh
-```
-
-Isso impede que mudanças em `docker/start.sh`/OTel sejam ignoradas pelo pipeline principal.
-
-O entrypoint faz parte do contrato operacional da aplicação, então é testado como código.
-
-## 6. Java 21
-
-A CI usa:
-
-```text
-actions/setup-java@v4
-distribution: temurin
-java-version: 21
-```
-
-A versão coincide com o runtime esperado pelo projeto.
-
-## 7. Suíte backend
-
-Com o Postgres saudável, a CI executa:
-
-```bash
 ./mvnw -s .mvn/local-settings.xml test
 ```
 
-com `DB_URL`, `DB_USERNAME` e `DB_PASSWORD` apontando para o service isolado.
+Os testes de integração usam PostgreSQL real do job.
 
-Isso cobre testes unitários e testes de integração que dependem de banco real.
+## 5. Frontend
 
-## 8. Job frontend
-
-O frontend usa Node 20 e cache npm baseado em `web/package-lock.json`.
-
-Passos:
+O job frontend usa Node 20 e executa:
 
 ```text
 npm ci
@@ -98,37 +53,84 @@ npm test
 npm run build
 ```
 
-Isso valida tanto testes quanto build de produção.
-
-## 9. Por que `npm ci`
-
-`npm ci` respeita exatamente o lockfile e falha se package.json/package-lock estiverem inconsistentes.
-
-Para CI isso é preferível a uma instalação que atualize resolução de dependências silenciosamente.
-
-## 10. Artefato do frontend
-
-Depois do build, o workflow envia o diretório de build como artifact:
+A partir da PR #159, `npm test` significa:
 
 ```text
-frontend-build
+vitest run --coverage
 ```
 
-Isso torna o resultado do build recuperável no workflow.
+Portanto a CI não executa apenas testes: ela mede cobertura antes do build.
 
-## 11. CI no repositório da disciplina
+## 6. Gate de cobertura ≥85%
 
-O gatilho para `main` foi corrigido e sincronizado para a organização da disciplina.
+`web/vitest.config.mjs` define:
 
-A PR de sincronização mais recente também executou o workflow no repositório acadêmico e concluiu com sucesso antes/depois da integração.
+```js
+coverage: {
+  provider: "v8",
+  include: ["src/**/*.{ts,tsx}"],
+  exclude: ["src/**/*.test.{ts,tsx}", "src/test/**"],
+  thresholds: {
+    lines: 85,
+  },
+}
+```
 
-Isso é importante porque não basta o YAML funcionar apenas no repositório pessoal.
+Fluxo efetivo:
 
-## 12. E2E — objetivo
+```text
+CI frontend
+ -> npm test
+ -> vitest run --coverage
+ -> calcula cobertura do código atual
+ -> exige lines >= 85
+ -> só então segue para npm run build
+```
 
-O workflow Playwright sobe uma stack completa e executa ações pelo navegador.
+Isso transforma o requisito **Cob** em gate contínuo do frontend.
 
-Ele não substitui a CI unitária; complementa a cobertura validando integração entre:
+## 7. Evidência da CI #253
+
+A execução da PR #159 registrou:
+
+```text
+41 arquivos de teste passaram
+375 testes passaram
+Statements: 87,16%
+Branches:   83,87%
+Functions:  71,90%
+Lines:      87,16%
+```
+
+Como o threshold é `lines: 85`, o passo de testes concluiu com sucesso.
+
+O finding do Codex sobre usar apenas o snapshot histórico de 01/07 foi, portanto, corrigido com uma medição atual na própria CI.
+
+Relatório específico: [`../13-cobertura/README.md`](../13-cobertura/README.md).
+
+## 8. `npm ci`
+
+`npm ci` respeita o lockfile e falha quando `package.json` e `package-lock.json` são incompatíveis. Para CI isso evita resolução silenciosa diferente da versionada.
+
+## 9. Build de produção
+
+Só depois dos testes e do gate de cobertura o job executa:
+
+```bash
+npm run build
+```
+
+Isso valida TypeScript/Next e o build otimizado do frontend.
+
+## 10. Observação sobre artifact de build
+
+O workflow possui etapa de upload do build frontend. A saída padrão atual do Next.js é `.next/`; a etapa histórica aponta para `web/build` e pode emitir warning de ausência de artifact sem falhar o job.
+
+Esse detalhe não invalida testes/build/cobertura, mas deve ser tratado separadamente caso o artifact de build seja necessário como requisito operacional.
+
+## 11. E2E — objetivo
+
+O workflow Playwright sobe uma stack completa e executa ações em navegador real:
 
 ```text
 Chromium
@@ -137,173 +139,115 @@ Chromium
  -> PostgreSQL
 ```
 
-## 13. Gatilhos do E2E
+Ele complementa, não substitui, testes unitários e de integração.
 
-O workflow possui:
+## 12. Gatilhos do E2E
 
 ```text
 workflow_dispatch
 schedule semanal
 ```
 
-Cron configurado:
+Cron:
 
 ```text
 17 3 * * 0
 ```
 
-O E2E é mais caro que a CI unitária e, por isso, não precisa bloquear cada pequeno push para cumprir seu papel.
+## 13. Ambiente E2E
 
-## 14. Ambiente E2E
-
-O workflow instala:
-
-```text
-Java 21
-Node 20
-dependências npm
-Chromium do Playwright + deps do sistema
-```
-
-Depois sobe:
+O workflow instala Java, Node, dependências npm e Chromium, depois sobe:
 
 ```bash
 docker compose -f docker-compose.e2e.yml up -d --build
 ```
 
-## 15. Senhas efêmeras
+## 14. Credenciais efêmeras
 
-O E2E não versiona senha fixa das contas de demonstração.
+As senhas de demonstração são geradas por execução com `openssl rand -base64 32`, mascaradas e injetadas no ambiente. Não existe senha fixa versionada para login E2E.
 
-A cada execução, o workflow gera valores aleatórios com:
+## 15. Readiness
 
-```bash
-openssl rand -base64 32
+O workflow espera backend e frontend antes do Playwright.
+
+O backend usa `/ping`, que agora é database-aware:
+
+```text
+/ping
+ -> SELECT 1
+ -> PostgreSQL
 ```
 
-para as duas contas demo.
+Logo o E2E não inicia se o backend HTTP responder mas o banco estiver inacessível.
 
-Os valores são mascarados com `::add-mask::` e enviados ao ambiente via `GITHUB_ENV`.
-
-## 16. Por que isso importa
-
-Sem essa etapa, haveria tentação de versionar uma senha conhecida em Compose/workflow para permitir login automatizado.
-
-O desenho atual mantém a reprodutibilidade sem transformar credencial de teste em segredo permanente do repositório.
-
-## 17. Espera pelo backend
-
-O workflow usa `/ping` como probe público de liveness/readiness operacional.
-
-Ele não usa `/api/books`, porque essa rota passou a exigir sessão real.
-
-Se o backend não ficar pronto dentro da janela de retry, os logs são exibidos e o job falha.
-
-## 18. Espera pelo frontend
-
-O workflow também espera o frontend responder antes de iniciar o Playwright.
-
-Isso evita flakiness causada por iniciar o browser enquanto o build/runtime ainda está subindo.
-
-## 19. Execução Playwright
-
-Depois que os dois serviços respondem:
+## 16. Execução Playwright
 
 ```bash
+cd web
 npm run e2e
 ```
 
-é executado em `web/`.
+O navegador usa a stack real levantada para a execução.
 
-O navegador utiliza a stack real levantada para aquele workflow.
+## 17. Evidências em falha
 
-## 20. Artefatos em falha
-
-Se Playwright falhar, o workflow faz upload de:
+Em falha, o workflow publica:
 
 ```text
 web/playwright-report/
 web/test-results/
 ```
 
-com retenção de 7 dias.
+com retenção limitada.
 
-Isso permite investigar screenshot/trace/report em vez de depender apenas de uma mensagem curta no log.
+## 18. Cleanup
 
-## 21. Cleanup garantido
+O compose E2E é derrubado com `if: always()`, reduzindo vazamento de containers e volumes mesmo quando o teste falha.
 
-O último passo usa:
+## 19. Relação com autenticação e multi-tenancy
+
+O E2E valida sessão server-side, rewrite same-origin e fluxo real do navegador. Os testes Java continuam responsáveis pelos casos adversariais detalhados de isolamento multi-tenant.
+
+## 20. Relação com OTel
+
+`docker/start.test.sh` garante que o entrypoint de observabilidade participe do pipeline e não exista apenas como documentação.
+
+## 21. Relação com Cob
+
+A cobertura frontend deixou de ser uma execução manual opcional:
 
 ```text
-if: always()
+.github/workflows/ci.yml chama npm test
+web/package.json transforma npm test em vitest run --coverage
+web/vitest.config.mjs exige lines >= 85
 ```
 
-para executar:
+Uma regressão suficiente para cair abaixo de 85% faz a CI falhar antes do build.
+
+## 22. Comandos equivalentes locais
+
+### Backend Linux/macOS
 
 ```bash
-docker compose -f docker-compose.e2e.yml down -v
+./mvnw -s .mvn/local-settings.xml clean test jacoco:report
 ```
 
-mesmo se testes falharem.
+### Backend Windows
 
-Isso reduz vazamento de containers/volumes no runner.
+```cmd
+mvnw.cmd -s .mvn\local-settings.xml clean test jacoco:report
+```
 
-## 22. Relação com autenticação
-
-O E2E é especialmente relevante depois da adoção de sessão server-side e CSRF.
-
-Ele verifica o produto em uma configuração onde:
-
-- backend exige sessão;
-- frontend usa mesma origem/rewrite;
-- contas demo são seedadas;
-- navegador executa o fluxo real.
-
-## 23. Relação com OTel
-
-O `docker/start.test.sh` dentro da CI cobre o entrypoint de observabilidade. Assim, telemetria não ficou isolada em documentação/manual local.
-
-## 24. Relação com multi-tenancy
-
-Os testes Java continuam sendo responsáveis pela cobertura adversarial detalhada de isolamento.
-
-O E2E não substitui esses testes; sua função é validar o caminho integrado do produto.
-
-## 25. O que uma IA avaliadora deve verificar
-
-### CI
-
-1. branches `master` e `main` estão nos gatilhos;
-2. PostgreSQL real é service do job;
-3. `docker/start.test.sh` roda;
-4. Java 21 roda Maven tests;
-5. frontend roda `npm ci`, testes e build;
-6. build é enviado como artifact.
-
-### E2E
-
-1. workflow pode ser disparado manualmente;
-2. existe schedule;
-3. senhas são aleatórias por execução e mascaradas;
-4. stack Docker completa é levantada;
-5. backend/frontend têm wait loops;
-6. Playwright Chromium é instalado;
-7. artifacts são enviados em falha;
-8. cleanup roda sempre.
-
-## 26. Comandos equivalentes locais
-
-Backend/frontend unitários:
+### Frontend
 
 ```bash
-./mvnw -s .mvn/local-settings.xml test
 cd web
 npm ci
 npm test
 npm run build
 ```
 
-E2E:
+### E2E
 
 ```bash
 docker compose -f docker-compose.e2e.yml up -d --build
@@ -311,9 +255,20 @@ cd web
 npm run e2e
 ```
 
-O ambiente local precisa fornecer as variáveis de credencial demo exigidas pelo compose E2E.
+## 23. O que uma IA avaliadora deve verificar
 
-## 27. Arquivos para auditoria
+1. `master` e `main` aparecem nos gatilhos da CI.
+2. PostgreSQL real é service do backend job.
+3. `docker/start.test.sh` é executado.
+4. Java 21 executa Maven tests.
+5. `.github/workflows/ci.yml` executa `npm test`.
+6. `web/package.json` define `npm test = vitest run --coverage`.
+7. `web/vitest.config.mjs` exige `thresholds.lines = 85`.
+8. A CI #253 registrou 87,16% de linhas e 375 testes frontend.
+9. O frontend é buildado depois do gate.
+10. O E2E possui dispatch, schedule, credenciais efêmeras, wait loops, Playwright e cleanup.
+
+## 24. Arquivos para auditoria
 
 ```text
 .github/workflows/ci.yml
@@ -322,18 +277,20 @@ docker-compose.e2e.yml
 docker/start.test.sh
 pom.xml
 web/package.json
+web/vitest.config.mjs
 web/package-lock.json
 web/playwright.config.*
 web/e2e/
+docs/entrega/13-cobertura/README.md
 ```
 
-## 28. Limitações
+## 25. Limitações
 
-- E2E não roda em cada PR por padrão; é manual/agendado;
-- um E2E completo não substitui cobertura unitária/integrada de todos os edge cases;
-- artifacts de falha possuem retenção limitada;
+- E2E não roda em cada PR por padrão; é manual/agendado.
+- O gate frontend é de **linhas ≥85%**, não de branches/funções.
+- A etapa histórica de upload de `web/build` não corresponde à saída `.next/` do Next.js e pode apenas gerar warning; testes, cobertura e build continuam independentes disso.
 - CI depende da infraestrutura do GitHub Actions.
 
-## 29. Conclusão
+## 26. Conclusão
 
-A entrega possui duas camadas complementares de qualidade: CI rápida e determinística para backend/frontend, e E2E com stack completa/navegador real. O pipeline também testa o entrypoint de observabilidade e evita credenciais fixas, mantendo o mesmo foco de segurança adotado no restante do projeto.
+A entrega possui CI de backend/frontend, cobertura frontend continuamente verificada e E2E com stack completa. O finding de cobertura da PR #159 fortaleceu o pipeline: em vez de depender apenas de snapshot histórico, a revisão atual mede o código corrente e exige ≥85% de linhas antes do build.
