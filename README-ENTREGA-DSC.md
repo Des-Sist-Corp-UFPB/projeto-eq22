@@ -61,7 +61,8 @@ O critério atualizado pede explicitamente que o **healthcheck consulte o banco 
 GET /ping
   -> PingController
   -> DatabaseHealthService
-  -> JdbcTemplate.queryForObject("SELECT 1", Integer.class)
+  -> HEALTH_QUERY = "SELECT 1"
+  -> JdbcTemplate.queryForObject(HEALTH_QUERY, Integer.class)
   -> PostgreSQL
 ```
 
