@@ -14,13 +14,13 @@ Este repositório também é a implementação da equipe **eq22** na disciplina 
 | OpenTelemetry — instrumentação manual de negócio | ✅ Implementado e testado | [`docs/otel-business-signals.md`](docs/otel-business-signals.md), `BusinessTelemetry`, spans e métricas dos fluxos críticos |
 | Logs estruturados + Loki + correlação com traces | ✅ Implementado e testado | guia oficial em [`docs/opentelemetry-logs.md`](docs/opentelemetry-logs.md) e implementação em [`docs/otel-correlated-logs.md`](docs/otel-correlated-logs.md) |
 | Grafana / Tempo / Loki / Prometheus-Mimir | ✅ Stack e exportação configuradas | `docker-compose.observability.yml` + [`docs/opentelemetry-implementation.md`](docs/opentelemetry-implementation.md) |
-| Analytics de produto com Umami | ✅ Código e testes implementados; 🟡 validação externa depende do Website ID oficial | [`docs/analytics-umami.md`](docs/analytics-umami.md), `web/src/lib/analytics/` |
-| Servidor MCP | ✅ Implementado e testado; 🟡 evidência visual depende de execução humana no Inspector | [`docs/mcp-server.md`](docs/mcp-server.md), `com.iwrite.mcp` |
+| Analytics de produto com Umami | ✅ Implementado, testado e validado no painel institucional; 🟡 pós-deploy remoto pendente | [`docs/analytics-umami.md`](docs/analytics-umami.md), [`docs/evidencias-validacao-humana-2026-08-08.md`](docs/evidencias-validacao-humana-2026-08-08.md), `web/src/lib/analytics/` |
+| Servidor MCP | ✅ Implementado, testado e validado no MCP Inspector | [`docs/mcp-server.md`](docs/mcp-server.md), [`docs/evidencias-validacao-humana-2026-08-08.md`](docs/evidencias-validacao-humana-2026-08-08.md), `com.iwrite.mcp` |
 | Teste de carga | ✅ Implementado com k6 | [`loadtest/README.md`](loadtest/README.md), `loadtest/carga.js`, `docker-compose.loadtest.yml` |
 | CI e E2E | ✅ Implementado | [`.github/workflows/ci.yml`](.github/workflows/ci.yml), [`.github/workflows/e2e.yml`](.github/workflows/e2e.yml) |
 | Health check / deploy | ✅ Artefatos e probe implementados | `Dockerfile`, `web/Dockerfile`, `GET /ping`, rewrite `/api/ping` no Next.js |
 
-> **Importante:** evidências que dependem de serviços externos ou ação humana não são marcadas como concluídas apenas porque o código existe. O Website ID/painel oficial do Umami, visualização no Grafana institucional e screenshots do MCP Inspector devem ser validados no ambiente da disciplina. O checklist correspondente está em [`docs/mcp-server.md`](docs/mcp-server.md#evidências-que-dependem-de-ação-humana-checklist).
+> **Validação humana:** Umami e MCP foram validados em 08/08/2026. O Umami recebeu page views e eventos reais no painel institucional a partir do frontend local; resta repetir a validação após configurar o build/deploy remoto de `eq22.dsc.rodrigor.com`. O MCP foi validado no Inspector em loopback e continua intencionalmente não exposto no deploy. Registro consolidado: [`docs/evidencias-validacao-humana-2026-08-08.md`](docs/evidencias-validacao-humana-2026-08-08.md).
 
 ## Arquitetura
 
@@ -246,7 +246,7 @@ Eventos tipados atualmente suportados:
 
 A integração remove query string/hash, normaliza segmentos dinâmicos de rota e aplica allowlist de propriedades e valores. Não envia conteúdo do manuscrito, títulos, emails, nomes, IDs brutos, prompts, respostas de IA, tokens ou stack traces.
 
-Sem configuração válida, a integração é no-op e não bloqueia o produto. O Website ID oficial não é versionado; sua presença e os eventos no painel precisam ser validados no ambiente da disciplina.
+Sem configuração válida, a integração é no-op e não bloqueia o produto. O Website ID oficial não é versionado. A validação local de 08/08/2026 confirmou coleta HTTP `200`, page views no painel institucional, sanitização `/books/{id}` e os eventos `book_created`, `scene_saved` e `book_exported`; resta repetir a validação no deploy remoto. Consulte [`docs/evidencias-validacao-humana-2026-08-08.md`](docs/evidencias-validacao-humana-2026-08-08.md).
 
 ## Servidor MCP
 
@@ -279,6 +279,8 @@ npx @modelcontextprotocol/inspector
 Conecte por SSE em `http://localhost:8085/sse`.
 
 O `McpLoopbackGuard` impede o startup em configurações não suportadas. Enquanto o transporte não tiver autenticação própria por cliente, os endpoints MCP não devem ser publicados por reverse proxy.
+
+A validação humana de 08/08/2026 confirmou conexão no Inspector v2.1.0, descoberta das três tools, execução real de listagem/outline, descoberta e leitura do resource template e o caminho de erro `unavailable` sanitizado de `analisar_cena`. Consulte [`docs/evidencias-validacao-humana-2026-08-08.md`](docs/evidencias-validacao-humana-2026-08-08.md).
 
 ## Teste de carga com k6
 
@@ -475,6 +477,7 @@ Evidências principais:
 | Logs correlacionados | [`docs/otel-correlated-logs.md`](docs/otel-correlated-logs.md) |
 | Umami | [`docs/analytics-umami.md`](docs/analytics-umami.md) |
 | MCP | [`docs/mcp-server.md`](docs/mcp-server.md) |
+| Validação humana Umami + MCP (08/08/2026) | [`docs/evidencias-validacao-humana-2026-08-08.md`](docs/evidencias-validacao-humana-2026-08-08.md) |
 | Teste de carga | [`loadtest/README.md`](loadtest/README.md) |
 
 Use `.env.example` e `web/.env.local.example` como modelos. **Não versione valores secretos.**
