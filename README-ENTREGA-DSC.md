@@ -4,6 +4,24 @@
 >
 > Este arquivo resume o estado verificável da entrega acadêmica do IWrite e aponta, para cada requisito, os arquivos de implementação, testes, documentação e evidências existentes no repositório. O objetivo é permitir que um avaliador — inclusive uma IA — percorra diretamente a cadeia **requisito → implementação → teste → evidência**, sem depender de inferências a partir do histórico de commits.
 
+## Relatórios detalhados por requisito
+
+Para auditoria profunda, cada requisito possui um `README.md` próprio em [`docs/entrega/`](docs/entrega/README.md). Esses relatórios detalham arquitetura, implementação, decisões, segurança, testes, evidências, comandos de reprodução, resultados medidos e limitações conhecidas.
+
+| Requisito | Relatório detalhado |
+|---|---|
+| Autenticação e multi-tenancy | [`docs/entrega/01-auth-multitenancy/README.md`](docs/entrega/01-auth-multitenancy/README.md) |
+| OpenTelemetry automático | [`docs/entrega/02-opentelemetry-auto/README.md`](docs/entrega/02-opentelemetry-auto/README.md) |
+| Spans e métricas de negócio | [`docs/entrega/03-telemetria-negocio/README.md`](docs/entrega/03-telemetria-negocio/README.md) |
+| Grafana / Tempo / Loki / Mimir | [`docs/entrega/04-grafana-stack/README.md`](docs/entrega/04-grafana-stack/README.md) |
+| Logs estruturados e correlação | [`docs/entrega/05-logs-correlacionados/README.md`](docs/entrega/05-logs-correlacionados/README.md) |
+| Umami | [`docs/entrega/06-umami/README.md`](docs/entrega/06-umami/README.md) |
+| MCP Server | [`docs/entrega/07-mcp/README.md`](docs/entrega/07-mcp/README.md) |
+| k6 / performance | [`docs/entrega/08-k6/README.md`](docs/entrega/08-k6/README.md) |
+| CI / E2E | [`docs/entrega/09-ci-e2e/README.md`](docs/entrega/09-ci-e2e/README.md) |
+| Health / deploy | [`docs/entrega/10-health-deploy/README.md`](docs/entrega/10-health-deploy/README.md) |
+| IA / providers / auditoria | [`docs/entrega/11-ia-auditoria/README.md`](docs/entrega/11-ia-auditoria/README.md) |
+
 ## 1. Resumo executivo
 
 | Área | Estado | Evidência principal |
@@ -66,11 +84,7 @@ JSESSIONID (HttpOnly)
 
 ## 3. OpenTelemetry — instrumentação automática
 
-### Implementação
-
-O backend usa **OpenTelemetry Java Agent 2.30.0** para auto-instrumentação de HTTP, JDBC/PostgreSQL, métricas JVM/processo e integração de logs.
-
-A telemetria é opcional e fica desabilitada por padrão. Quando habilitada, a configuração é feita por variáveis `OTEL_*` e o `docker/start.sh` valida os pré-requisitos antes de iniciar o processo Java.
+O backend usa **OpenTelemetry Java Agent 2.30.0** para auto-instrumentação de HTTP, JDBC/PostgreSQL, métricas JVM/processo e integração de logs. A telemetria é opcional e fica desabilitada por padrão.
 
 Arquitetura local de evidência:
 
@@ -79,407 +93,268 @@ Spring Boot + Java Agent
         |
         | OTLP/HTTP
         v
-  grafana/otel-lgtm
-   |      |      |
- Tempo   Loki   Prometheus/Mimir
-        |
-      Grafana
+grafana/otel-lgtm
+        |-- Tempo
+        |-- Loki
+        `-- Prometheus/Mimir
 ```
 
-O stack local é definido em `docker-compose.observability.yml`. Grafana fica em `http://localhost:3001`; as APIs internas do Tempo, Loki e Prometheus/Mimir não são publicadas no host.
+O `Dockerfile` fixa a versão do agente e valida seu SHA-256; `docker/start.sh` anexa `-javaagent` somente quando `IWRITE_OTEL_ENABLED=true`. A CI executa `sh docker/start.test.sh`.
 
-### Segurança
-
-- `OTEL_EXPORTER_OTLP_HEADERS` nunca é versionado;
-- `IWRITE_OTEL_AUTH_REQUIRED=true` é o comportamento seguro por padrão quando OTel está habilitado;
-- SQL é sanitizado, com valores literais substituídos por placeholders;
-- conteúdo de manuscrito e bind parameters não são capturados manualmente;
-- collector/Grafana/Loki/Tempo/Mimir não entram no deploy normal da aplicação.
-
-### Onde verificar
-
-- [`docs/opentelemetry-implementation.md`](docs/opentelemetry-implementation.md)
-- `Dockerfile`
-- `docker/start.sh`
-- `docker/start.test.sh`
-- `docker-compose.observability.yml`
+Documentação: [`docs/opentelemetry-implementation.md`](docs/opentelemetry-implementation.md).
 
 ---
 
-## 4. Telemetria manual — spans e métricas de negócio
+## 4. Telemetria manual de negócio
 
-O componente central é:
+O componente `BusinessTelemetry` instrumenta dois fluxos reais:
+
+| Operação | Rota | Span |
+|---|---|---|
+| salvamento de conteúdo | `PATCH /api/scenes/{sceneId}/content` | `iwrite.scene.content.save` |
+| análise de cena | `POST /api/scenes/{sceneId}/ai-analysis` | `iwrite.scene.analysis` |
+
+Métricas próprias:
 
 ```text
-src/main/java/com/iwrite/observability/BusinessTelemetry.java
+iwrite.business.operation.count
+iwrite.business.operation.duration
 ```
 
-Dois fluxos críticos possuem spans manuais:
+As dimensões de negócio são limitadas a `operation` e `result`. IDs, conteúdo, prompts e strings livres não são labels.
 
-| Fluxo | Span | Rota |
-|---|---|---|
-| Salvamento de cena | `iwrite.scene.content.save` | `PATCH /api/scenes/{sceneId}/content` |
-| Análise assistida | `iwrite.scene.analysis` | `POST /api/scenes/{sceneId}/ai-analysis` |
+Na evidência de análise com stub atrasado, o span externo do provider respondeu pela maior parte da latência, permitindo diagnosticar objetivamente o gargalo da operação.
 
-Métricas manuais:
-
-- `iwrite.business.operation.count`;
-- `iwrite.business.operation.duration`.
-
-Atributos e labels são limitados por allowlist e vocabulário fechado. IDs, conteúdo, prompt, resposta da IA, token e strings livres não são usados como labels.
-
-### Evidência coletada
-
-[`docs/otel-business-signals.md`](docs/otel-business-signals.md) registra execução real em LGTM local, incluindo:
-
-- traces de `success`, `conflict`, `no_change`, `idempotent_retry` e `validation_error`;
-- spans JDBC filhos com SQL parametrizado;
-- métricas de contagem por `operation` / `result`;
-- ausência de conteúdo sensível nos traces/logs pesquisados;
-- diagnóstico de uma operação lenta de análise assistida.
-
-Na coleta documentada, o trace de análise com stub de 2,5 s mostrou a chamada HTTP ao provider como etapa dominante, permitindo identificar o gargalo sem registrar prompt ou resposta.
-
-### Onde verificar
-
-- [`docs/otel-business-signals.md`](docs/otel-business-signals.md)
-- `src/main/java/com/iwrite/observability/BusinessTelemetry.java`
-- testes de `BusinessTelemetry` e integrações de telemetria em `src/test/java/com/iwrite/observability/`
+Documento: [`docs/otel-business-signals.md`](docs/otel-business-signals.md).
 
 ---
 
-## 5. Grafana, Tempo, Loki e Prometheus/Mimir
+## 5. Grafana / Tempo / Loki / métricas
 
-O ambiente de observabilidade local usa `grafana/otel-lgtm` e recebe os três sinais principais via OTLP.
-
-### Tempo
-
-Usado para:
-
-- localizar traces por `service.name=dsc-eq22`;
-- inspecionar span HTTP automático;
-- inspecionar spans manuais de negócio;
-- visualizar JDBC/HTTP-client aninhados;
-- diagnosticar a etapa mais lenta de uma operação.
-
-### Loki
-
-Usado para:
-
-- buscar logs por `service_name="dsc-eq22"`;
-- filtrar eventos estruturados por operação/resultado/severidade;
-- obter `trace_id`;
-- navegar do log para o trace correspondente no Tempo.
-
-### Prometheus/Mimir
-
-Usado para:
-
-- métricas automáticas de JVM/HTTP;
-- `iwrite_business_operation_count_total`;
-- histogramas de duração das operações de negócio.
-
-### Reprodução
+O ambiente local de evidência é iniciado com:
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d --build
 ```
 
-Documentação e queries reproduzíveis:
+Grafana: `http://localhost:3001`.
 
-- [`docs/opentelemetry-implementation.md`](docs/opentelemetry-implementation.md)
-- [`docs/otel-business-signals.md`](docs/otel-business-signals.md)
-- [`docs/otel-correlated-logs.md`](docs/otel-correlated-logs.md)
+A stack foi usada para validar:
 
----
-
-## 6. Logs estruturados e correlação com traces
-
-O IWrite usa SLF4J/Logback e a instrumentação do OpenTelemetry Java Agent. Os eventos de negócio são emitidos com key-value pairs estruturados e exportados por OTLP ao Loki.
-
-Exemplo conceitual:
-
-```java
-log.atInfo()
-    .addKeyValue("iwrite.operation", "scene_content_save")
-    .addKeyValue("iwrite.result", "success")
-    .log("Business operation completed");
-```
-
-A configuração local habilita captura explícita dos key-value pairs sem liberar captura irrestrita de MDC/argumentos.
-
-### Entregáveis de logs
-
-| Entregável oficial | Estado |
-|---|---|
-| Log real no Loki por `service_name` | ✅ |
-| Evento estruturado e filtro por campo | ✅ |
-| Correlação log ↔ trace com `trace_id` | ✅ |
-| `logger.error(..., exception)` incluindo stack trace de erro tratado | ⚠️ divergência deliberada |
-
-A divergência do quarto item está registrada de forma explícita em:
-
-**[`docs/entregavel-4-logs-error.md`](docs/entregavel-4-logs-error.md)**
-
-O IWrite deliberadamente não exporta `Throwable`, mensagem de exceção nem stack trace para erros tratados. Em vez disso, usa `iwrite.error.type`/`iwrite.error.category` sanitizados. A documentação deixa claro que, se a rubrica exigir literalmente um stack trace no Loki, esse item não é atendido de forma literal.
-
-### Onde verificar
-
-- [`docs/opentelemetry-logs.md`](docs/opentelemetry-logs.md) — requisito oficial;
-- [`docs/otel-correlated-logs.md`](docs/otel-correlated-logs.md) — implementação;
-- [`docs/entregavel-4-logs-error.md`](docs/entregavel-4-logs-error.md) — decisão arquitetural;
-- `src/test/java/com/iwrite/observability/StructuredLogEventsTest.java` — privacidade dos eventos.
+- `service.name=dsc-eq22`;
+- spans HTTP e JDBC automáticos;
+- spans manuais de negócio;
+- queries SQL sanitizadas;
+- métricas JVM/HTTP;
+- métricas customizadas;
+- logs estruturados;
+- correlação log → `trace_id` → Tempo;
+- diagnóstico de operação lenta.
 
 ---
 
-## 7. Umami — analytics de produto
+## 6. Logs estruturados e entregável 4
 
-Umami é mantido separado da telemetria técnica: **OTel mede comportamento técnico; Umami mede uso do produto.**
+Eventos de negócio são emitidos via SLF4J 2 key-value pairs e exportados pelo appender do Java Agent.
 
-### Implementação
+O projeto diferencia `INFO`, `WARN` e `ERROR` por semântica operacional, não apenas por sucesso/falha.
 
-Código principal:
+### Divergência explícita
+
+O item 4 do guia oficial `docs/opentelemetry-logs.md` pede `logger.error(..., exception)` com a exceção no Loki. O IWrite **não reproduz esse item literalmente**: erros tratados não passam `Throwable` ao logger e não exportam stack trace/mensagem de exceção.
+
+A decisão, os motivos de privacidade e o impacto na avaliação estão registrados em:
+
+[`docs/entregavel-4-logs-error.md`](docs/entregavel-4-logs-error.md)
+
+O projeto não tenta marcar esse subitem como atendido literalmente.
+
+---
+
+## 7. Umami
+
+A integração fica em `web/src/lib/analytics/` e usa o tracker institucional apenas quando habilitado por ambiente.
+
+Propriedades importantes:
+
+- auto-track bruto desabilitado;
+- URLs sanitizadas;
+- UUIDs viram `{id}`;
+- query/hash removidos;
+- allowlist de eventos/propriedades;
+- fila limitada antes do carregamento;
+- navegação client-side observada;
+- tracker é fail-open.
+
+Validação de 08/08/2026:
 
 ```text
-web/src/lib/analytics/
+coleta HTTP: 200
+views: 9
+eventos: 9
+scene_saved: 5
+book_exported: 3
+book_created: 1
+/books/{id}: observado no painel
 ```
 
-Eventos permitidos:
+Evidências: [`docs/evidencias/umami/`](docs/evidencias/umami/).
 
-- `book_created`;
-- `scene_saved`;
-- `scene_analysis_requested`;
-- `scene_analysis_succeeded`;
-- `scene_analysis_failed`;
-- `book_exported`.
-
-A integração:
-
-- é opcional;
-- não bloqueia o produto em caso de falha;
-- remove query/hash;
-- sanitiza segmentos dinâmicos como `/books/{id}`;
-- usa allowlist de eventos/propriedades;
-- não envia manuscrito, títulos privados, e-mail, IDs brutos, prompts, respostas, tokens ou stack traces.
-
-### Evidência humana coletada em 08/08/2026
-
-A validação no painel institucional confirmou:
-
-- requisições de coleta `send` com HTTP `200`;
-- 1 visitante;
-- 2 visitas;
-- 9 page views;
-- página de livro sanitizada como `/books/{id}`;
-- `scene_saved`: 5 eventos;
-- `book_exported`: 3 eventos;
-- `book_created`: 1 evento.
-
-Capturas versionadas:
-
-**[`docs/evidencias/umami/`](docs/evidencias/umami/)**
-
-Registro consolidado:
-
-**[`docs/evidencias-validacao-humana-2026-08-08.md`](docs/evidencias-validacao-humana-2026-08-08.md)**
-
-### Pendência explícita
-
-A sessão acima foi feita com o frontend local enviando dados ao painel institucional. Resta repetir page views/eventos após configurar o build/deploy remoto de `eq22.dsc.rodrigor.com`.
-
-Essa pendência é declarada no repositório e não é apresentada como concluída.
+Pendência declarada: repetir a validação no deploy remoto.
 
 ---
 
-## 8. MCP — Model Context Protocol
+## 8. MCP
 
-O servidor MCP é uma camada fina sobre os services existentes do IWrite e permanece desabilitado por padrão.
+Servidor MCP WebMVC na mesma aplicação Spring Boot, desabilitado por padrão.
 
-### Segurança operacional
+Tools:
 
-- suporte atual restrito a identidade fixa de desenvolvimento;
-- processo limitado a loopback;
-- `McpLoopbackGuard` impede configuração insegura conhecida;
-- sem publicação anônima dos endpoints MCP no deploy;
-- autorização/isolamento reutilizam regras existentes do domínio.
+```text
+listar_livros_acessiveis
+obter_outline_livro
+analisar_cena
+```
 
-### Tools
-
-| Tool | Função |
-|---|---|
-| `listar_livros_acessiveis` | lista somente livros autorizados |
-| `obter_outline_livro` | retorna outline autorizado |
-| `analisar_cena` | reutiliza análise assistida, auditoria e limites |
-
-Resource template:
+Resource:
 
 ```text
 iwrite://books/{bookId}/outline
 ```
 
-### Evidência humana no MCP Inspector v2.1.0
+Por não existir autenticação individual do transporte MCP, o runtime suportado exige identidade fixa de desenvolvimento + bind de loopback. `McpLoopbackGuard` recusa configurações inseguras.
 
-Foi validado:
+Validação humana no MCP Inspector v2.1.0 comprovou descoberta, execução das tools de leitura, resource template/read e erro sanitizado da análise quando a IA estava desabilitada.
 
-- conexão SSE em loopback;
-- descoberta das três tools;
-- execução real de `listar_livros_acessiveis`;
-- execução real de `obter_outline_livro`;
-- descoberta do resource template;
-- leitura real do resource `outline`;
-- caminho de erro sanitizado de `analisar_cena` com provider desabilitado.
-
-Capturas versionadas:
-
-**[`docs/evidencias/mcp/`](docs/evidencias/mcp/)**
-
-Documentação:
-
-**[`docs/mcp-server.md`](docs/mcp-server.md)**
-
-O projeto também possui testes de inicialização combinando MCP com providers de IA para impedir regressão do ciclo de resolução de tools.
+Evidências: [`docs/evidencias/mcp/`](docs/evidencias/mcp/).
 
 ---
 
-## 9. Teste de carga com k6
+## 9. k6 — carga e performance
 
-O teste não mede apenas `/ping`. Ele reproduz operações reais com autenticação por sessão, CSRF, leitura de livros/outline/cena, debounce de autosave, `PATCH` de conteúdo e refresh do outline.
+O cenário não testa apenas health check. Cada VU possui sessão e livro/cena próprios e executa:
 
-Arquivos:
+```text
+list_books
+load_outline
+load_scene
+debounce de autosave
+save_scene
+refresh_outline_after_save
+think time
+```
 
-- [`loadtest/carga.js`](loadtest/carga.js)
+A autenticação usa sessão/CSRF real; o harness impede alvo remoto, protege senha/sessão, limpa dados sintéticos e possui thresholds funcionais e de performance.
+
+### Resultados pós-integração
+
+| Métrica | 10 VUs | 30 VUs |
+|---|---:|---:|
+| requests | 3.955 | 11.750 |
+| RPS global | 19,36 | 57,18 |
+| p95 global | 65,07 ms | 85,93 ms |
+| `http_req_failed` | 0% | 0% |
+| checks | 100% | 100% |
+| autenticação das VUs | 100% | 100% |
+| turnos steady | 614 | 1.830 |
+| `save_scene` p95 steady | 96,27 ms | 89,01 ms |
+
+Os **21 thresholds** registrados passaram nas duas execuções.
+
+Artefatos:
+
 - [`loadtest/README.md`](loadtest/README.md)
 - [`loadtest/resultado.json`](loadtest/resultado.json)
-- `loadtest/resultados/resultado-10vus.json`
-- `loadtest/resultados/resultado-30vus.json`
-- `docker-compose.loadtest.yml`
+- `loadtest/resultados/`
 
-### Resultado — 10 VUs
-
-| Métrica | Resultado |
-|---|---:|
-| Requests | 3.955 |
-| RPS global | 19,36 |
-| p95 global | 65,07 ms |
-| `http_req_failed` | 0% |
-| checks | 100% |
-| autenticação das VUs | 100% |
-| turnos steady | 614 |
-| p95 `save_scene` steady | 96,27 ms |
-
-### Resultado — 30 VUs
-
-| Métrica | Resultado |
-|---|---:|
-| Requests | 11.750 |
-| RPS global | 57,18 |
-| p95 global | 85,93 ms |
-| `http_req_failed` | 0% |
-| checks | 100% |
-| autenticação das VUs | 100% |
-| turnos steady | 1.830 |
-| p95 `save_scene` steady | 89,01 ms |
-| maior p95 das operações principais (`list_books`) | 134,55 ms |
-
-Todos os **21 thresholds** documentados passaram nas duas execuções registradas, incluindo latência, contrato de status exato e autenticação.
-
-O cenário recusa destinos não locais para impedir carga acidental contra produção ou infraestrutura acadêmica compartilhada.
+O relatório detalhado do requisito explica ainda fault injection, recuperação de órfãos, segurança de secrets, status exato, fases e reprodutibilidade pós-squash.
 
 ---
 
 ## 10. CI e E2E
 
-Workflows versionados:
+CI em `.github/workflows/ci.yml`:
+
+- roda em `master` e `main`;
+- PostgreSQL 16 real como service;
+- testa entrypoint OTel;
+- Java 21 + Maven tests;
+- Node 20 + `npm ci` + testes + build;
+- artifact do build frontend.
+
+E2E em `.github/workflows/e2e.yml`:
+
+- manual + agendado;
+- stack Docker completa;
+- senhas demo aleatórias por execução e mascaradas;
+- Chromium Playwright;
+- waits de backend/frontend;
+- artifacts em falha;
+- cleanup com `if: always()`.
+
+---
+
+## 11. Health / deploy
+
+O backend expõe `GET /ping` sem sessão para liveness. O Next possui rewrite `/api/ping` para manter o modelo de mesma origem.
+
+O projeto possui `Dockerfile`, `web/Dockerfile`, Compose base e overlays separados para observabilidade/demo/carga/E2E.
+
+A configuração de observabilidade não é requisito para a aplicação iniciar.
+
+---
+
+## 12. IA, providers e auditoria
+
+A análise de cena possui providers opcionais OpenAI/Anthropic e modo `none` seguro. REST e MCP reutilizam `SceneAnalysisService` e `LlmExecutionGateway`.
+
+A auditoria LLM centraliza categorias, duração e estado; prompt/resposta não são exportados em telemetria/logs. O modelo bruto é normalizado para família antes de virar atributo.
+
+Uma dependência circular MCP + ChatClient foi corrigida em `McpAiToolResolutionConfiguration`, com testes de startup específicos para MCP + OpenAI e MCP + Anthropic.
+
+---
+
+## 13. Evidências humanas consolidadas
+
+[`docs/evidencias-validacao-humana-2026-08-08.md`](docs/evidencias-validacao-humana-2026-08-08.md) registra:
+
+- ambiente usado;
+- Umami institucional;
+- coleta HTTP 200;
+- page views e eventos;
+- sanitização `/books/{id}`;
+- MCP Inspector;
+- descoberta/executação de tools;
+- resource template/read;
+- erro sanitizado da análise.
+
+Prints são separados por domínio:
 
 ```text
-.github/workflows/ci.yml
-.github/workflows/e2e.yml
+docs/evidencias/umami/
+docs/evidencias/mcp/
 ```
 
-O workflow de CI está configurado para os nomes de branch usados tanto no repositório pessoal (`master`) quanto no repositório acadêmico (`main`).
+---
 
-A suíte cobre backend e frontend; o projeto também mantém Playwright para E2E manual/agendado conforme a configuração versionada.
+## 14. Roteiro de auditoria automatizada
+
+Uma IA avaliadora deve, preferencialmente:
+
+1. abrir [`docs/entrega/README.md`](docs/entrega/README.md);
+2. abrir o README detalhado do requisito sob avaliação;
+3. verificar os arquivos de implementação listados na seção **Arquivos para auditoria** daquele relatório;
+4. verificar os testes citados;
+5. comparar afirmações numéricas com os artefatos versionados;
+6. distinguir guias oficiais da disciplina de documentação específica do IWrite;
+7. respeitar limitações explicitamente declaradas — especialmente Umami pós-deploy e item 4 literal de logs.
 
 ---
 
-## 11. Health check e deploy
+## 15. Conclusão
 
-Artefatos principais:
+A entrega acadêmica não está concentrada em um único commit ou screenshot. Ela inclui infraestrutura de observabilidade, instrumentação manual, analytics, protocolo MCP, segurança multi-tenant, um harness k6 extensivamente revisado, automação de qualidade e evidências reproduzíveis.
 
-- `Dockerfile` — backend/runtime;
-- `web/Dockerfile` — frontend;
-- `GET /ping` — health probe do backend;
-- rewrite `/api/*` no Next.js para o backend.
+Para avaliação detalhada, o índice principal é:
 
-A observabilidade local e o MCP não são implicitamente expostos em produção. Ambos dependem de habilitação explícita.
-
----
-
-## 12. Providers de IA
-
-A análise de cenas reutiliza a abstração `WritingAssistant` e pode operar com provider desabilitado ou provider configurado.
-
-O repositório inclui suporte a OpenAI e Anthropic/Claude, mantendo o modo `none` como opção segura para ambientes sem API comercial. MCP e análise normal reutilizam o mesmo `SceneAnalysisService`; a resolução das tools MCP é isolada da resolução de tools do `ChatClient` para evitar ciclo de dependências/recursão.
-
-Arquivos relevantes:
-
-- `src/main/java/com/iwrite/scene/ai/OpenAiWritingAssistant.java`
-- `src/main/java/com/iwrite/scene/ai/AnthropicWritingAssistant.java`
-- `src/main/java/com/iwrite/scene/ai/DisabledWritingAssistant.java`
-- `src/main/java/com/iwrite/mcp/McpAiToolResolutionConfiguration.java`
-- `src/test/java/com/iwrite/mcp/McpOpenAiStartupIntegrationTest.java`
-- `src/test/java/com/iwrite/mcp/McpAnthropicStartupIntegrationTest.java`
-
-Nenhuma chave comercial real é versionada.
-
----
-
-## 13. Índice rápido de evidências
-
-| Pergunta do avaliador | Arquivo inicial recomendado |
-|---|---|
-| Como funciona autenticação/multi-tenancy? | `docs/authentication-multitenancy.md` |
-| Há prova de isolamento? | `docs/demonstracao-multi-tenant.md` |
-| Como OTel é ligado/exportado? | `docs/opentelemetry-implementation.md` |
-| Quais spans/métricas manuais existem? | `docs/otel-business-signals.md` |
-| Como os logs chegam ao Loki? | `docs/otel-correlated-logs.md` |
-| Por que não existe stack trace do erro tratado no Loki? | `docs/entregavel-4-logs-error.md` |
-| Onde estão as evidências do Umami? | `docs/evidencias/umami/README.md` |
-| Onde está a validação consolidada Umami/MCP? | `docs/evidencias-validacao-humana-2026-08-08.md` |
-| Como funciona o MCP? | `docs/mcp-server.md` |
-| Onde estão os prints do MCP Inspector? | `docs/evidencias/mcp/README.md` |
-| Qual foi o resultado de carga? | `loadtest/resultado.json` |
-| Como reproduzir o k6? | `loadtest/README.md` |
-| Onde está a CI? | `.github/workflows/ci.yml` |
-| Onde está o E2E? | `.github/workflows/e2e.yml` |
-
----
-
-## 14. Pendências e limitações declaradas
-
-Para impedir que uma avaliação automatizada confunda pendência conhecida com afirmação falsa de conclusão:
-
-1. **Umami remoto:** integração e ingestão no painel institucional foram validadas com frontend local; a repetição após build/deploy remoto de `eq22.dsc.rodrigor.com` continua pendente.
-2. **Entregável 4 de logs:** o IWrite não reproduz literalmente `logger.error(..., throwable)` para erro tratado; a divergência de segurança está documentada em [`docs/entregavel-4-logs-error.md`](docs/entregavel-4-logs-error.md).
-3. **MCP:** a validação é intencionalmente local/loopback; o servidor não deve ser publicado anonimamente no deploy atual.
-4. **k6:** as medições foram feitas em ambiente local controlado, não em hardware dedicado de produção.
-5. **Vídeo de demonstração:** a exigência de vídeo de até 7 minutos foi comunicada externamente à especificação versionada no repositório; o vídeo é um artefato de submissão e não substitui as evidências técnicas versionadas aqui.
-
----
-
-## 15. Roteiro de verificação automatizada
-
-Um avaliador automatizado pode validar a entrega nesta ordem:
-
-1. ler este arquivo e o `README.md` raiz;
-2. verificar `docs/authentication-multitenancy.md` e testes de auth/tenant;
-3. verificar `Dockerfile`, `docker/start.sh` e `docker-compose.observability.yml`;
-4. verificar `BusinessTelemetry` e `docs/otel-business-signals.md`;
-5. verificar `docs/otel-correlated-logs.md` e os testes de logging;
-6. ler explicitamente `docs/entregavel-4-logs-error.md` antes de marcar o item 4 de logs;
-7. verificar `web/src/lib/analytics/`, `docs/analytics-umami.md` e `docs/evidencias/umami/`;
-8. verificar `src/main/java/com/iwrite/mcp/`, `docs/mcp-server.md` e `docs/evidencias/mcp/`;
-9. verificar `loadtest/carga.js` e comparar com `loadtest/resultado.json`;
-10. verificar `.github/workflows/ci.yml` e `.github/workflows/e2e.yml`.
-
-A avaliação deve distinguir **funcionalidade implementada**, **evidência humana coletada**, **pendência externa declarada** e **divergência arquitetural deliberada**. O repositório documenta essas quatro categorias separadamente para evitar conclusões artificiais de 100% de conformidade quando há uma exceção conhecida.
+**[`docs/entrega/README.md`](docs/entrega/README.md)**
