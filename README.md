@@ -91,7 +91,8 @@ Fluxo implementado:
 GET /ping
   -> PingController
   -> DatabaseHealthService
-  -> JdbcTemplate.queryForObject("SELECT 1", Integer.class)
+  -> HEALTH_QUERY = "SELECT 1"
+  -> JdbcTemplate.queryForObject(HEALTH_QUERY, Integer.class)
   -> PostgreSQL
 ```
 
@@ -255,6 +256,7 @@ mvnw.cmd -s .mvn\local-settings.xml clean test jacoco:report
 ### Backend — Linux/macOS
 
 ```bash
+chmod +x ./mvnw
 ./mvnw -s .mvn/local-settings.xml clean test jacoco:report
 ```
 
@@ -299,6 +301,7 @@ mvnw.cmd -s .mvn\local-settings.xml -Dtest=PingControllerTest,DatabaseHealthServ
 ### Testes direcionados — Linux/macOS
 
 ```bash
+chmod +x ./mvnw
 ./mvnw -s .mvn/local-settings.xml -Dtest=PingControllerTest,DatabaseHealthServiceTest,PingControllerIntegrationTest test
 ```
 
