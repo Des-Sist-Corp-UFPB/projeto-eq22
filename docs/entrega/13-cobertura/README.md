@@ -306,7 +306,13 @@ Versão:
 JaCoCo 0.8.12
 ```
 
-Comandos de reprodução:
+A suíte backend inclui testes de integração que usam o datasource padrão `jdbc:postgresql://localhost:5435/iwrite`. Portanto, em um checkout local limpo, primeiro suba **somente o PostgreSQL** e aguarde o healthcheck do Compose:
+
+```bash
+docker compose up -d --wait db
+```
+
+Depois execute a medição adequada à plataforma.
 
 ### Windows
 
@@ -322,6 +328,12 @@ chmod +x ./mvnw
 ```
 
 O `chmod` é necessário em um checkout POSIX limpo porque `mvnw` está versionado sem o bit executável; a CI faz a mesma preparação antes de chamar o wrapper.
+
+Ao terminar, remova apenas o container `db` criado para a reprodução; o volume nomeado com os dados é preservado:
+
+```bash
+docker compose rm -sf db
+```
 
 Relatório gerado:
 
