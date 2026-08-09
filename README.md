@@ -4,21 +4,19 @@ IWrite é uma aplicação web para escrita e organização narrativa. O modelo p
 
 Este repositório também é a implementação da equipe **EQ22** na disciplina **Desenvolvimento de Sistemas Corporativos (DSC/UFPB)**.
 
-> **Avaliação humana ou automatizada:** para uma auditoria completa da entrega, comece em [`README-ENTREGA-DSC.md`](README-ENTREGA-DSC.md) e depois use o índice detalhado [`docs/entrega/README.md`](docs/entrega/README.md). Cada requisito possui documentação própria com arquitetura, implementação, testes, evidências, reprodução e limitações.
+> **Avaliação humana ou automatizada:** comece em [`README-ENTREGA-DSC.md`](README-ENTREGA-DSC.md) e depois use [`docs/entrega/README.md`](docs/entrega/README.md). Cada requisito importante possui documentação própria com arquitetura, implementação, testes, evidências, reprodução e limitações.
 
 ---
 
 ## Avaliação 2 — requisitos atualizados em 30/07
 
-A avaliação usa os critérios **Aud**, **Int**, **Cob** e os extras **IA**, **HC**, **Tel** e **Uma**.
-
 | Sigla | Requisito | Estado no IWrite | Evidência verificável |
 |---|---|---|---|
-| **Aud** | Log de Auditoria | ✅ **Atende** | `src/main/java/com/iwrite/audit/`, migration `V27__create_audit_logs.sql`, `AuditLogIntegrationTest` |
-| **Int** | Integração com Serviço Externo | ✅ **Atende** | OpenAI/Anthropic via Spring AI + Umami institucional |
-| **Cob** | Cobertura automatizada ≥ 85% | ✅ **Atende** | snapshot versionado: backend **90,33% de linhas**, frontend **85,90% de linhas**; validação posterior do backend após HC: **92,01%** |
-| **IA** | Usa LLM | ✅ **Extra atendido** | análise de cenas com providers OpenAI/Anthropic + auditoria LLM |
-| **HC** | Healthcheck consulta o banco, lido do código | ✅ **Extra atendido** | `DatabaseHealthService` → `JdbcTemplate` → `SELECT 1`; 200/up e 503/down; [`docs/entrega/12-healthcheck/README.md`](docs/entrega/12-healthcheck/README.md) |
+| **Aud** | Log de Auditoria | ✅ **Atende** | `src/main/java/com/iwrite/audit/`, `V27__create_audit_logs.sql`, `AuditLogIntegrationTest` |
+| **Int** | Integração com Serviço Externo | ✅ **Atende** | Spring AI OpenAI/Anthropic + Umami institucional |
+| **Cob** | Cobertura automatizada ≥ 85% | ✅ **Atende na revisão atual** | frontend **87,16% de linhas** na CI #253 com threshold `lines: 85`; backend **92,01% de linhas** na validação pós-HC; [`docs/entrega/13-cobertura/README.md`](docs/entrega/13-cobertura/README.md) |
+| **IA** | Usa LLM | ✅ **Extra atendido** | análise de cenas com OpenAI/Anthropic + auditoria LLM + modo `none` seguro |
+| **HC** | Healthcheck consulta o banco, lido do código | ✅ **Extra atendido** | `DatabaseHealthService -> JdbcTemplate -> SELECT 1`; 200/up e 503/down; [`docs/entrega/12-healthcheck/README.md`](docs/entrega/12-healthcheck/README.md) |
 | **Tel** | Telemetria | ✅ **Extra atendido** | OpenTelemetry Java Agent, spans/métricas manuais, Grafana, Tempo, Loki e Prometheus/Mimir |
 | **Uma** | Umami | ✅ **Extra atendido**; 🟡 repetição pós-deploy remoto pendente | coleta HTTP 200, pageviews, rota sanitizada e eventos no painel institucional |
 
@@ -36,11 +34,58 @@ Uma ✅
 
 ---
 
+## Cobertura atual — não depende mais apenas do snapshot antigo
+
+A primeira versão deste README usava o snapshot versionado de 01/07/2026 como principal prova de cobertura. O Codex apontou corretamente que isso não demonstrava a cobertura do frontend atual, pois houve código novo depois daquele snapshot.
+
+A PR #159 corrigiu a lacuna de forma verificável:
+
+```text
+web/package.json
+  -> npm test = vitest run --coverage
+
+web/vitest.config.mjs
+  -> include src/**/*.{ts,tsx}
+  -> threshold lines = 85
+
+.github/workflows/ci.yml
+  -> executa npm test
+```
+
+Na **CI #253**, sobre a revisão atual:
+
+```text
+41 arquivos de teste passaram
+375 testes passaram
+Statements: 87,16%
+Branches:   83,87%
+Functions:  71,90%
+Lines:      87,16%
+```
+
+O critério acadêmico é operacionalizado como **linhas ≥ 85%**. Como o Vitest possui `thresholds.lines = 85`, a CI só permanece verde se o frontend satisfizer o mínimo.
+
+O backend foi revalidado após a implementação do HC com:
+
+```text
+841 testes
+0 falhas
+0 erros
+92,01% de linhas
+com.iwrite.health.*: 100% de linhas
+```
+
+O snapshot histórico continua versionado em `cobertura/`, mas a afirmação `Cob ✅` agora é sustentada por medição atual e gate automatizado.
+
+**Relatório específico:** [`docs/entrega/13-cobertura/README.md`](docs/entrega/13-cobertura/README.md).
+
+---
+
 ## HC — healthcheck consulta PostgreSQL de verdade
 
 O critério do professor é explícito: **“healthcheck consulta o banco, lido do código”**.
 
-A implementação atual é:
+Fluxo implementado:
 
 ```text
 GET /ping
@@ -50,7 +95,7 @@ GET /ping
   -> PostgreSQL
 ```
 
-### Banco disponível
+Banco disponível:
 
 ```text
 HTTP 200
@@ -58,7 +103,7 @@ status = ok
 database = up
 ```
 
-### Banco indisponível
+Banco indisponível:
 
 ```text
 HTTP 503
@@ -68,9 +113,7 @@ database = down
 
 O response não expõe URL JDBC, hostname, porta, credenciais, mensagem da exceção ou stack trace.
 
-O healthcheck possui datasource/pool Hikari dedicado, separado do pool principal, com limites curtos de aquisição, validação, conexão, socket e query. Isso evita que uma falha de banco prenda o probe pelo timeout normal do pool de negócio.
-
-O `Dockerfile` principal também verifica `/api/ping`, portanto o health do container atravessa:
+O probe usa datasource/pool Hikari dedicado, separado do pool principal, com limites curtos de aquisição, validação, conexão, socket e query. O `Dockerfile` principal verifica `/api/ping`, então o health do container atravessa:
 
 ```text
 Docker HEALTHCHECK
@@ -81,7 +124,7 @@ Docker HEALTHCHECK
  -> PostgreSQL
 ```
 
-**Relatório detalhadíssimo do HC:** [`docs/entrega/12-healthcheck/README.md`](docs/entrega/12-healthcheck/README.md).
+**Relatório específico:** [`docs/entrega/12-healthcheck/README.md`](docs/entrega/12-healthcheck/README.md).
 
 ---
 
@@ -101,29 +144,7 @@ Docker HEALTHCHECK
 | 10 | Health / containerização / deploy | ✅ | [`docs/entrega/10-health-deploy/README.md`](docs/entrega/10-health-deploy/README.md) |
 | 11 | IA / providers / auditoria | ✅ | [`docs/entrega/11-ia-auditoria/README.md`](docs/entrega/11-ia-auditoria/README.md) |
 | 12 | **HC — healthcheck database-aware** | ✅ | [`docs/entrega/12-healthcheck/README.md`](docs/entrega/12-healthcheck/README.md) |
-
-O índice mestre com ordem de auditoria para IA está em [`docs/entrega/README.md`](docs/entrega/README.md).
-
----
-
-## Entrega acadêmica — mapa de implementação e evidências
-
-| Requisito | Estado | Implementação / evidência principal |
-|---|---|---|
-| Autenticação e multi-tenancy | ✅ Implementado e testado | [`docs/authentication-multitenancy.md`](docs/authentication-multitenancy.md), `com.iwrite.auth`, `CurrentUserProvider`, `tenant_memberships` |
-| Isolamento multi-tenant | ✅ Implementado e testado | filtros tenant-aware + testes + [`docs/demonstracao-multi-tenant.md`](docs/demonstracao-multi-tenant.md) |
-| Auditoria | ✅ Implementada e persistida | `com.iwrite.audit`, `audit_logs`, `AuditLogAspect`, `AuditLogIntegrationTest` |
-| Integração externa | ✅ Implementada | Spring AI OpenAI/Anthropic + Umami institucional |
-| Cobertura ≥85% | ✅ Atendida | `cobertura/backend/`, `cobertura/frontend/` |
-| OpenTelemetry — traces/métricas automáticas | ✅ Implementado | [`docs/opentelemetry-implementation.md`](docs/opentelemetry-implementation.md) |
-| OpenTelemetry — sinais manuais | ✅ Implementado e testado | [`docs/otel-business-signals.md`](docs/otel-business-signals.md), `BusinessTelemetry` |
-| Logs estruturados + Loki + correlação | ✅ Implementado e testado | [`docs/otel-correlated-logs.md`](docs/otel-correlated-logs.md) |
-| Grafana / Tempo / Loki / Prometheus-Mimir | ✅ Stack local configurada e validada | `docker-compose.observability.yml` |
-| Umami | ✅ Implementado e validado no painel institucional | [`docs/analytics-umami.md`](docs/analytics-umami.md), [`docs/evidencias/umami/`](docs/evidencias/umami/) |
-| MCP | ✅ Implementado e validado no Inspector | [`docs/mcp-server.md`](docs/mcp-server.md), [`docs/evidencias/mcp/`](docs/evidencias/mcp/) |
-| k6 | ✅ Implementado, revisado e medido | [`docs/entrega/08-k6/README.md`](docs/entrega/08-k6/README.md), `loadtest/resultado.json` |
-| CI / E2E | ✅ Implementado | `.github/workflows/ci.yml`, `.github/workflows/e2e.yml` |
-| HC | ✅ Consulta PostgreSQL de verdade | [`docs/entrega/12-healthcheck/README.md`](docs/entrega/12-healthcheck/README.md) |
+| 13 | **Cob — cobertura ≥85%** | ✅ | [`docs/entrega/13-cobertura/README.md`](docs/entrega/13-cobertura/README.md) |
 
 ---
 
@@ -200,18 +221,55 @@ Suba apenas o banco:
 docker compose up -d db
 ```
 
-Windows:
+#### Windows
 
 ```cmd
 mvnw.cmd -s .mvn\local-settings.xml spring-boot:run
 ```
 
-Frontend:
+#### Linux/macOS
+
+```bash
+chmod +x ./mvnw
+./mvnw -s .mvn/local-settings.xml spring-boot:run
+```
+
+### Frontend
 
 ```bash
 cd web
 npm ci
 npm run dev
+```
+
+---
+
+## Testes e cobertura — reprodução
+
+### Backend — Windows
+
+```cmd
+mvnw.cmd -s .mvn\local-settings.xml clean test jacoco:report
+```
+
+### Backend — Linux/macOS
+
+```bash
+./mvnw -s .mvn/local-settings.xml clean test jacoco:report
+```
+
+### Frontend — qualquer plataforma suportada pelo Node
+
+```bash
+cd web
+npm ci
+npm test
+```
+
+`npm test` executa cobertura e aplica o threshold de linhas ≥85%. O comando explícito equivalente continua disponível:
+
+```bash
+npm run test:coverage
 ```
 
 ---
@@ -232,38 +290,21 @@ HTTP 200
 "database":"up"
 ```
 
-Testes direcionados:
+### Testes direcionados — Windows
 
 ```cmd
 mvnw.cmd -s .mvn\local-settings.xml -Dtest=PingControllerTest,DatabaseHealthServiceTest,PingControllerIntegrationTest test
 ```
 
-Suíte backend + cobertura:
+### Testes direcionados — Linux/macOS
 
-```cmd
-mvnw.cmd -s .mvn\local-settings.xml clean test jacoco:report
+```bash
+./mvnw -s .mvn/local-settings.xml -Dtest=PingControllerTest,DatabaseHealthServiceTest,PingControllerIntegrationTest test
 ```
 
-A validação feita durante a implementação do HC registrou **841 testes, 0 falhas, 0 erros**, backend com **92,01% de linhas** e pacote `com.iwrite.health.*` com **100% das linhas** naquele run.
-
 ---
 
-## Cobertura
-
-Snapshot versionado em `cobertura/`:
-
-| Camada | Linhas | Branches | Métodos/Funções |
-|---|---:|---:|---:|
-| Backend | **90,33%** | 74,43% | 91,76% |
-| Frontend | **85,90%** | 82,33% | 68,81% |
-
-O requisito acadêmico é cobertura automatizada **≥ 85%**, portanto o snapshot versionado atende em backend e frontend.
-
-A implementação posterior do HC foi revalidada com JaCoCo e levou o backend a **92,01% de linhas** naquele run.
-
----
-
-## k6 — resultados que não devem ser ignorados
+## k6 — resultados em destaque
 
 O teste de carga não mede apenas `/ping`; ele exercita sessão/CSRF, leitura, escrita, autosave, refresh pós-save, recursos próprios por VU, rampa e cleanup.
 
@@ -279,13 +320,11 @@ O teste de carga não mede apenas `/ping`; ele exercita sessão/CSRF, leitura, e
 
 Os 21 thresholds documentados passaram nas duas execuções registradas.
 
-Relatório completo: [`docs/entrega/08-k6/README.md`](docs/entrega/08-k6/README.md).
+Relatório: [`docs/entrega/08-k6/README.md`](docs/entrega/08-k6/README.md).
 
 ---
 
 ## OpenTelemetry / Grafana / Tempo / Loki / Mimir
-
-Documentação específica:
 
 - [`docs/opentelemetry-implementation.md`](docs/opentelemetry-implementation.md)
 - [`docs/otel-business-signals.md`](docs/otel-business-signals.md)
@@ -301,19 +340,13 @@ Stack local:
 docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d --build
 ```
 
-Grafana local:
-
-```text
-http://localhost:3001
-```
+Grafana local: `http://localhost:3001`.
 
 ---
 
 ## Umami
 
-A integração de analytics é tipada e sanitizada.
-
-Eventos suportados incluem:
+A integração de analytics é tipada e sanitizada. Eventos suportados incluem:
 
 ```text
 book_created
@@ -326,8 +359,6 @@ book_exported
 
 A validação humana confirmou coleta HTTP `200`, pageviews, `/books/{id}` sanitizado e eventos reais no painel institucional.
 
-Documentos:
-
 - [`docs/analytics-umami.md`](docs/analytics-umami.md)
 - [`docs/entrega/06-umami/README.md`](docs/entrega/06-umami/README.md)
 - [`docs/evidencias/umami/README.md`](docs/evidencias/umami/README.md)
@@ -338,7 +369,7 @@ Ressalva: resta repetir a validação no deploy remoto `eq22.dsc.rodrigor.com`.
 
 ## MCP
 
-Tools publicadas no modo MCP suportado:
+Tools publicadas no modo suportado:
 
 ```text
 listar_livros_acessiveis
@@ -352,9 +383,7 @@ Resource template:
 iwrite://books/{bookId}/outline
 ```
 
-A validação no MCP Inspector comprovou descoberta, execução de tools, resource template/read e caminho de erro sanitizado.
-
-Documentos:
+A validação no MCP Inspector comprovou descoberta, execução das tools, resource template/read e caminho de erro sanitizado.
 
 - [`docs/mcp-server.md`](docs/mcp-server.md)
 - [`docs/entrega/07-mcp/README.md`](docs/entrega/07-mcp/README.md)
@@ -362,7 +391,7 @@ Documentos:
 
 ---
 
-## IA e Integração Externa
+## IA, integração externa e auditoria
 
 A análise de cenas usa Spring AI com providers opcionais:
 
@@ -372,17 +401,9 @@ SPRING_AI_MODEL_CHAT=anthropic
 SPRING_AI_MODEL_CHAT=none
 ```
 
-O modo `none` permite inicialização segura sem provider pago.
+O modo `none` permite inicialização segura sem provider pago. Há auditoria de execução LLM e auditoria de domínio associada ao fluxo.
 
-Há auditoria de execução LLM e auditoria de domínio associada ao fluxo de análise.
-
-Relatório: [`docs/entrega/11-ia-auditoria/README.md`](docs/entrega/11-ia-auditoria/README.md).
-
----
-
-## Auditoria
-
-Eventos relevantes são persistidos em `audit_logs` com tenant, usuário, ação, recurso, instante e resultado.
+Eventos relevantes também são persistidos em `audit_logs` com tenant, usuário, ação, recurso, instante e resultado.
 
 Arquivos principais:
 
@@ -392,7 +413,7 @@ src/main/java/com/iwrite/audit/
 src/test/java/com/iwrite/audit/AuditLogIntegrationTest.java
 ```
 
-Operações auditadas incluem livros, cenas, colaboração, restauração de versão, análise com IA e invocações MCP.
+Relatório: [`docs/entrega/11-ia-auditoria/README.md`](docs/entrega/11-ia-auditoria/README.md).
 
 ---
 
@@ -400,9 +421,7 @@ Operações auditadas incluem livros, cenas, colaboração, restauração de ver
 
 O guia oficial pede um erro tratado registrado com `logger.error(..., exception)` e stack trace no Loki.
 
-O IWrite deliberadamente não exporta `Throwable`/stack trace de erro tratado nessa demonstração por política de minimização de dados. Essa divergência não é escondida.
-
-Documento específico:
+O IWrite deliberadamente não exporta `Throwable`/stack trace de erro tratado nessa demonstração por política de minimização de dados. A divergência está documentada, não escondida:
 
 [`docs/entregavel-4-logs-error.md`](docs/entregavel-4-logs-error.md)
 
@@ -417,7 +436,7 @@ Workflows:
 .github/workflows/e2e.yml
 ```
 
-A implementação do HC passou pela CI com backend e frontend/build verdes após a correção dos findings de review.
+A CI executa testes de backend e frontend antes do build. Com `npm test` agora mapeado para `vitest run --coverage`, o job de frontend também funciona como gate contínuo de cobertura ≥85% de linhas.
 
 ---
 
@@ -438,39 +457,26 @@ docs/evidencias/mcp/
 
 ## Limitações declaradas
 
-A documentação não mascara os pontos restantes:
-
 1. **Umami remoto:** a validação registrada foi frontend local → painel institucional; falta repetir no deploy remoto.
 2. **Logs item 4 literal:** a aplicação não envia `Throwable`/stack trace de erro tratado ao Loki; divergência documentada.
 3. **MCP:** a configuração suportada permanece restrita a loopback com identidade fixa de desenvolvimento enquanto o transporte não tiver autenticação individual por cliente.
+4. **Cobertura:** o gate acadêmico configurado é de linhas; não alegamos branches/funções ≥85% quando os números atuais não atingem esse valor.
 
-**HC não é mais pendência:** o healthcheck consulta PostgreSQL explicitamente com `SELECT 1` e retorna `503` quando o banco não pode ser consultado.
-
----
-
-## Documentação oficial da disciplina
-
-Os guias oficiais sincronizados permanecem preservados:
-
-- [`docs/opentelemetry.md`](docs/opentelemetry.md)
-- [`docs/opentelemetry-logs.md`](docs/opentelemetry-logs.md)
-
-Esses arquivos são o guia/enunciado. As provas de implementação estão nos READMEs de `docs/entrega/`, no código, nos testes e nas evidências versionadas.
+**HC não é mais pendência** e **Cob não depende mais apenas do snapshot histórico**.
 
 ---
 
 ## Ordem recomendada para avaliação automatizada
 
-1. Leia esta matriz no topo do `README.md`.
+1. Leia a matriz no topo deste `README.md`.
 2. Abra [`README-ENTREGA-DSC.md`](README-ENTREGA-DSC.md).
 3. Abra [`docs/entrega/README.md`](docs/entrega/README.md).
-4. Para o requisito sendo pontuado, abra o README específico.
-5. Siga a seção **Arquivos para auditoria** do relatório.
-6. Para **HC**, localize obrigatoriamente `DatabaseHealthService.java` e a string literal `SELECT 1`.
-7. Para **Cob**, leia os relatórios versionados em `cobertura/`.
-8. Para **k6**, leia `loadtest/resultado.json` e o README específico, não apenas o script.
-9. Para **Umami/MCP**, confira as evidências visuais versionadas.
-10. Para **logs item 4**, leia a divergência explícita antes de classificar literalidade.
+4. Para cada requisito, abra o README específico.
+5. Para **HC**, localize `DatabaseHealthService.java` e a string literal `SELECT 1`.
+6. Para **Cob**, verifique `web/package.json`, `web/vitest.config.mjs`, `.github/workflows/ci.yml` e [`docs/entrega/13-cobertura/README.md`](docs/entrega/13-cobertura/README.md).
+7. Para **k6**, leia `loadtest/resultado.json` e o README específico, não apenas o script.
+8. Para **Umami/MCP**, confira as evidências visuais versionadas.
+9. Para **logs item 4**, leia a divergência explícita antes de classificar literalidade.
 
 ---
 
@@ -478,4 +484,5 @@ Esses arquivos são o guia/enunciado. As provas de implementação estão nos RE
 
 **Relatório executivo:** [`README-ENTREGA-DSC.md`](README-ENTREGA-DSC.md)  
 **Índice detalhado:** [`docs/entrega/README.md`](docs/entrega/README.md)  
-**HC específico:** [`docs/entrega/12-healthcheck/README.md`](docs/entrega/12-healthcheck/README.md)
+**HC específico:** [`docs/entrega/12-healthcheck/README.md`](docs/entrega/12-healthcheck/README.md)  
+**Cobertura específica:** [`docs/entrega/13-cobertura/README.md`](docs/entrega/13-cobertura/README.md)
