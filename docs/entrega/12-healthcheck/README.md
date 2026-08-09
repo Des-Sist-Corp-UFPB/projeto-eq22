@@ -325,9 +325,10 @@ backend total: 92,01% de linhas
 com.iwrite.health.*: 100% de linhas
 ```
 
-Comando de reprodução:
+Comando de reprodução — Linux/macOS:
 
 ```bash
+chmod +x ./mvnw
 ./mvnw -s .mvn/local-settings.xml clean test jacoco:report
 ```
 
