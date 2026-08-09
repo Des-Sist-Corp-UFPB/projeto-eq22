@@ -94,10 +94,16 @@ No Inspector: **Tools → List Tools** deve mostrar as três tools; **Resources 
 
 ## Evidências que dependem de ação humana (checklist)
 
-- [ ] Website ID oficial do Umami informado e configurado no ambiente (nunca versionado).
-- [ ] Acesso ao painel Umami confirmado.
-- [ ] Page views visíveis no painel após navegação real.
-- [ ] Três eventos (`book_created`, `scene_saved`, `book_exported`) visíveis no painel após ações reais.
-- [ ] Screenshot do cliente MCP (Inspector) conectado.
-- [ ] Screenshot da listagem de tools e do resource template no Inspector.
-- [ ] Validação pós-deploy (page views + eventos + MCP) registrada com data e ambiente.
+Validação realizada em **08/08/2026**, com detalhes em [`evidencias-validacao-humana-2026-08-08.md`](evidencias-validacao-humana-2026-08-08.md).
+
+- [x] Website ID oficial do Umami informado e configurado no ambiente local (nunca versionado).
+- [x] Acesso ao painel Umami confirmado.
+- [x] Page views visíveis no painel institucional após navegação real.
+- [x] Três eventos (`book_created`, `scene_saved`, `book_exported`) visíveis no painel após ações reais.
+- [x] Cliente MCP (Inspector v2.1.0) conectado por SSE em loopback.
+- [x] Listagem das três tools confirmada no Inspector.
+- [x] `listar_livros_acessiveis` executada com dados reais.
+- [x] `obter_outline_livro` executada com outline real.
+- [x] Resource template `iwrite://books/{bookId}/outline` descoberto e lido com sucesso.
+- [x] `analisar_cena` demonstrou o caminho `unavailable` sanitizado com a IA desabilitada, sem expor detalhes internos.
+- [ ] Validação **pós-deploy remoto** de page views/eventos Umami em `eq22.dsc.rodrigor.com` (a validação de 08/08/2026 usou frontend local + painel institucional). O MCP permanece intencionalmente local/loopback e não deve ser publicado no deploy atual.
