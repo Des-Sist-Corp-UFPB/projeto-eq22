@@ -325,6 +325,12 @@ backend total: 92,01% de linhas
 com.iwrite.health.*: 100% de linhas
 ```
 
+A suíte completa inclui testes de integração contra o datasource padrão em `localhost:5435`. Em um checkout local limpo, suba e aguarde o PostgreSQL antes de chamar Maven:
+
+```bash
+docker compose up -d --wait db
+```
+
 Comando de reprodução — Linux/macOS:
 
 ```bash
@@ -336,6 +342,12 @@ Windows CMD:
 
 ```cmd
 mvnw.cmd -s .mvn\local-settings.xml clean test jacoco:report
+```
+
+Depois da execução, remova apenas o container `db` criado para a reprodução, preservando o volume:
+
+```bash
+docker compose rm -sf db
 ```
 
 ## 13. Docker HEALTHCHECK
