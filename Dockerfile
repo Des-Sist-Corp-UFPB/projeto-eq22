@@ -75,6 +75,9 @@ COPY --chmod=555 docker/start.sh /app/start.sh
 
 EXPOSE 8080
 
+# Exercise the frontend proxy, backend and PostgreSQL in one probe. /api/ping is rewritten by Next
+# to the backend's database-aware /ping endpoint; any frontend, backend or database failure makes
+# the container unhealthy instead of accepting the frontend-only /health response.
 HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=5 \
-  CMD node -e "fetch('http://127.0.0.1:8080/health',{redirect:'manual'}).then(r => process.exit(r.status >= 200 && r.status < 400 ? 0 : 1)).catch(() => process.exit(1))"
+  CMD node -e "fetch('http://127.0.0.1:8080/api/ping',{redirect:'manual'}).then(r => process.exit(r.status === 200 ? 0 : 1)).catch(() => process.exit(1))"
 CMD ["/app/start.sh"]
