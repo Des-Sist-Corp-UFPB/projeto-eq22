@@ -31,15 +31,16 @@ A CI é acionada em `push` e `pull_request` para as branches `master` e `main`.
 
 ### 3.1 Backend
 
-O job de backend:
+O fluxo auditável do job de backend é:
 
-1. sobe PostgreSQL 16 como service;
-2. aguarda `pg_isready`;
-3. configura Java 21;
-4. testa o entrypoint de OpenTelemetry;
-5. executa a suíte Maven.
+1. o runner sobe PostgreSQL 16 como service e aguarda o health baseado em `pg_isready`;
+2. faz checkout do repositório;
+3. testa o entrypoint de OpenTelemetry com `sh docker/start.test.sh`;
+4. configura Java 21;
+5. executa `chmod +x ./mvnw`;
+6. executa a suíte Maven.
 
-Comando central:
+Comando central de testes, após o `chmod` do passo anterior:
 
 ```bash
 ./mvnw -s .mvn/local-settings.xml test
@@ -224,6 +225,17 @@ Assim, um `200` do backend prova também que o round trip mínimo ao PostgreSQL 
 
 O Playwright só inicia depois de `http://localhost:3001` responder.
 
+### 10.3 Deadline por requisição
+
+O contador global de tentativas não é suficiente se uma chamada HTTP individual puder ficar bloqueada indefinidamente. Por isso a receita local limita cada probe a **1 segundo**, valor menor que o intervalo de 2 segundos entre tentativas:
+
+```text
+Bash:             curl --max-time 1
+Windows PowerShell: Invoke-WebRequest -TimeoutSec 1
+```
+
+Assim, mesmo um serviço que aceite a conexão TCP e pare de responder não impede o contador de avançar até a falha e o cleanup.
+
 ## 11. Reprodução completa — Linux/macOS (Bash)
 
 A forma recomendada é executar um script Bash a partir da **raiz do repositório**.
@@ -256,7 +268,7 @@ wait_http() {
   i=1
 
   while [ "$i" -le 60 ]; do
-    if curl --fail --silent "$url" > /dev/null; then
+    if curl --fail --silent --max-time 1 "$url" > /dev/null 2>&1; then
       printf '%s pronto\n' "$name"
       return 0
     fi
@@ -392,14 +404,14 @@ if errorlevel 1 (
   goto :cleanup
 )
 
-powershell -NoProfile -Command "$ok=$false; foreach($i in 1..60){ try { Invoke-WebRequest -UseBasicParsing http://localhost:8086/ping | Out-Null; $ok=$true; break } catch {}; Start-Sleep -Seconds 2 }; if(-not $ok){ exit 1 }"
+powershell -NoProfile -Command "$ok=$false; foreach($i in 1..60){ try { Invoke-WebRequest -UseBasicParsing -TimeoutSec 1 http://localhost:8086/ping | Out-Null; $ok=$true; break } catch {}; Start-Sleep -Seconds 2 }; if(-not $ok){ exit 1 }"
 if errorlevel 1 (
   docker compose -f "%COMPOSE_FILE%" logs backend
   set "EXIT_CODE=1"
   goto :cleanup
 )
 
-powershell -NoProfile -Command "$ok=$false; foreach($i in 1..60){ try { Invoke-WebRequest -UseBasicParsing http://localhost:3001 | Out-Null; $ok=$true; break } catch {}; Start-Sleep -Seconds 2 }; if(-not $ok){ exit 1 }"
+powershell -NoProfile -Command "$ok=$false; foreach($i in 1..60){ try { Invoke-WebRequest -UseBasicParsing -TimeoutSec 1 http://localhost:3001 | Out-Null; $ok=$true; break } catch {}; Start-Sleep -Seconds 2 }; if(-not $ok){ exit 1 }"
 if errorlevel 1 (
   docker compose -f "%COMPOSE_FILE%" logs frontend
   set "EXIT_CODE=1"
@@ -506,6 +518,7 @@ Uma regressão que derrube linhas abaixo de 85% faz o job frontend falhar antes 
 ### Backend Linux/macOS
 
 ```bash
+chmod +x ./mvnw
 ./mvnw -s .mvn/local-settings.xml clean test jacoco:report
 ```
 
@@ -528,21 +541,24 @@ npm run build
 
 1. `.github/workflows/ci.yml` possui gatilhos para `master` e `main`.
 2. O backend job usa PostgreSQL real e Java 21.
-3. A CI executa `docker/start.test.sh`.
-4. O frontend job executa `npm ci`, `npm test` e `npm run build`.
-5. `npm test` executa `vitest run --coverage`.
-6. `web/vitest.config.mjs` exige `lines >= 85`.
-7. A revisão atual registrou 87,16% de cobertura de linhas e 375 testes frontend.
-8. `.github/workflows/e2e.yml` instala dependências e Chromium antes de subir a stack.
-9. As duas credenciais E2E são efêmeras e obrigatórias.
-10. O workflow espera `/ping` e o frontend antes de executar Playwright.
-11. `/ping` consulta PostgreSQL de verdade.
-12. O workflow publica artifacts em falha e sempre executa cleanup.
-13. A receita Bash usa `set -e` no setup e não mascara falha de `npm ci`.
-14. A receita Bash usa contador shell, não `seq`, portanto não adiciona dependência GNU ao macOS.
-15. A receita Bash usa `trap cleanup EXIT`.
-16. A receita CMD checa cada etapa de instalação imediatamente.
-17. A receita CMD decide falhar antes de imprimir logs e converge para `:cleanup`.
+3. A CI executa `docker/start.test.sh` **antes** do setup de Java, como está versionado no workflow.
+4. A CI torna `mvnw` executável antes de invocá-lo.
+5. O frontend job executa `npm ci`, `npm test` e `npm run build`.
+6. `npm test` executa `vitest run --coverage`.
+7. `web/vitest.config.mjs` exige `lines >= 85`.
+8. A revisão atual registrou 87,16% de cobertura de linhas e 375 testes frontend.
+9. `.github/workflows/e2e.yml` instala dependências e Chromium antes de subir a stack.
+10. As duas credenciais E2E são efêmeras e obrigatórias.
+11. O workflow espera `/ping` e o frontend antes de executar Playwright.
+12. `/ping` consulta PostgreSQL de verdade.
+13. O workflow publica artifacts em falha e sempre executa cleanup.
+14. A receita Bash usa `set -e` no setup e não mascara falha de `npm ci`.
+15. A receita Bash usa contador shell, não `seq`, portanto não adiciona dependência GNU ao macOS.
+16. Cada probe HTTP local possui timeout individual de 1 segundo.
+17. A receita Bash usa `trap cleanup EXIT`.
+18. A receita CMD checa cada etapa de instalação imediatamente.
+19. A receita CMD decide falhar antes de imprimir logs e converge para `:cleanup`.
+20. Os comandos POSIX autônomos tornam `mvnw` executável antes de chamá-lo.
 
 ## 19. Arquivos para auditoria
 
@@ -573,4 +589,4 @@ docs/entrega/13-cobertura/README.md
 
 A entrega possui CI de backend/frontend, cobertura frontend continuamente verificada e E2E com stack completa.
 
-O fluxo de reprodução local não depende de `node_modules` preexistente, Chromium previamente instalado, `seq`, timing acidental de startup ou cleanup manual. Os caminhos de erro são fail-fast e preservam o resultado correto da execução.
+O fluxo de reprodução local não depende de `node_modules` preexistente, Chromium previamente instalado, `seq`, timing acidental de startup, requests HTTP sem deadline ou cleanup manual. Os caminhos de erro são fail-fast e preservam o resultado correto da execução.
