@@ -317,8 +317,11 @@ mvnw.cmd -s .mvn\local-settings.xml clean test jacoco:report
 ### Linux/macOS
 
 ```bash
+chmod +x ./mvnw
 ./mvnw -s .mvn/local-settings.xml clean test jacoco:report
 ```
+
+O `chmod` é necessário em um checkout POSIX limpo porque `mvnw` está versionado sem o bit executável; a CI faz a mesma preparação antes de chamar o wrapper.
 
 Relatório gerado:
 
