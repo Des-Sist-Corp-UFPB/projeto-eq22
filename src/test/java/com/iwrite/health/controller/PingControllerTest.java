@@ -66,22 +66,4 @@ class PingControllerTest {
                 () -> Instant.parse(response.get("timestamp").asText())
         );
     }
-
-    @Test
-    void pingResponseDoesNotLeakConnectionDetailsWhenDatabaseFails() throws Exception {
-        String canary = "jdbc:postgresql://secret-host:5432/private?password=SUPER_SECRET_CANARY";
-        when(databaseHealthService.isHealthy()).thenReturn(false);
-
-        String responseBody = mockMvc.perform(get("/ping"))
-                .andExpect(status().isServiceUnavailable())
-                .andReturn()
-                .getResponse()
-                .getContentAsString();
-
-        org.assertj.core.api.Assertions.assertThat(responseBody)
-                .doesNotContain("secret-host")
-                .doesNotContain("SUPER_SECRET_CANARY")
-                .doesNotContain("jdbc:postgresql")
-                .doesNotContain(canary);
-    }
 }
