@@ -6,13 +6,19 @@ O Umami mede **uso do produto**: page views e eventos de funcionalidades (criar 
 
 **Analytics ≠ observabilidade.** A observabilidade técnica (OpenTelemetry: traces, métricas, logs — issues #124–#126) diagnostica latência, erros e gargalos por requisição. O Umami agrega comportamento de uso, sem identificar indivíduos e sem dados técnicos de execução. As duas integrações são independentes: desligar uma não afeta a outra.
 
+## Instância institucional da disciplina
+
+Na disciplina DSC/UFPB, a equipe EQ22 usa a instância institucional do Umami em `https://umami.dsc.rodrigor.com`. O site da equipe já é cadastrado no painel como `eq22`/`eq22.dsc.rodrigor.com`.
+
+O **Website ID oficial é configurado apenas no ambiente**. Apesar de ser um identificador público de tracking, o valor real continua deliberadamente fora do repositório para evitar acoplamento do código a um cadastro externo específico. Login e senha do painel também nunca pertencem ao código, Compose ou CI.
+
 ## Variáveis de ambiente (frontend)
 
 | Variável | Obrigatória | Descrição |
 |---|---|---|
 | `NEXT_PUBLIC_UMAMI_ENABLED` | sim | `true` habilita; qualquer outro valor desabilita tudo. |
-| `NEXT_PUBLIC_UMAMI_SCRIPT_URL` | sim | URL do `script.js` do Umami (ex.: `https://cloud.umami.is/script.js`). |
-| `NEXT_PUBLIC_UMAMI_WEBSITE_ID` | sim | Website ID do cadastro **oficial do IWrite** no painel. Placeholder até ser informado; nunca versionar o valor real nem reutilizar ID de outro projeto. |
+| `NEXT_PUBLIC_UMAMI_SCRIPT_URL` | sim | URL do `script.js` do Umami. Na disciplina: `https://umami.dsc.rodrigor.com/script.js`. |
+| `NEXT_PUBLIC_UMAMI_WEBSITE_ID` | sim | Website ID do cadastro **oficial do IWrite/EQ22** no painel. Nunca versionar o valor real nem reutilizar ID de outro projeto. |
 | `NEXT_PUBLIC_UMAMI_HOST_URL` | não | Apenas se o endpoint de coleta for diferente da origem do script. |
 
 Sem configuração válida a integração é um **no-op total**: o script não é carregado e nenhuma chamada é feita. Falhas do tracker nunca bloqueiam ações do produto (todas as chamadas são fail-open). Nenhuma credencial administrativa do painel é usada pela aplicação — só o website ID público.
@@ -43,9 +49,25 @@ A allowlist em `analytics.ts` é a única fonte de eventos/propriedades/valores 
 
 `web/src/lib/analytics/analytics.test.ts`, `web/src/lib/analytics/umami-analytics.test.tsx` e a seção de analytics em `scene-ai-analysis-panel.test.tsx` cobrem: integração desabilitada/ausente/válida, carregamento único do script, page view inicial e navegação client-side, deduplicação, eventos de sucesso e falha, bloqueio de propriedades não permitidas e ausência de conteúdo/IDs privados.
 
-## Validação após deploy
+## Validação humana — 08/08/2026
 
-1. Configurar as variáveis com o website ID oficial e fazer o build (`npm run build`) — as variáveis `NEXT_PUBLIC_*` são embutidas no build.
-2. Abrir o app, navegar entre `/`, `/dashboard` e um livro; confirmar page views no painel do Umami no website correto.
+A integração foi validada de ponta a ponta com o frontend executado em `localhost:3000` e enviando para a **instância institucional** da disciplina.
+
+- [x] Website ID oficial da EQ22 informado no ambiente local, sem versioná-lo.
+- [x] `https://umami.dsc.rodrigor.com/script.js` carregado pelo navegador.
+- [x] Requisições de coleta `send` aceitas pelo servidor institucional com HTTP `200`.
+- [x] Page views visíveis no painel institucional.
+- [x] Rotas observadas no painel: `/`, `/login`, `/dashboard`, `/library` e `/books/{id}`.
+- [x] Sanitização comprovada visualmente: o UUID real do livro não apareceu no painel; a rota foi registrada como `/books/{id}`.
+- [x] Eventos reais visíveis no painel: `book_created`, `scene_saved` e `book_exported`.
+- [x] Na sessão registrada, o painel exibiu 9 eventos totais e 3 tipos únicos: 5 `scene_saved`, 3 `book_exported` e 1 `book_created`.
+- [ ] Repetir a validação no **deploy remoto** `eq22.dsc.rodrigor.com` após o Website ID ser configurado no build/deploy institucional.
+
+O registro técnico consolidado da sessão (Umami + MCP) está em [`evidencias-validacao-humana-2026-08-08.md`](evidencias-validacao-humana-2026-08-08.md).
+
+## Validação após deploy remoto
+
+1. Configurar as variáveis com o Website ID oficial no ambiente de build (`NEXT_PUBLIC_*` são embutidas no build).
+2. Abrir `eq22.dsc.rodrigor.com`, navegar entre `/`, `/dashboard` e um livro; confirmar page views no painel do Umami no website correto.
 3. Criar um livro, salvar uma cena e exportar um manuscrito; confirmar `book_created`, `scene_saved` e `book_exported` no painel.
-4. Conferir que nenhuma propriedade contém título, conteúdo ou IDs.
+4. Conferir novamente que nenhuma propriedade contém título, conteúdo ou IDs brutos.
