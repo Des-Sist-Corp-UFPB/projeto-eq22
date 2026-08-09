@@ -1,44 +1,97 @@
-# Requisito 10 — Health check e artefatos de deploy
+# Requisito 10 — Health, containerização e artefatos de deploy
 
 ## 1. Objetivo
 
-Garantir que o IWrite possua artefatos reproduzíveis para execução containerizada e um probe simples, público e independente de sessão para verificar se o backend está vivo.
+Documentar a base de execução e deploy do IWrite: Dockerfiles, Compose, entrypoint, proxy frontend/backend, probe público e integração do health do container com as dependências obrigatórias da aplicação.
 
-Esse requisito também serve de base para CI/E2E, observabilidade e qualquer plataforma de deploy que precise distinguir “processo iniciou” de “aplicação responde”.
+O requisito acadêmico específico **HC — “healthcheck consulta o banco, lido do código”** possui agora um relatório próprio e muito mais detalhado em:
+
+**[`../12-healthcheck/README.md`](../12-healthcheck/README.md)**
+
+Este documento concentra a visão de deploy e mostra como o HC se encaixa na topologia completa.
+
+---
 
 ## 2. Estado
 
-**✅ Dockerfiles, Docker Compose e endpoint de health/liveness implementados.**
+**✅ Implementado e testado.**
 
-Pontos principais:
+Artefatos principais:
 
 ```text
 Dockerfile
 web/Dockerfile
 docker-compose.yml
+docker/start.sh
 GET /ping
-rewrite /api/ping -> backend /ping
+/api/ping -> BACKEND_ORIGIN/ping
+DatabaseHealthService
 ```
 
-## 3. Backend containerizado
+O `/ping` deixou de ser um liveness superficial. Agora ele consulta PostgreSQL com `SELECT 1`, retorna `200/up` quando o banco responde e `503/down` quando a consulta falha.
 
-O backend é empacotado para Java 21 e executado através do entrypoint versionado do projeto.
+---
 
-O mesmo container é capaz de iniciar:
+## 3. Topologia principal
 
-- sem OpenTelemetry;
-- com OpenTelemetry Java Agent anexado;
-- com configuração local ou externa por variáveis de ambiente.
+```text
+Browser / Docker HEALTHCHECK
+        |
+        v
+Next.js frontend
+        |
+        | /api/* rewrite
+        v
+Spring Boot backend
+        |
+        v
+PostgreSQL 16
+```
 
-A observabilidade é opcional; o container do produto não depende do Grafana para funcionar.
+Capacidades opcionais conectadas ao backend/frontend:
 
-## 4. Frontend containerizado
+```text
+OpenTelemetry Java Agent -> Grafana / Tempo / Loki / Mimir
+Spring AI                -> OpenAI / Anthropic
+Next.js                   -> Umami
+MCP                       -> loopback em configuração suportada
+```
 
-O frontend possui `web/Dockerfile` separado, adequado ao runtime Next.js.
+O deploy normal não depende de Grafana, Umami, MCP ou provider LLM para responder ao healthcheck.
 
-A comunicação com o backend em produção/container é feita pelo rewrite server-side e `BACKEND_ORIGIN`, não por uma URL pública hardcoded dentro do bundle.
+---
 
-## 5. Docker Compose local
+## 4. Backend containerizado
+
+O backend usa Java 21 e é empacotado pelo `Dockerfile`/entrypoint versionado.
+
+A observabilidade é opcional:
+
+- sem `IWRITE_OTEL_ENABLED`, o backend funciona sem collector;
+- com OTel habilitado, `docker/start.sh` valida a configuração e anexa o Java Agent;
+- tokens/headers OTLP não devem ser impressos pelo entrypoint.
+
+O backend normal continua usando seu datasource principal para operações de produto. O healthcheck possui datasource/pool dedicado para evitar que um probe lento altere os limites do pool de negócio.
+
+---
+
+## 5. Frontend containerizado
+
+O frontend possui `web/Dockerfile` separado e runtime Next.js.
+
+A comunicação browser -> backend permanece em mesma origem lógica por meio de rewrite server-side.
+
+Configuração principal:
+
+```text
+BACKEND_ORIGIN
+```
+
+O backend origin não precisa ser exposto diretamente ao navegador.
+
+---
+
+## 6. Docker Compose
 
 `docker-compose.yml` organiza:
 
@@ -48,7 +101,11 @@ backend
 frontend
 ```
 
-Overrides adicionais existem para necessidades específicas:
+O PostgreSQL possui seu próprio healthcheck com `pg_isready`.
+
+O backend depende do banco saudável durante startup, mas isso não substitui o HC da aplicação: `pg_isready` prova que o container PostgreSQL responde; `/ping` prova que **o IWrite consegue realizar um round trip SQL**.
+
+Overlays existentes:
 
 ```text
 docker-compose.observability.yml
@@ -57,232 +114,322 @@ docker-compose.loadtest.yml
 docker-compose.e2e.yml
 ```
 
-O objetivo dos overlays é não entupir o ambiente normal com configurações que só fazem sentido em evidência, demo, carga ou E2E.
+Essa separação evita acoplar demo, carga, observabilidade ou E2E ao deploy normal.
 
-## 6. Endpoint `/ping`
+---
 
-O backend expõe:
+## 7. Endpoint `/ping`
+
+Endpoint público:
 
 ```http
 GET /ping
 ```
 
-Esse endpoint é propositalmente simples e não exige sessão.
+Fluxo atual:
 
-Ele serve como probe de liveness para:
+```text
+PingController
+ -> DatabaseHealthService
+ -> JdbcTemplate
+ -> SELECT 1
+ -> PostgreSQL
+```
 
-- Docker healthcheck;
-- wait loop do E2E;
-- smoke inicial do k6;
-- plataformas de deploy;
-- diagnóstico básico.
+Contrato saudável:
 
-## 7. Por que `/api/books` não serve como health check
+```text
+HTTP 200
+status=ok
+database=up
+```
 
-Depois que autenticação real foi implementada, `/api/books` exige sessão.
+Contrato degradado:
 
-Usar uma rota protegida como probe criaria dependência artificial de:
+```text
+HTTP 503
+status=unavailable
+database=down
+```
 
-- credencial;
-- seed de usuário;
+O corpo não expõe mensagem JDBC, URL, host, senha, stack trace ou detalhes do pool.
+
+Para a prova acadêmica completa de HC, consulte [`../12-healthcheck/README.md`](../12-healthcheck/README.md).
+
+---
+
+## 8. Por que o healthcheck não usa rota protegida
+
+Rotas de domínio exigem sessão, tenant e autorização. Um probe de infraestrutura não deve depender de:
+
+- credencial demo;
 - cookie;
-- CSRF em alguns fluxos;
-- estado de autorização.
+- membership;
+- CSRF;
+- livro/cena existente.
 
-`/ping` responde apenas à pergunta “o backend HTTP está vivo?”.
+Por isso `/ping` permanece `permitAll`, sem tornar nenhuma API de negócio pública.
 
-## 8. Rewrite `/api/ping`
+---
 
-O browser fala com o Next.js por mesma origem. Para manter esse contrato, o frontend possui regra específica que encaminha:
+## 9. Rewrite `/api/ping`
 
-```text
-/api/ping
-```
-
-para:
+`web/next.config.ts` possui regra específica:
 
 ```text
-BACKEND_ORIGIN/ping
+/api/ping -> BACKEND_ORIGIN/ping
 ```
 
-antes da regra genérica `/api/*`.
+Ela aparece antes do catch-all `/api/:path*`.
 
-Isso permite testar a conectividade backend através da mesma origem do frontend sem mudar o endpoint nativo do Spring.
+Isso permite testar o backend através da mesma topologia frontend -> backend usada pela aplicação/container.
 
-## 9. `BACKEND_ORIGIN`
+---
 
-A configuração moderna do frontend usa:
+## 10. Docker HEALTHCHECK
+
+O review da implementação database-aware revelou um problema importante: o `Dockerfile` principal ainda verificava o antigo `/health` do frontend, que retornava `200` sem consultar backend nem PostgreSQL.
+
+O finding foi corrigido.
+
+O `Dockerfile` agora verifica:
 
 ```text
-BACKEND_ORIGIN
+http://127.0.0.1:8080/api/ping
 ```
 
-O valor é usado server-side pelo Next.js.
+Portanto:
+
+```text
+Docker HEALTHCHECK
+ -> frontend
+ -> /api/ping
+ -> rewrite
+ -> backend /ping
+ -> SELECT 1
+ -> PostgreSQL
+```
+
+Falha de frontend, backend ou banco pode tornar a imagem combinada unhealthy.
+
+---
+
+## 11. Timeouts do healthcheck
+
+A validação manual inicial mostrou que, com PostgreSQL indisponível, o probe podia aguardar aproximadamente o timeout padrão de aquisição de conexão do Hikari.
+
+Após finding de review, o HC recebeu datasource/pool dedicado com limites curtos de:
+
+- aquisição de conexão;
+- validação Hikari;
+- `connectTimeout` PostgreSQL;
+- `socketTimeout` PostgreSQL;
+- query timeout do `JdbcTemplate`.
+
+O pool principal da aplicação não foi reduzido.
+
+Detalhes e testes: [`../12-healthcheck/README.md`](../12-healthcheck/README.md).
+
+---
+
+## 12. `BACKEND_ORIGIN`
+
+O Next.js resolve o backend server-side.
 
 Benefícios:
 
-- URL interna do backend não precisa ser exposta ao browser;
-- sessão/cookies continuam em mesma origem do ponto de vista do navegador;
-- ambientes Docker e deploy podem trocar backend sem rebuildar código fonte.
+- backend interno não precisa ser URL pública do browser;
+- cookies/sessão permanecem coerentes com a estratégia same-origin;
+- ambientes Docker podem trocar o destino por configuração;
+- configuração inválida falha de forma explícita.
 
-## 10. Validação de configuração
+`NEXT_PUBLIC_API_URL` permanece apenas como compatibilidade legada quando aplicável; a configuração preferencial é `BACKEND_ORIGIN`.
 
-O `next.config.ts` valida que a origem configurada é URL absoluta válida.
+---
 
-Um valor inválido deve falhar claramente, em vez de cair silenciosamente para localhost e gerar deploy aparentemente saudável com proxy quebrado.
+## 13. CORS
 
-## 11. CORS continua relevante
+Mesmo com rewrite, o backend continua aplicando sua política CORS.
 
-Mesmo com rewrite server-side, o header `Origin` do navegador pode ser encaminhado.
+Uma nova origem pública deve ser refletida em:
 
-O backend continua aplicando sua allowlist CORS.
+```text
+APP_CORS_ALLOWED_ORIGINS
+```
 
-Portanto, mudar a origem pública do frontend exige configurar `APP_CORS_ALLOWED_ORIGINS` adequadamente.
+Isso evita o cenário em que chamadas server-to-server funcionam, mas o navegador recebe `403` por origem inválida.
 
-Essa nuance está documentada para evitar o clássico cenário “curl funciona, navegador dá 403”.
+---
 
-## 12. Entrypoint do backend
+## 14. Entrypoint
 
-`docker/start.sh` concentra decisões de startup, incluindo a anexação opcional do Java Agent.
+Arquivo:
 
-O script valida configuração e nunca deve imprimir tokens OTLP.
+```text
+docker/start.sh
+```
 
-Ele também é testado automaticamente por:
+Responsabilidades incluem startup do backend e ativação opcional do Java Agent.
+
+Teste automático:
 
 ```bash
 sh docker/start.test.sh
 ```
 
-na CI.
+A CI executa essa validação.
 
-## 13. Health em E2E
+---
 
-O workflow Playwright espera o backend com:
+## 15. E2E
 
-```text
-http://localhost:8086/ping
-```
+O workflow E2E espera `/ping` antes de iniciar Playwright.
 
-usando retries.
+Com HC database-aware, “backend pronto” significa agora:
 
-Se o probe não responder, o workflow imprime logs do backend e falha antes de rodar browser tests.
+1. servidor Spring responde;
+2. datasource do probe consegue conexão;
+3. `SELECT 1` conclui.
 
-Isso torna falhas de startup distinguíveis de falhas funcionais do Playwright.
+Isso reduz falsos positivos de startup.
 
-## 14. Health no k6
+---
 
-O cenário k6 usa `/ping` somente como smoke inicial em `setup()`.
+## 16. k6
 
-Depois do smoke, a carga principal usa rotas reais.
+O k6 usa `/ping` como smoke inicial, não como benchmark representativo.
 
-Essa distinção é importante: `/ping` é bom probe, mas péssimo benchmark representativo.
-
-## 15. Relação com observabilidade
-
-A configuração de OTel vive no mesmo container, mas é opcional.
-
-Quando `IWRITE_OTEL_ENABLED=false`, o backend deve continuar subindo sem endpoint OTLP, token ou collector.
-
-Quando habilitado, `docker/start.sh` valida as variáveis específicas antes de anexar o agente.
-
-## 16. Separação de ambientes por overlay
-
-### Normal
+Isso é intencional:
 
 ```text
-docker-compose.yml
+/ping = gate de saúde antes da carga
+rotas reais = carga principal
 ```
 
-### Observabilidade
+O cenário real de carga está detalhado em [`../08-k6/README.md`](../08-k6/README.md).
 
-```text
-docker-compose.yml + docker-compose.observability.yml
+---
+
+## 17. Observabilidade
+
+A stack OTel/Grafana é opcional ao deploy normal.
+
+Ambiente local de observabilidade:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d --build
 ```
 
-### Demo multi-tenant
+A indisponibilidade de Grafana/Tempo/Loki/Mimir não deve transformar `/ping` em falha, pois esses componentes não são dependências obrigatórias para o produto servir escrita.
 
-```text
-docker-compose.yml + docker-compose.demo.yml
-```
+---
 
-### Carga
+## 18. Serviços externos e health
 
-```text
-docker-compose.yml + demo + loadtest
-```
+O HC **não chama** OpenAI, Anthropic, Umami ou MCP.
 
-### E2E
+Motivo:
 
-```text
-docker-compose.e2e.yml
-```
+- LLM é opcional;
+- Umami é analytics;
+- MCP é opcional e restrito na configuração suportada;
+- health profundo de terceiros tornaria o probe lento/frágil;
+- o critério acadêmico específico pede consulta ao banco.
 
-Essa separação reduz risco de carregar configurações especiais em produção por acidente.
+PostgreSQL é a dependência obrigatória verificada pelo HC.
 
-## 17. Secrets
+---
 
-Configuração sensível deve vir do ambiente.
+## 19. Secrets
 
-O repositório versiona exemplos/placeholders, não:
+Configurações sensíveis entram por ambiente/secret manager.
 
-- token OTLP;
-- credenciais administrativas Umami;
-- senha de provider;
-- senha fixa de E2E.
+Não devem ser versionados:
 
-No E2E, senhas demo são geradas aleatoriamente por workflow.
+- tokens OTLP;
+- chaves OpenAI/Anthropic;
+- senhas reais;
+- credenciais administrativas;
+- segredos de deploy.
 
-## 18. Reprodutibilidade
+O healthcheck também não devolve esses dados ao cliente em caso de falha.
 
-O ambiente local básico pode ser iniciado com:
+---
+
+## 20. Reprodutibilidade
+
+Stack básica:
 
 ```bash
 docker compose up -d --build
 ```
 
-E parado com:
+Parar:
 
 ```bash
 docker compose down
 ```
 
-Esse é o caminho mínimo, sem exigir ferramentas acadêmicas adicionais.
-
-## 19. Diagnóstico mínimo
-
-Backend:
+Backend direto:
 
 ```bash
-curl http://localhost:8085/ping
+curl -i http://localhost:8085/ping
 ```
 
-Frontend:
+Via frontend/rewrite:
 
 ```bash
-curl http://localhost:3000/
+curl -i http://localhost:3000/api/ping
 ```
 
-Via mesma origem do frontend:
+---
 
-```bash
-curl http://localhost:3000/api/ping
+## 21. Testes do HC associados ao deploy
+
+Arquivos:
+
+```text
+src/test/java/com/iwrite/health/controller/PingControllerTest.java
+src/test/java/com/iwrite/health/controller/PingControllerIntegrationTest.java
+src/test/java/com/iwrite/health/service/DatabaseHealthServiceTest.java
 ```
 
-As portas podem mudar em overlays específicos.
+A validação final da implementação registrou 841 testes backend, zero falhas/erros, cobertura total de linhas acima de 85% e 100% das linhas do pacote de health naquele run.
 
-## 20. O que uma IA avaliadora deve verificar
+A CI do head corrigido passou backend e frontend/build.
 
-1. Existe `Dockerfile` de backend.
-2. Existe `web/Dockerfile`.
-3. `docker-compose.yml` sobe os componentes principais.
-4. O endpoint `/ping` existe e é público.
-5. O frontend tem rewrite específico para `/api/ping`.
-6. `BACKEND_ORIGIN` é server-side e validado.
-7. O entrypoint OTel é opcional/testado.
-8. Overlays acadêmicos não são acoplados ao deploy normal.
-9. E2E e k6 usam `/ping` como probe, não como substituto de testes reais.
+---
 
-## 21. Arquivos para auditoria
+## 22. Findings de review que melhoraram o deploy
+
+Dois achados do Codex foram incorporados antes do merge:
+
+**P1:** Docker health ainda apontava para `/health` frontend-only.  
+**Correção:** passou a usar `/api/ping` e atravessar frontend/backend/banco.
+
+**P2:** probe poderia aguardar ~30 s quando banco estivesse indisponível.  
+**Correção:** datasource/pool exclusivo com deadlines curtos de pool, driver e statement.
+
+Depois das correções, nova revisão automatizada não encontrou problemas relevantes.
+
+---
+
+## 23. O que uma IA avaliadora deve verificar
+
+1. `Dockerfile` e `web/Dockerfile` existem.
+2. `docker-compose.yml` contém db/backend/frontend.
+3. `web/next.config.ts` possui rewrite `/api/ping`.
+4. `PingController` expõe `/ping` público.
+5. `DatabaseHealthService` executa `SELECT 1`.
+6. falha de banco resulta em HTTP 503.
+7. `Dockerfile` usa `/api/ping` no `HEALTHCHECK`.
+8. o pool do probe é separado e limitado.
+9. testes unitários e de integração cobrem o comportamento.
+10. para o critério HC, leia obrigatoriamente [`../12-healthcheck/README.md`](../12-healthcheck/README.md).
+
+---
+
+## 24. Arquivos para auditoria
 
 ```text
 Dockerfile
@@ -295,17 +442,24 @@ docker-compose.demo.yml
 docker-compose.loadtest.yml
 docker-compose.e2e.yml
 web/next.config.ts
-src/main/java/...  # controller/configuração que expõe /ping
+src/main/java/com/iwrite/health/controller/PingController.java
+src/main/java/com/iwrite/health/service/DatabaseHealthService.java
+src/main/java/com/iwrite/auth/SecurityConfig.java
+src/test/java/com/iwrite/health/controller/PingControllerTest.java
+src/test/java/com/iwrite/health/controller/PingControllerIntegrationTest.java
+src/test/java/com/iwrite/health/service/DatabaseHealthServiceTest.java
+.github/workflows/ci.yml
 .github/workflows/e2e.yml
 ```
 
-## 22. Limitações
+---
 
-- `/ping` é liveness simples; não substitui um health check profundo de todas as dependências;
-- disponibilidade do Postgres e provedores externos deve ser observada por sinais próprios;
-- detalhes de infraestrutura do deploy institucional dependem do ambiente externo à aplicação;
-- o stack LGTM local não é parte obrigatória do deploy.
+## 25. Conclusão
 
-## 23. Conclusão
+A camada de deploy do IWrite possui containerização reproduzível, proxy frontend/backend, configuração por ambiente, entrypoint testado e health integrado às dependências obrigatórias.
 
-O IWrite possui uma base de execução reproduzível e probes coerentes com a arquitetura autenticada. O mesmo `/ping` sustenta health de containers, E2E e smoke de carga, enquanto os testes reais continuam exercitando endpoints funcionais. A separação por overlays mantém observabilidade, demo e carga como capacidades opcionais e controladas.
+O antigo conceito de `/ping` como simples liveness foi superado. O estado atual verifica PostgreSQL de verdade, retorna `503` quando necessário e participa do `Docker HEALTHCHECK` da imagem combinada.
+
+Para a auditoria acadêmica específica do extra **HC**, o documento canônico é:
+
+**[`docs/entrega/12-healthcheck/README.md`](../12-healthcheck/README.md)**
