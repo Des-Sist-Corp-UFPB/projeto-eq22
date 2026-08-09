@@ -515,6 +515,12 @@ Uma regressão que derrube linhas abaixo de 85% faz o job frontend falhar antes 
 
 ## 17. Comandos locais de backend/frontend
 
+A suíte backend local usa PostgreSQL real em `localhost:5435`; por isso a reprodução deve começar na raiz com:
+
+```bash
+docker compose up -d --wait db
+```
+
 ### Backend Linux/macOS
 
 ```bash
@@ -526,6 +532,12 @@ chmod +x ./mvnw
 
 ```cmd
 mvnw.cmd -s .mvn\local-settings.xml clean test jacoco:report
+```
+
+Depois do backend, remova apenas o container do banco usado para a reprodução, mantendo o volume:
+
+```bash
+docker compose rm -sf db
 ```
 
 ### Frontend
@@ -559,6 +571,7 @@ npm run build
 18. A receita CMD checa cada etapa de instalação imediatamente.
 19. A receita CMD decide falhar antes de imprimir logs e converge para `:cleanup`.
 20. Os comandos POSIX autônomos tornam `mvnw` executável antes de chamá-lo.
+21. A receita local backend sobe e aguarda PostgreSQL antes da suíte Maven e documenta cleanup do container.
 
 ## 19. Arquivos para auditoria
 
@@ -589,4 +602,4 @@ docs/entrega/13-cobertura/README.md
 
 A entrega possui CI de backend/frontend, cobertura frontend continuamente verificada e E2E com stack completa.
 
-O fluxo de reprodução local não depende de `node_modules` preexistente, Chromium previamente instalado, `seq`, timing acidental de startup, requests HTTP sem deadline ou cleanup manual. Os caminhos de erro são fail-fast e preservam o resultado correto da execução.
+O fluxo de reprodução local não depende de `node_modules` preexistente, Chromium previamente instalado, `seq`, timing acidental de startup, requests HTTP sem deadline ou PostgreSQL iniciado manualmente fora da receita. Os caminhos de erro são fail-fast e preservam o resultado correto da execução.
