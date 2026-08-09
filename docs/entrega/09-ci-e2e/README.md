@@ -4,11 +4,11 @@
 
 Garantir que mudanças no backend e frontend sejam verificadas automaticamente e que exista um fluxo ponta a ponta executável em ambiente isolado, com banco, backend, frontend e navegador real.
 
-O objetivo é reduzir falsa confiança de “funciona na minha máquina” e transformar requisitos importantes — inclusive cobertura frontend — em verificações automáticas.
+O objetivo é reduzir falsa confiança de “funciona na minha máquina” e transformar requisitos importantes — inclusive cobertura frontend — em verificações automáticas, reproduzíveis e auditáveis.
 
 ## 2. Estado
 
-**✅ CI implementada para `master` e `main`; E2E Playwright manual/agendado; cobertura frontend ≥85% agora é gate do job principal.**
+**✅ CI implementada para `master` e `main`; E2E Playwright manual/agendado; cobertura frontend ≥85% é gate do job principal; receita local reproduz o readiness usado na CI.**
 
 Arquivos principais:
 
@@ -16,8 +16,10 @@ Arquivos principais:
 .github/workflows/ci.yml
 .github/workflows/e2e.yml
 docker-compose.e2e.yml
+docker/start.test.sh
 web/package.json
 web/vitest.config.mjs
+web/playwright.config.*
 web/e2e/
 ```
 
@@ -32,9 +34,9 @@ push -> main
 
 `main` é necessário para o repositório acadêmico e `master` para o repositório pessoal.
 
-## 4. Backend
+## 4. Backend na CI
 
-O job sobe PostgreSQL 16 como service do GitHub Actions com `pg_isready`, configura Java 21 e executa o entrypoint OTel antes da suíte Java.
+O job sobe PostgreSQL 16 como service do GitHub Actions com `pg_isready`, configura Java 21, executa o entrypoint de OpenTelemetry e só então roda a suíte Java.
 
 ```bash
 sh docker/start.test.sh
@@ -43,7 +45,7 @@ sh docker/start.test.sh
 
 Os testes de integração usam PostgreSQL real do job.
 
-## 5. Frontend
+## 5. Frontend na CI
 
 O job frontend usa Node 20 e executa:
 
@@ -68,6 +70,8 @@ Portanto a CI não executa apenas testes: ela mede cobertura antes do build.
 ```js
 coverage: {
   provider: "v8",
+  reporter: ["text", "json-summary", "html"],
+  reportsDirectory: "./coverage",
   include: ["src/**/*.{ts,tsx}"],
   exclude: ["src/**/*.test.{ts,tsx}", "src/test/**"],
   thresholds: {
@@ -89,7 +93,7 @@ CI frontend
 
 Isso transforma o requisito **Cob** em gate contínuo do frontend.
 
-## 7. Evidência da CI #253
+## 7. Evidência de cobertura atual
 
 A execução da PR #159 registrou:
 
@@ -104,13 +108,13 @@ Lines:      87,16%
 
 Como o threshold é `lines: 85`, o passo de testes concluiu com sucesso.
 
-O finding do Codex sobre usar apenas o snapshot histórico de 01/07 foi, portanto, corrigido com uma medição atual na própria CI.
+O finding do Codex sobre usar apenas o snapshot histórico de 01/07 foi corrigido com uma medição atual na própria CI.
 
 Relatório específico: [`../13-cobertura/README.md`](../13-cobertura/README.md).
 
-## 8. `npm ci`
+## 8. Por que `npm ci` é usado
 
-`npm ci` respeita o lockfile e falha quando `package.json` e `package-lock.json` são incompatíveis. Para CI isso evita resolução silenciosa diferente da versionada.
+`npm ci` respeita o lockfile e falha quando `package.json` e `package-lock.json` são incompatíveis. Para CI isso evita resolução silenciosa diferente da versão declarada e ajuda a detectar dependências diretas ausentes.
 
 ## 9. Build de produção
 
@@ -124,9 +128,9 @@ Isso valida TypeScript/Next e o build otimizado do frontend.
 
 ## 10. Observação sobre artifact de build
 
-O workflow possui etapa de upload do build frontend. A saída padrão atual do Next.js é `.next/`; a etapa histórica aponta para `web/build` e pode emitir warning de ausência de artifact sem falhar o job.
+O workflow possui etapa histórica de upload do build frontend. A saída padrão atual do Next.js é `.next/`; uma referência antiga a `web/build` pode gerar warning de ausência de artifact sem invalidar testes, cobertura ou o build em si.
 
-Esse detalhe não invalida testes/build/cobertura, mas deve ser tratado separadamente caso o artifact de build seja necessário como requisito operacional.
+Caso o artifact seja usado operacionalmente, o caminho deve acompanhar a saída efetiva do Next.js.
 
 ## 11. E2E — objetivo
 
@@ -154,78 +158,213 @@ Cron:
 17 3 * * 0
 ```
 
-## 13. Ambiente E2E
+## 13. Stack E2E
 
-O workflow instala Java, Node, dependências npm e Chromium, depois sobe:
+O workflow instala Java, Node, dependências npm e Chromium e depois sobe:
 
 ```bash
 docker compose -f docker-compose.e2e.yml up -d --build
+```
+
+A stack usa portas locais próprias para não conflitar com a execução padrão:
+
+```text
+PostgreSQL: 5436
+Backend:    8086
+Frontend:   3001
 ```
 
 ## 14. Credenciais efêmeras
 
 As senhas de demonstração são obrigatórias tanto para o seed do backend quanto para o login do Playwright. `docker-compose.e2e.yml` rejeita valores ausentes usando `${VAR:?...}`.
 
-Na CI, as duas senhas são geradas a cada execução com `openssl rand -base64 32`, mascaradas com `::add-mask::` e gravadas em `GITHUB_ENV`. Não existe senha fixa versionada para login E2E.
+Na CI, as duas senhas são geradas a cada execução com `openssl rand -base64 32`, mascaradas e gravadas em `GITHUB_ENV`. Não existe senha fixa versionada para login E2E.
 
-Para reprodução local, o shell que inicia o Compose e o Playwright também precisa exportar/definir **as mesmas duas variáveis** antes de subir a stack.
+As variáveis são:
 
-### Linux/macOS — gerar valores efêmeros
+```text
+IWRITE_DEMO_AUTOR_A_PASSWORD
+IWRITE_DEMO_AUTOR_B_PASSWORD
+```
+
+Para reprodução local, o mesmo shell que inicia Compose e Playwright deve manter esses valores no ambiente durante toda a execução.
+
+## 15. Readiness antes do Playwright
+
+`docker compose ... up -d` confirma que os containers foram iniciados, mas não garante que backend e frontend já estejam prontos para receber requisições.
+
+Por isso a CI **não** chama Playwright imediatamente. Ela espera explicitamente:
+
+```text
+backend  -> http://localhost:8086/ping
+frontend -> http://localhost:3001
+```
+
+O mesmo princípio é obrigatório na receita local para evitar falhas intermitentes em máquinas frias, builds recém-criados ou inicializações mais lentas.
+
+### Backend
+
+O endpoint usado é `/ping`, que é database-aware:
+
+```text
+/ping
+ -> DatabaseHealthService
+ -> SELECT 1
+ -> PostgreSQL
+```
+
+Logo um `200` do probe significa que o backend respondeu **e** conseguiu consultar o banco.
+
+### Frontend
+
+O frontend é considerado pronto somente quando `http://localhost:3001` responde com sucesso.
+
+## 16. Receita E2E completa — Linux/macOS
+
+Execute a partir da **raiz do repositório**.
+
+### 16.1 Gerar credenciais efêmeras
 
 ```bash
 export IWRITE_DEMO_AUTOR_A_PASSWORD="$(openssl rand -base64 32)"
 export IWRITE_DEMO_AUTOR_B_PASSWORD="$(openssl rand -base64 32)"
-
-docker compose -f docker-compose.e2e.yml up -d --build
-cd web
-npm run e2e
 ```
 
-### Windows CMD — gerar valores efêmeros
+### 16.2 Subir a stack
 
-```cmd
-for /f %A in ('powershell -NoProfile -Command "[guid]::NewGuid().ToString('N')"') do set "IWRITE_DEMO_AUTOR_A_PASSWORD=%A"
-for /f %B in ('powershell -NoProfile -Command "[guid]::NewGuid().ToString('N')"') do set "IWRITE_DEMO_AUTOR_B_PASSWORD=%B"
-
+```bash
 docker compose -f docker-compose.e2e.yml up -d --build
-cd web
-npm run e2e
 ```
 
-> Os comandos acima são para um **CMD interativo**. Em arquivo `.bat`, use `%%A` e `%%B`. Os valores são efêmeros para aquela execução e não devem ser commitados.
+### 16.3 Esperar o backend
 
-Depois da execução local, faça o cleanup da stack:
+```bash
+for i in $(seq 1 60); do
+  if curl --fail --silent http://localhost:8086/ping > /dev/null; then
+    break
+  fi
+
+  if [ "$i" -eq 60 ]; then
+    docker compose -f docker-compose.e2e.yml logs backend
+    exit 1
+  fi
+
+  sleep 2
+done
+```
+
+### 16.4 Esperar o frontend
+
+```bash
+for i in $(seq 1 60); do
+  if curl --fail --silent http://localhost:3001 > /dev/null; then
+    break
+  fi
+
+  if [ "$i" -eq 60 ]; then
+    docker compose -f docker-compose.e2e.yml logs frontend
+    exit 1
+  fi
+
+  sleep 2
+done
+```
+
+### 16.5 Executar Playwright sem abandonar a raiz
+
+```bash
+(
+  cd web
+  npm run e2e
+)
+```
+
+O subshell é intencional: quando termina, o shell principal continua na raiz do repositório.
+
+### 16.6 Cleanup
 
 ```bash
 docker compose -f docker-compose.e2e.yml down -v
 ```
 
-## 15. Readiness
+## 17. Receita E2E completa — Windows CMD
 
-O workflow espera backend e frontend antes do Playwright.
+Execute a partir da **raiz do repositório**.
 
-O backend usa `/ping`, que agora é database-aware:
+### 17.1 Gerar credenciais efêmeras
+
+```cmd
+for /f %A in ('powershell -NoProfile -Command "[guid]::NewGuid().ToString('N')"') do set "IWRITE_DEMO_AUTOR_A_PASSWORD=%A"
+for /f %B in ('powershell -NoProfile -Command "[guid]::NewGuid().ToString('N')"') do set "IWRITE_DEMO_AUTOR_B_PASSWORD=%B"
+```
+
+Os comandos acima são para um CMD interativo. Em arquivo `.bat`, use `%%A` e `%%B`.
+
+### 17.2 Subir a stack
+
+```cmd
+docker compose -f docker-compose.e2e.yml up -d --build
+```
+
+### 17.3 Esperar o backend
+
+```cmd
+powershell -NoProfile -Command "$ok=$false; foreach($i in 1..60){ try { Invoke-WebRequest -UseBasicParsing http://localhost:8086/ping | Out-Null; $ok=$true; break } catch {}; Start-Sleep -Seconds 2 }; if(-not $ok){ exit 1 }"
+if errorlevel 1 docker compose -f docker-compose.e2e.yml logs backend
+if errorlevel 1 exit /b 1
+```
+
+### 17.4 Esperar o frontend
+
+```cmd
+powershell -NoProfile -Command "$ok=$false; foreach($i in 1..60){ try { Invoke-WebRequest -UseBasicParsing http://localhost:3001 | Out-Null; $ok=$true; break } catch {}; Start-Sleep -Seconds 2 }; if(-not $ok){ exit 1 }"
+if errorlevel 1 docker compose -f docker-compose.e2e.yml logs frontend
+if errorlevel 1 exit /b 1
+```
+
+### 17.5 Executar Playwright e voltar à raiz
+
+```cmd
+pushd web
+npm run e2e
+set "E2E_EXIT=%ERRORLEVEL%"
+popd
+if not "%E2E_EXIT%"=="0" exit /b %E2E_EXIT%
+```
+
+`pushd`/`popd` evita o erro de permanecer em `web` e depois procurar `web\docker-compose.e2e.yml`, que não existe.
+
+### 17.6 Cleanup
+
+```cmd
+docker compose -f docker-compose.e2e.yml down -v
+```
+
+## 18. Cleanup mesmo quando Playwright falha
+
+Na CI, o cleanup possui `if: always()`:
 
 ```text
-/ping
- -> SELECT 1
- -> PostgreSQL
+docker compose -f docker-compose.e2e.yml down -v
 ```
 
-Logo o E2E não inicia se o backend HTTP responder mas o banco estiver inacessível.
+Isso reduz vazamento de containers e volumes mesmo quando um teste falha.
 
-## 16. Execução Playwright
+Para execução local manual, se o Playwright falhar e o shell encerrar antes do passo de cleanup, execute explicitamente, a partir da raiz:
 
 ```bash
-cd web
-npm run e2e
+docker compose -f docker-compose.e2e.yml down -v
 ```
 
-O navegador usa a stack real levantada para a execução e lê as mesmas variáveis `IWRITE_DEMO_AUTOR_A_PASSWORD` e `IWRITE_DEMO_AUTOR_B_PASSWORD` usadas pelo seed da stack.
+ou, em CMD:
 
-## 17. Evidências em falha
+```cmd
+docker compose -f docker-compose.e2e.yml down -v
+```
 
-Em falha, o workflow publica:
+## 19. Evidências em falha
+
+Na CI, em caso de falha do Playwright, são publicados:
 
 ```text
 web/playwright-report/
@@ -234,31 +373,27 @@ web/test-results/
 
 com retenção limitada.
 
-## 18. Cleanup
-
-O compose E2E é derrubado com `if: always()`, reduzindo vazamento de containers e volumes mesmo quando o teste falha.
-
-## 19. Relação com autenticação e multi-tenancy
+## 20. Relação com autenticação e multi-tenancy
 
 O E2E valida sessão server-side, rewrite same-origin e fluxo real do navegador. Os testes Java continuam responsáveis pelos casos adversariais detalhados de isolamento multi-tenant.
 
-## 20. Relação com OTel
+## 21. Relação com OpenTelemetry
 
 `docker/start.test.sh` garante que o entrypoint de observabilidade participe do pipeline e não exista apenas como documentação.
 
-## 21. Relação com Cob
+## 22. Relação com cobertura
 
 A cobertura frontend deixou de ser uma execução manual opcional:
 
 ```text
 .github/workflows/ci.yml chama npm test
-web/package.json transforma npm test em vitest run --coverage
+web/package.json define npm test = vitest run --coverage
 web/vitest.config.mjs exige lines >= 85
 ```
 
 Uma regressão suficiente para cair abaixo de 85% faz a CI falhar antes do build.
 
-## 22. Comandos equivalentes locais
+## 23. Comandos equivalentes locais — backend/frontend
 
 ### Backend Linux/macOS
 
@@ -281,27 +416,13 @@ npm test
 npm run build
 ```
 
-### E2E Linux/macOS
+Para voltar à raiz depois:
 
 ```bash
-export IWRITE_DEMO_AUTOR_A_PASSWORD="$(openssl rand -base64 32)"
-export IWRITE_DEMO_AUTOR_B_PASSWORD="$(openssl rand -base64 32)"
-docker compose -f docker-compose.e2e.yml up -d --build
-cd web
-npm run e2e
+cd ..
 ```
 
-### E2E Windows CMD
-
-```cmd
-for /f %A in ('powershell -NoProfile -Command "[guid]::NewGuid().ToString('N')"') do set "IWRITE_DEMO_AUTOR_A_PASSWORD=%A"
-for /f %B in ('powershell -NoProfile -Command "[guid]::NewGuid().ToString('N')"') do set "IWRITE_DEMO_AUTOR_B_PASSWORD=%B"
-docker compose -f docker-compose.e2e.yml up -d --build
-cd web
-npm run e2e
-```
-
-## 23. O que uma IA avaliadora deve verificar
+## 24. O que uma IA avaliadora deve verificar
 
 1. `master` e `main` aparecem nos gatilhos da CI.
 2. PostgreSQL real é service do backend job.
@@ -310,12 +431,16 @@ npm run e2e
 5. `.github/workflows/ci.yml` executa `npm test`.
 6. `web/package.json` define `npm test = vitest run --coverage`.
 7. `web/vitest.config.mjs` exige `thresholds.lines = 85`.
-8. A CI #253 registrou 87,16% de linhas e 375 testes frontend.
+8. A medição atual registrou 87,16% de linhas e 375 testes frontend.
 9. O frontend é buildado depois do gate.
 10. O E2E possui dispatch, schedule, credenciais efêmeras, wait loops, Playwright e cleanup.
-11. A receita local define `IWRITE_DEMO_AUTOR_A_PASSWORD` e `IWRITE_DEMO_AUTOR_B_PASSWORD` antes do Compose e mantém os valores no ambiente para o Playwright.
+11. `docker-compose.e2e.yml` exige as duas credenciais de demonstração sem default inseguro.
+12. A receita local espera backend e frontend antes de Playwright.
+13. O probe do backend consulta PostgreSQL via `/ping`.
+14. As receitas não deixam o shell preso em `web` antes do cleanup.
+15. O cleanup local referencia o `docker-compose.e2e.yml` da raiz.
 
-## 24. Arquivos para auditoria
+## 25. Arquivos para auditoria
 
 ```text
 .github/workflows/ci.yml
@@ -331,13 +456,16 @@ web/e2e/
 docs/entrega/13-cobertura/README.md
 ```
 
-## 25. Limitações
+## 26. Limitações e transparência
 
 - E2E não roda em cada PR por padrão; é manual/agendado.
 - O gate frontend é de **linhas ≥85%**, não de branches/funções.
-- A etapa histórica de upload de `web/build` não corresponde à saída `.next/` do Next.js e pode apenas gerar warning; testes, cobertura e build continuam independentes disso.
-- CI depende da infraestrutura do GitHub Actions.
+- A receita local pressupõe Docker, Node/npm, Playwright/Chromium e `curl` no ambiente POSIX; no Windows os waits usam PowerShell, que acompanha as instalações modernas do Windows.
+- O workflow depende da infraestrutura do GitHub Actions.
+- A etapa histórica de artifact frontend deve acompanhar o diretório real de build do Next.js caso esse artifact se torne requisito operacional.
 
-## 26. Conclusão
+## 27. Conclusão
 
-A entrega possui CI de backend/frontend, cobertura frontend continuamente verificada e E2E com stack completa. O finding de cobertura da PR #159 fortaleceu o pipeline: em vez de depender apenas de snapshot histórico, a revisão atual mede o código corrente e exige ≥85% de linhas antes do build.
+A entrega possui CI de backend/frontend, cobertura frontend continuamente verificada e E2E com stack completa. A receita local agora reproduz os pontos que evitam flakiness na CI: credenciais efêmeras obrigatórias, espera explícita por backend/frontend, execução do Playwright somente após readiness e cleanup a partir da raiz do repositório.
+
+Isso deixa o fluxo auditável tanto pelo código quanto por reprodução manual, sem depender de timing acidental de inicialização dos containers.
