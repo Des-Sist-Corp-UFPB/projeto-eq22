@@ -13,6 +13,8 @@ O objetivo é separar claramente o que foi observado de fato do que ainda depend
 
 ## Umami — validação confirmada
 
+As capturas visuais do Umami estão isoladas em [`docs/evidencias/umami/`](evidencias/umami/README.md), com índice e descrição de cada print.
+
 ### Transporte e ingestão
 
 O frontend foi iniciado com o tracker institucional habilitado e com o Website ID oficial fornecido pelo portal da disciplina apenas via variável de ambiente.
@@ -54,6 +56,8 @@ A validação confirmou que a navegação de livro chegou ao painel como `/books
 A sessão acima usou a aplicação em `localhost`. Portanto, ainda falta repetir a mesma validação depois que as variáveis `NEXT_PUBLIC_UMAMI_*` forem configuradas no **build/deploy remoto** de `eq22.dsc.rodrigor.com`.
 
 ## MCP Inspector — validação confirmada
+
+As capturas visuais do MCP estão isoladas em [`docs/evidencias/mcp/`](evidencias/mcp/README.md), separadas das evidências de Umami.
 
 ### Conexão e descoberta
 
@@ -107,10 +111,14 @@ Uma tentativa posterior de habilitar um provider externo foi interrompida porque
 - [x] `obter_outline_livro` executada com dados reais.
 - [x] Resource template descoberto e lido com sucesso.
 - [x] Erro `unavailable` de `analisar_cena` demonstrado de forma sanitizada.
+- [x] Prints do Umami versionados separadamente em `docs/evidencias/umami/`.
+- [x] Prints do MCP versionados separadamente em `docs/evidencias/mcp/`.
 - [ ] Repetir page views e eventos Umami no deploy remoto `eq22.dsc.rodrigor.com`.
 
 ## Relação com a documentação principal
 
 - Umami: [`analytics-umami.md`](analytics-umami.md)
+- Evidências visuais Umami: [`evidencias/umami/README.md`](evidencias/umami/README.md)
 - MCP: [`mcp-server.md`](mcp-server.md)
+- Evidências visuais MCP: [`evidencias/mcp/README.md`](evidencias/mcp/README.md)
 - Autenticação/multi-tenancy: [`authentication-multitenancy.md`](authentication-multitenancy.md)
