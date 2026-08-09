@@ -2,7 +2,7 @@
 
 ## 1. Objetivo
 
-Garantir que mudanças no backend e frontend sejam verificadas automaticamente e que exista um fluxo ponta a ponta executável em ambiente isolado, com banco, backend, frontend e navegador real.
+Garantir que mudanças no backend e frontend sejam verificadas automaticamente e que exista um fluxo ponta a ponta executável em ambiente isolado, com PostgreSQL, Spring Boot, Next.js e navegador real.
 
 O objetivo é reduzir falsa confiança de “funciona na minha máquina” e transformar requisitos importantes — inclusive cobertura frontend — em verificações automáticas, reproduzíveis e auditáveis.
 
@@ -23,29 +23,31 @@ web/playwright.config.*
 web/e2e/
 ```
 
-## 3. Gatilhos da CI
+## 3. CI principal
 
-```text
-pull_request -> master
-pull_request -> main
-push -> master
-push -> main
-```
+A CI é acionada em `push` e `pull_request` para as branches `master` e `main`.
 
-`main` é necessário para o repositório acadêmico e `master` para o repositório pessoal.
+`master` é a branch principal do repositório pessoal; `main` é usada no repositório acadêmico.
 
-## 4. Backend na CI
+### 3.1 Backend
 
-O job sobe PostgreSQL 16 como service do GitHub Actions com `pg_isready`, configura Java 21, executa o entrypoint de OpenTelemetry e só então roda a suíte Java.
+O job de backend:
+
+1. sobe PostgreSQL 16 como service;
+2. aguarda `pg_isready`;
+3. configura Java 21;
+4. testa o entrypoint de OpenTelemetry;
+5. executa a suíte Maven.
+
+Comando central:
 
 ```bash
-sh docker/start.test.sh
 ./mvnw -s .mvn/local-settings.xml test
 ```
 
 Os testes de integração usam PostgreSQL real do job.
 
-## 5. Frontend na CI
+### 3.2 Frontend
 
 O job frontend usa Node 20 e executa:
 
@@ -55,28 +57,21 @@ npm test
 npm run build
 ```
 
-A partir da PR #159, `npm test` significa:
+Na revisão atual:
 
 ```text
-vitest run --coverage
+npm test = vitest run --coverage
 ```
 
-Portanto a CI não executa apenas testes: ela mede cobertura antes do build.
+Logo a CI mede cobertura antes do build.
 
-## 6. Gate de cobertura ≥85%
+## 4. Gate de cobertura frontend ≥85%
 
-`web/vitest.config.mjs` define:
+`web/vitest.config.mjs` usa cobertura V8 e contém:
 
 ```js
-coverage: {
-  provider: "v8",
-  reporter: ["text", "json-summary", "html"],
-  reportsDirectory: "./coverage",
-  include: ["src/**/*.{ts,tsx}"],
-  exclude: ["src/**/*.test.{ts,tsx}", "src/test/**"],
-  thresholds: {
-    lines: 85,
-  },
+thresholds: {
+  lines: 85,
 }
 ```
 
@@ -84,18 +79,14 @@ Fluxo efetivo:
 
 ```text
 CI frontend
+ -> npm ci
  -> npm test
  -> vitest run --coverage
- -> calcula cobertura do código atual
  -> exige lines >= 85
- -> só então segue para npm run build
+ -> npm run build
 ```
 
-Isso transforma o requisito **Cob** em gate contínuo do frontend.
-
-## 7. Evidência de cobertura atual
-
-A execução da PR #159 registrou:
+Na PR #159, a medição atual registrou:
 
 ```text
 41 arquivos de teste passaram
@@ -106,37 +97,13 @@ Functions:  71,90%
 Lines:      87,16%
 ```
 
-Como o threshold é `lines: 85`, o passo de testes concluiu com sucesso.
-
-O finding do Codex sobre usar apenas o snapshot histórico de 01/07 foi corrigido com uma medição atual na própria CI.
+Como o critério acadêmico é cobertura de **linhas ≥85%**, a revisão atual atende ao requisito.
 
 Relatório específico: [`../13-cobertura/README.md`](../13-cobertura/README.md).
 
-## 8. Por que `npm ci` é usado
+## 5. E2E — objetivo e topologia
 
-`npm ci` respeita o lockfile e falha quando `package.json` e `package-lock.json` são incompatíveis. Para CI isso evita resolução silenciosa diferente da versão declarada e ajuda a detectar dependências diretas ausentes.
-
-O mesmo comando faz parte da receita E2E local. Portanto a reprodução não pressupõe um `node_modules` deixado por uma execução anterior.
-
-## 9. Build de produção
-
-Só depois dos testes e do gate de cobertura o job executa:
-
-```bash
-npm run build
-```
-
-Isso valida TypeScript/Next e o build otimizado do frontend.
-
-## 10. Observação sobre artifact de build
-
-O workflow possui etapa histórica de upload do build frontend. A saída padrão atual do Next.js é `.next/`; uma referência antiga a `web/build` pode gerar warning de ausência de artifact sem invalidar testes, cobertura ou o build em si.
-
-Caso o artifact seja usado operacionalmente, o caminho deve acompanhar a saída efetiva do Next.js.
-
-## 11. E2E — objetivo
-
-O workflow Playwright sobe uma stack completa e executa ações em navegador real:
+O workflow Playwright executa uma stack real:
 
 ```text
 Chromium
@@ -145,57 +112,9 @@ Chromium
  -> PostgreSQL
 ```
 
-Ele complementa, não substitui, testes unitários e de integração.
+Ele complementa, não substitui, os testes unitários e de integração.
 
-## 12. Gatilhos do E2E
-
-```text
-workflow_dispatch
-schedule semanal
-```
-
-Cron:
-
-```text
-17 3 * * 0
-```
-
-## 13. Preparação do runner E2E
-
-Antes de subir a stack, o workflow oficial executa, nesta ordem:
-
-```text
-checkout
-Java 21
-Node 20
-npm ci
-npx playwright install --with-deps chromium
-credenciais efêmeras
-Docker Compose
-readiness
-Playwright
-cleanup
-```
-
-Os passos relevantes do próprio `.github/workflows/e2e.yml` são:
-
-```bash
-# em web/
-npm ci
-npx playwright install --with-deps chromium
-```
-
-A receita local abaixo também instala dependências npm e o Chromium antes de tentar executar `npm run e2e`. Isso é importante num checkout limpo: sem `npm ci`, o executável local do Playwright e `@playwright/test` podem nem existir; sem a instalação do browser, o runner pode existir mas não conseguir iniciar Chromium.
-
-## 14. Stack E2E
-
-Depois da preparação, o workflow sobe:
-
-```bash
-docker compose -f docker-compose.e2e.yml up -d --build
-```
-
-A stack usa portas locais próprias para não conflitar com a execução padrão:
+Portas da stack E2E:
 
 ```text
 PostgreSQL: 5436
@@ -203,37 +122,94 @@ Backend:    8086
 Frontend:   3001
 ```
 
-## 15. Credenciais efêmeras
+## 6. Gatilhos do E2E
 
-As senhas de demonstração são obrigatórias tanto para o seed do backend quanto para o login do Playwright. `docker-compose.e2e.yml` rejeita valores ausentes usando `${VAR:?...}`.
+O workflow `.github/workflows/e2e.yml` possui:
 
-Na CI, as duas senhas são geradas a cada execução com `openssl rand -base64 32`, mascaradas e gravadas em `GITHUB_ENV`. Não existe senha fixa versionada para login E2E.
+```text
+workflow_dispatch
+schedule semanal
+```
 
-As variáveis são:
+Cron versionado:
+
+```text
+17 3 * * 0
+```
+
+O E2E não roda em cada PR por padrão; ele é manual e agendado.
+
+## 7. Ordem real do workflow E2E
+
+O workflow executa, nesta ordem:
+
+```text
+checkout
+ -> Java 21
+ -> Node 20
+ -> npm ci
+ -> npx playwright install --with-deps chromium
+ -> gera credenciais efêmeras
+ -> docker compose up -d --build
+ -> espera backend /ping
+ -> espera frontend
+ -> npm run e2e
+ -> publica artifacts em falha
+ -> docker compose down -v (always)
+```
+
+A receita local abaixo preserva essa mesma ordem lógica.
+
+## 8. Dependências frontend e Chromium
+
+O E2E não pressupõe `node_modules` preexistente.
+
+Na CI:
+
+```bash
+cd web
+npm ci
+npx playwright install --with-deps chromium
+```
+
+`npm ci` é importante porque:
+
+- usa o lockfile versionado;
+- falha se `package.json` e `package-lock.json` estiverem incompatíveis;
+- instala `@playwright/test` e os demais pacotes necessários;
+- evita depender de estado residual de execução anterior.
+
+O Chromium também é instalado explicitamente antes dos testes.
+
+## 9. Credenciais efêmeras
+
+O Compose E2E exige:
 
 ```text
 IWRITE_DEMO_AUTOR_A_PASSWORD
 IWRITE_DEMO_AUTOR_B_PASSWORD
 ```
 
-Para reprodução local, o mesmo shell que inicia Compose e Playwright deve manter esses valores no ambiente durante toda a execução.
+As mesmas credenciais são usadas pelo seed e pelo Playwright.
 
-## 16. Readiness antes do Playwright
+Na CI, elas são geradas a cada execução, mascaradas e gravadas em `GITHUB_ENV`. Não existe senha E2E fixa versionada.
 
-`docker compose ... up -d` confirma que os containers foram iniciados, mas não garante que backend e frontend já estejam prontos para receber requisições.
+A reprodução local também deve gerar valores temporários e mantê-los no mesmo ambiente que inicia Compose e Playwright.
 
-Por isso a CI **não** chama Playwright imediatamente. Ela espera explicitamente:
+## 10. Readiness antes do Playwright
+
+`docker compose up -d` informa que os containers foram iniciados, mas não prova que as aplicações já estão prontas.
+
+Por isso o workflow espera explicitamente:
 
 ```text
 backend  -> http://localhost:8086/ping
 frontend -> http://localhost:3001
 ```
 
-O mesmo princípio é obrigatório na receita local para evitar falhas intermitentes em máquinas frias, builds recém-criados ou inicializações mais lentas.
+### 10.1 Backend
 
-### Backend
-
-O endpoint usado é `/ping`, que é database-aware:
+`/ping` é database-aware:
 
 ```text
 /ping
@@ -242,200 +218,253 @@ O endpoint usado é `/ping`, que é database-aware:
  -> PostgreSQL
 ```
 
-Logo um `200` do probe significa que o backend respondeu **e** conseguiu consultar o banco.
+Assim, um `200` do backend prova também que o round trip mínimo ao PostgreSQL funcionou.
 
-### Frontend
+### 10.2 Frontend
 
-O frontend é considerado pronto somente quando `http://localhost:3001` responde com sucesso.
+O Playwright só inicia depois de `http://localhost:3001` responder.
 
-## 17. Receita E2E completa — Linux/macOS
+## 11. Reprodução completa — Linux/macOS (Bash)
 
-Execute a partir da **raiz do repositório**.
+A forma recomendada é executar um script Bash a partir da **raiz do repositório**.
 
-Pré-requisitos externos: Docker, Node/npm, `curl` e, para geração das senhas, `openssl`.
+Pré-requisitos externos:
 
-### 17.1 Instalar dependências frontend e Chromium
+- Docker;
+- Node/npm;
+- `curl`;
+- `openssl`;
+- Bash.
 
-A CI usa `--with-deps` no Ubuntu. Para uma receita local que também funcione no macOS, o comando diferencia a plataforma:
+Exemplo completo:
 
 ```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+COMPOSE_FILE="docker-compose.e2e.yml"
+
+cleanup() {
+  docker compose -f "$COMPOSE_FILE" down -v >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
+
+wait_http() {
+  name="$1"
+  url="$2"
+  service="$3"
+  i=1
+
+  while [ "$i" -le 60 ]; do
+    if curl --fail --silent "$url" > /dev/null; then
+      printf '%s pronto\n' "$name"
+      return 0
+    fi
+
+    sleep 2
+    i=$((i + 1))
+  done
+
+  echo "$name não ficou pronto a tempo"
+  docker compose -f "$COMPOSE_FILE" logs "$service"
+  return 1
+}
+
+# Checkout limpo: instalar dependências e browser antes de subir a stack.
 (
+  set -e
   cd web
   npm ci
+
   if [ "$(uname -s)" = "Linux" ]; then
     npx playwright install --with-deps chromium
   else
     npx playwright install chromium
   fi
 )
-```
 
-No Linux isso também instala as dependências de sistema suportadas pelo Playwright; no macOS instala o browser necessário sem tentar usar o gerenciador de pacotes Linux.
-
-### 17.2 Gerar credenciais efêmeras
-
-```bash
 export IWRITE_DEMO_AUTOR_A_PASSWORD="$(openssl rand -base64 32)"
 export IWRITE_DEMO_AUTOR_B_PASSWORD="$(openssl rand -base64 32)"
-```
 
-### 17.3 Subir a stack
+docker compose -f "$COMPOSE_FILE" up -d --build
 
-```bash
-docker compose -f docker-compose.e2e.yml up -d --build
-```
+wait_http "backend" "http://localhost:8086/ping" "backend"
+wait_http "frontend" "http://localhost:3001" "frontend"
 
-### 17.4 Esperar o backend
-
-```bash
-for i in $(seq 1 60); do
-  if curl --fail --silent http://localhost:8086/ping > /dev/null; then
-    break
-  fi
-
-  if [ "$i" -eq 60 ]; then
-    docker compose -f docker-compose.e2e.yml logs backend
-    exit 1
-  fi
-
-  sleep 2
-done
-```
-
-### 17.5 Esperar o frontend
-
-```bash
-for i in $(seq 1 60); do
-  if curl --fail --silent http://localhost:3001 > /dev/null; then
-    break
-  fi
-
-  if [ "$i" -eq 60 ]; then
-    docker compose -f docker-compose.e2e.yml logs frontend
-    exit 1
-  fi
-
-  sleep 2
-done
-```
-
-### 17.6 Executar Playwright sem abandonar a raiz
-
-```bash
 (
   cd web
   npm run e2e
 )
 ```
 
-O subshell é intencional: quando termina, o shell principal continua na raiz do repositório.
+### 11.1 Por que o setup é fail-fast
 
-### 17.7 Cleanup
+O bloco de instalação começa com:
 
 ```bash
-docker compose -f docker-compose.e2e.yml down -v
+set -e
 ```
 
-## 18. Receita E2E completa — Windows CMD
+Portanto, se `npm ci` falhar, o subshell termina imediatamente e **não** continua para `npx playwright install`. Da mesma forma, falha na instalação do browser aborta a receita.
 
-Execute a partir da **raiz do repositório**.
+Isso evita mascarar uma instalação incompleta pelo exit code de um comando posterior.
 
-Pré-requisitos externos: Docker Desktop, Node/npm e PowerShell disponível no Windows.
+### 11.2 Por que não usamos `seq`
 
-### 18.1 Instalar dependências frontend e Chromium
+O contador de readiness usa:
+
+```bash
+i=1
+while [ "$i" -le 60 ]; do
+  ...
+  i=$((i + 1))
+done
+```
+
+Ele não depende do utilitário GNU `seq`, portanto funciona no Bash disponível normalmente no macOS e em ambientes Linux sem exigir `coreutils` adicional.
+
+### 11.3 Linux versus macOS
+
+No Linux:
+
+```bash
+npx playwright install --with-deps chromium
+```
+
+No macOS:
+
+```bash
+npx playwright install chromium
+```
+
+`--with-deps` é usado no Linux como no GitHub Actions; no macOS a receita instala o browser sem tentar executar instalação de pacotes de sistema Linux.
+
+### 11.4 Cleanup garantido
+
+O script instala:
+
+```bash
+trap cleanup EXIT
+```
+
+Logo o `docker compose down -v` é tentado no caminho feliz e também quando:
+
+- o backend não fica pronto;
+- o frontend não fica pronto;
+- Playwright falha;
+- qualquer etapa posterior ao registro do trap aborta por `set -e`.
+
+## 12. Reprodução completa — Windows CMD
+
+Para evitar diferenças entre CMD interativo e arquivo batch, a receita abaixo é explicitamente um **arquivo `.cmd`** executado a partir da raiz do repositório.
+
+Pré-requisitos:
+
+- Docker Desktop;
+- Node/npm;
+- PowerShell disponível no Windows.
+
+Exemplo `run-e2e-local.cmd`:
 
 ```cmd
+@echo off
+setlocal
+set "COMPOSE_FILE=docker-compose.e2e.yml"
+set "EXIT_CODE=0"
+
 pushd web
-npm ci && npx playwright install chromium
-set "E2E_SETUP_EXIT=%ERRORLEVEL%"
+if errorlevel 1 exit /b 1
+
+call npm ci
+if errorlevel 1 goto :setup_fail
+
+call npx playwright install chromium
+if errorlevel 1 goto :setup_fail
+
 popd
-if not "%E2E_SETUP_EXIT%"=="0" exit /b %E2E_SETUP_EXIT%
-```
 
-O status é capturado **antes** do `popd` para que uma falha de instalação não seja mascarada por um comando posterior bem-sucedido.
+for /f %%A in ('powershell -NoProfile -Command "[guid]::NewGuid().ToString('N')"') do set "IWRITE_DEMO_AUTOR_A_PASSWORD=%%A"
+for /f %%B in ('powershell -NoProfile -Command "[guid]::NewGuid().ToString('N')"') do set "IWRITE_DEMO_AUTOR_B_PASSWORD=%%B"
 
-### 18.2 Gerar credenciais efêmeras
+docker compose -f "%COMPOSE_FILE%" up -d --build
+if errorlevel 1 (
+  set "EXIT_CODE=1"
+  goto :cleanup
+)
 
-```cmd
-for /f %A in ('powershell -NoProfile -Command "[guid]::NewGuid().ToString('N')"') do set "IWRITE_DEMO_AUTOR_A_PASSWORD=%A"
-for /f %B in ('powershell -NoProfile -Command "[guid]::NewGuid().ToString('N')"') do set "IWRITE_DEMO_AUTOR_B_PASSWORD=%B"
-```
-
-Os comandos acima são para um CMD interativo. Em arquivo `.bat`, use `%%A` e `%%B`.
-
-### 18.3 Subir a stack
-
-```cmd
-docker compose -f docker-compose.e2e.yml up -d --build
-```
-
-### 18.4 Esperar o backend
-
-```cmd
 powershell -NoProfile -Command "$ok=$false; foreach($i in 1..60){ try { Invoke-WebRequest -UseBasicParsing http://localhost:8086/ping | Out-Null; $ok=$true; break } catch {}; Start-Sleep -Seconds 2 }; if(-not $ok){ exit 1 }"
 if errorlevel 1 (
-  docker compose -f docker-compose.e2e.yml logs backend
-  exit /b 1
+  docker compose -f "%COMPOSE_FILE%" logs backend
+  set "EXIT_CODE=1"
+  goto :cleanup
 )
-```
 
-O bloco é intencional. A condição `if errorlevel 1` é avaliada imediatamente após o probe; se ele falhou, os logs são impressos e o bloco termina com `exit /b 1`. Assim um `docker compose ... logs` bem-sucedido **não pode apagar o status de falha do probe** e deixar a receita seguir para Playwright.
-
-### 18.5 Esperar o frontend
-
-```cmd
 powershell -NoProfile -Command "$ok=$false; foreach($i in 1..60){ try { Invoke-WebRequest -UseBasicParsing http://localhost:3001 | Out-Null; $ok=$true; break } catch {}; Start-Sleep -Seconds 2 }; if(-not $ok){ exit 1 }"
 if errorlevel 1 (
-  docker compose -f docker-compose.e2e.yml logs frontend
-  exit /b 1
+  docker compose -f "%COMPOSE_FILE%" logs frontend
+  set "EXIT_CODE=1"
+  goto :cleanup
+)
+
+pushd web
+call npm run e2e
+set "EXIT_CODE=%ERRORLEVEL%"
+popd
+goto :cleanup
+
+:setup_fail
+set "EXIT_CODE=%ERRORLEVEL%"
+popd
+exit /b %EXIT_CODE%
+
+:cleanup
+docker compose -f "%COMPOSE_FILE%" down -v
+exit /b %EXIT_CODE%
+```
+
+### 12.1 Instalação não é mascarada
+
+No batch, `npm ci` e a instalação do Chromium são checados imediatamente:
+
+```cmd
+call npm ci
+if errorlevel 1 goto :setup_fail
+
+call npx playwright install chromium
+if errorlevel 1 goto :setup_fail
+```
+
+Assim, um comando posterior não consegue transformar uma instalação fracassada em sucesso.
+
+### 12.2 Readiness não é mascarado por logs
+
+O status do PowerShell é avaliado antes de qualquer comando de logging:
+
+```cmd
+if errorlevel 1 (
+  docker compose ... logs backend
+  set "EXIT_CODE=1"
+  goto :cleanup
 )
 ```
 
-A mesma regra vale para o frontend: falha de readiness sempre aborta a receita depois de exibir os logs úteis.
+Mesmo que `docker compose logs` termine com exit code `0`, a receita já tomou a decisão de falhar e segue para cleanup.
 
-### 18.6 Executar Playwright e voltar à raiz
+### 12.3 Cleanup centralizado
 
-```cmd
-pushd web
-npm run e2e
-set "E2E_EXIT=%ERRORLEVEL%"
-popd
-if not "%E2E_EXIT%"=="0" exit /b %E2E_EXIT%
-```
-
-`pushd`/`popd` evita o erro de permanecer em `web` e depois procurar `web\docker-compose.e2e.yml`, que não existe. O exit code do Playwright também é capturado antes do `popd`.
-
-### 18.7 Cleanup
+Todos os caminhos posteriores ao `docker compose up` convergem para:
 
 ```cmd
-docker compose -f docker-compose.e2e.yml down -v
+:cleanup
+docker compose -f "%COMPOSE_FILE%" down -v
+exit /b %EXIT_CODE%
 ```
 
-## 19. Cleanup mesmo quando Playwright falha
+Assim o teste local não depende de o usuário lembrar manualmente de derrubar os containers após falha de readiness ou Playwright.
 
-Na CI, o cleanup possui `if: always()`:
+## 13. Evidências em falha na CI
 
-```text
-docker compose -f docker-compose.e2e.yml down -v
-```
-
-Isso reduz vazamento de containers e volumes mesmo quando um teste falha.
-
-Para execução local manual, se o Playwright falhar e o shell encerrar antes do passo de cleanup, execute explicitamente, a partir da raiz:
-
-```bash
-docker compose -f docker-compose.e2e.yml down -v
-```
-
-ou, em CMD:
-
-```cmd
-docker compose -f docker-compose.e2e.yml down -v
-```
-
-## 20. Evidências em falha
-
-Na CI, em caso de falha do Playwright, são publicados:
+Quando Playwright falha, o workflow publica:
 
 ```text
 web/playwright-report/
@@ -444,17 +473,25 @@ web/test-results/
 
 com retenção limitada.
 
-## 21. Relação com autenticação e multi-tenancy
+O cleanup da CI usa `if: always()`, garantindo:
 
-O E2E valida sessão server-side, rewrite same-origin e fluxo real do navegador. Os testes Java continuam responsáveis pelos casos adversariais detalhados de isolamento multi-tenant.
+```text
+docker compose -f docker-compose.e2e.yml down -v
+```
 
-## 22. Relação com OpenTelemetry
+mesmo quando uma etapa anterior falha.
 
-`docker/start.test.sh` garante que o entrypoint de observabilidade participe do pipeline e não exista apenas como documentação.
+## 14. Relação com autenticação e multi-tenancy
 
-## 23. Relação com cobertura
+O E2E valida o fluxo real do navegador, incluindo sessão server-side e rewrite same-origin. Os testes Java continuam responsáveis pelos casos adversariais detalhados de isolamento multi-tenant.
 
-A cobertura frontend deixou de ser uma execução manual opcional:
+## 15. Relação com OpenTelemetry
+
+`docker/start.test.sh` é executado na CI para validar o entrypoint de observabilidade em vez de depender apenas de documentação.
+
+## 16. Relação com cobertura
+
+A cobertura frontend é gate contínuo porque:
 
 ```text
 .github/workflows/ci.yml chama npm test
@@ -462,9 +499,9 @@ web/package.json define npm test = vitest run --coverage
 web/vitest.config.mjs exige lines >= 85
 ```
 
-Uma regressão suficiente para cair abaixo de 85% faz a CI falhar antes do build.
+Uma regressão que derrube linhas abaixo de 85% faz o job frontend falhar antes do build.
 
-## 24. Comandos equivalentes locais — backend/frontend
+## 17. Comandos locais de backend/frontend
 
 ### Backend Linux/macOS
 
@@ -487,33 +524,27 @@ npm test
 npm run build
 ```
 
-Para voltar à raiz depois:
+## 18. O que uma IA avaliadora deve verificar
 
-```bash
-cd ..
-```
+1. `.github/workflows/ci.yml` possui gatilhos para `master` e `main`.
+2. O backend job usa PostgreSQL real e Java 21.
+3. A CI executa `docker/start.test.sh`.
+4. O frontend job executa `npm ci`, `npm test` e `npm run build`.
+5. `npm test` executa `vitest run --coverage`.
+6. `web/vitest.config.mjs` exige `lines >= 85`.
+7. A revisão atual registrou 87,16% de cobertura de linhas e 375 testes frontend.
+8. `.github/workflows/e2e.yml` instala dependências e Chromium antes de subir a stack.
+9. As duas credenciais E2E são efêmeras e obrigatórias.
+10. O workflow espera `/ping` e o frontend antes de executar Playwright.
+11. `/ping` consulta PostgreSQL de verdade.
+12. O workflow publica artifacts em falha e sempre executa cleanup.
+13. A receita Bash usa `set -e` no setup e não mascara falha de `npm ci`.
+14. A receita Bash usa contador shell, não `seq`, portanto não adiciona dependência GNU ao macOS.
+15. A receita Bash usa `trap cleanup EXIT`.
+16. A receita CMD checa cada etapa de instalação imediatamente.
+17. A receita CMD decide falhar antes de imprimir logs e converge para `:cleanup`.
 
-## 25. O que uma IA avaliadora deve verificar
-
-1. `master` e `main` aparecem nos gatilhos da CI.
-2. PostgreSQL real é service do backend job.
-3. `docker/start.test.sh` é executado.
-4. Java 21 executa Maven tests.
-5. `.github/workflows/ci.yml` executa `npm test`.
-6. `web/package.json` define `npm test = vitest run --coverage`.
-7. `web/vitest.config.mjs` exige `thresholds.lines = 85`.
-8. A medição atual registrou 87,16% de linhas e 375 testes frontend.
-9. O frontend é buildado depois do gate.
-10. O E2E possui dispatch, schedule, instalação de dependências/Chromium, credenciais efêmeras, wait loops, Playwright e cleanup.
-11. `docker-compose.e2e.yml` exige as duas credenciais de demonstração sem default inseguro.
-12. A receita local executa `npm ci` e instala Chromium antes do Playwright.
-13. A receita local espera backend e frontend antes de Playwright.
-14. O probe do backend consulta PostgreSQL via `/ping`.
-15. No Windows, falhas dos probes não são mascaradas pelos comandos de logging.
-16. As receitas não deixam o shell preso em `web` antes do cleanup.
-17. O cleanup local referencia o `docker-compose.e2e.yml` da raiz.
-
-## 26. Arquivos para auditoria
+## 19. Arquivos para auditoria
 
 ```text
 .github/workflows/ci.yml
@@ -522,24 +553,24 @@ docker-compose.e2e.yml
 docker/start.test.sh
 pom.xml
 web/package.json
-web/vitest.config.mjs
 web/package-lock.json
+web/vitest.config.mjs
 web/playwright.config.*
 web/e2e/
 docs/entrega/13-cobertura/README.md
 ```
 
-## 27. Limitações e transparência
+## 20. Limitações e transparência
 
 - E2E não roda em cada PR por padrão; é manual/agendado.
-- O gate frontend é de **linhas ≥85%**, não de branches/funções.
-- A receita local pressupõe Docker e Node/npm; no POSIX também usa `curl` e `openssl`; no Windows usa PowerShell para os probes e geração das credenciais.
-- `npx playwright install --with-deps chromium` pode exigir privilégios adequados no Linux para instalar pacotes de sistema; no macOS/Windows a receita instala Chromium sem `--with-deps`.
-- O workflow depende da infraestrutura do GitHub Actions.
-- A etapa histórica de artifact frontend deve acompanhar o diretório real de build do Next.js caso esse artifact se torne requisito operacional.
+- O gate frontend é de **linhas ≥85%**, não de branches ou funções.
+- A receita Bash requer Docker, Node/npm, `curl` e `openssl`.
+- `npx playwright install --with-deps chromium` pode exigir privilégios adequados no Linux para instalar dependências de sistema.
+- A receita Windows documentada é um arquivo `.cmd`, evitando ambiguidades de `%A` versus `%%A` entre terminal interativo e batch.
+- A execução depende da infraestrutura local ou do GitHub Actions para os recursos necessários.
 
-## 28. Conclusão
+## 21. Conclusão
 
-A entrega possui CI de backend/frontend, cobertura frontend continuamente verificada e E2E com stack completa. A receita local reproduz as etapas essenciais do workflow: instalação determinística (`npm ci`), browser Chromium, credenciais efêmeras obrigatórias, espera explícita por backend/frontend, execução do Playwright somente após readiness e cleanup a partir da raiz do repositório.
+A entrega possui CI de backend/frontend, cobertura frontend continuamente verificada e E2E com stack completa.
 
-Os caminhos de erro também são explícitos: falha de instalação aborta, falha de readiness imprime logs e aborta, falha de Playwright preserva seu exit code. Isso deixa o fluxo auditável e reproduzível sem depender de estado prévio do diretório `web` nem de timing acidental de inicialização dos containers.
+O fluxo de reprodução local não depende de `node_modules` preexistente, Chromium previamente instalado, `seq`, timing acidental de startup ou cleanup manual. Os caminhos de erro são fail-fast e preservam o resultado correto da execução.
