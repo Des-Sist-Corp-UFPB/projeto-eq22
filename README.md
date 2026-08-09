@@ -1,80 +1,177 @@
 # IWrite
 
-IWrite é uma aplicação web para escrita e organização narrativa. O modelo principal é `Livro -> Seção -> Capítulo -> Cena`; a cena concentra o texto TipTap, autosave, planejamento, histórico de versões e análise opcional com OpenAI.
+IWrite é uma aplicação web para escrita e organização narrativa. O modelo principal é `Livro -> Seção -> Capítulo -> Cena`; a cena concentra texto TipTap, autosave, planejamento, histórico de versões e análise opcional com LLM.
 
-Este repositório também é a implementação da equipe **eq22** na disciplina **Desenvolvimento de Sistemas Corporativos (DSC/UFPB)**. Para facilitar a avaliação humana e automatizada, os requisitos acadêmicos estão mapeados abaixo para a implementação e para as evidências versionadas no próprio repositório.
+Este repositório também é a implementação da equipe **EQ22** na disciplina **Desenvolvimento de Sistemas Corporativos (DSC/UFPB)**.
 
-## Entrega acadêmica — mapa de requisitos e evidências
+> **Avaliação humana ou automatizada:** para uma auditoria completa da entrega, comece em [`README-ENTREGA-DSC.md`](README-ENTREGA-DSC.md) e depois use o índice detalhado [`docs/entrega/README.md`](docs/entrega/README.md). Cada requisito possui documentação própria com arquitetura, implementação, testes, evidências, reprodução e limitações.
 
-| Requisito | Estado no repositório | Implementação / evidência principal |
+---
+
+## Avaliação 2 — requisitos atualizados em 30/07
+
+A avaliação usa os critérios **Aud**, **Int**, **Cob** e os extras **IA**, **HC**, **Tel** e **Uma**.
+
+| Sigla | Requisito | Estado no IWrite | Evidência verificável |
+|---|---|---|---|
+| **Aud** | Log de Auditoria | ✅ **Atende** | `src/main/java/com/iwrite/audit/`, migration `V27__create_audit_logs.sql`, `AuditLogIntegrationTest` |
+| **Int** | Integração com Serviço Externo | ✅ **Atende** | OpenAI/Anthropic via Spring AI + Umami institucional |
+| **Cob** | Cobertura automatizada ≥ 85% | ✅ **Atende** | snapshot versionado: backend **90,33% de linhas**, frontend **85,90% de linhas**; validação posterior do backend após HC: **92,01%** |
+| **IA** | Usa LLM | ✅ **Extra atendido** | análise de cenas com providers OpenAI/Anthropic + auditoria LLM |
+| **HC** | Healthcheck consulta o banco, lido do código | ✅ **Extra atendido** | `DatabaseHealthService` → `JdbcTemplate` → `SELECT 1`; 200/up e 503/down; [`docs/entrega/12-healthcheck/README.md`](docs/entrega/12-healthcheck/README.md) |
+| **Tel** | Telemetria | ✅ **Extra atendido** | OpenTelemetry Java Agent, spans/métricas manuais, Grafana, Tempo, Loki e Prometheus/Mimir |
+| **Uma** | Umami | ✅ **Extra atendido**; 🟡 repetição pós-deploy remoto pendente | coleta HTTP 200, pageviews, rota sanitizada e eventos no painel institucional |
+
+### Resultado resumido
+
+```text
+Aud ✅
+Int ✅
+Cob ✅
+IA  ✅
+HC  ✅
+Tel ✅
+Uma ✅
+```
+
+---
+
+## HC — healthcheck consulta PostgreSQL de verdade
+
+O critério do professor é explícito: **“healthcheck consulta o banco, lido do código”**.
+
+A implementação atual é:
+
+```text
+GET /ping
+  -> PingController
+  -> DatabaseHealthService
+  -> JdbcTemplate.queryForObject("SELECT 1", Integer.class)
+  -> PostgreSQL
+```
+
+### Banco disponível
+
+```text
+HTTP 200
+status = ok
+database = up
+```
+
+### Banco indisponível
+
+```text
+HTTP 503
+status = unavailable
+database = down
+```
+
+O response não expõe URL JDBC, hostname, porta, credenciais, mensagem da exceção ou stack trace.
+
+O healthcheck possui datasource/pool Hikari dedicado, separado do pool principal, com limites curtos de aquisição, validação, conexão, socket e query. Isso evita que uma falha de banco prenda o probe pelo timeout normal do pool de negócio.
+
+O `Dockerfile` principal também verifica `/api/ping`, portanto o health do container atravessa:
+
+```text
+Docker HEALTHCHECK
+ -> Next.js
+ -> /api/ping
+ -> Spring Boot /ping
+ -> SELECT 1
+ -> PostgreSQL
+```
+
+**Relatório detalhadíssimo do HC:** [`docs/entrega/12-healthcheck/README.md`](docs/entrega/12-healthcheck/README.md).
+
+---
+
+## Relatórios detalhados por requisito
+
+| # | Área | Estado | README específico |
+|---|---|---|---|
+| 01 | Autenticação e multi-tenancy | ✅ | [`docs/entrega/01-auth-multitenancy/README.md`](docs/entrega/01-auth-multitenancy/README.md) |
+| 02 | OpenTelemetry automático | ✅ | [`docs/entrega/02-opentelemetry-auto/README.md`](docs/entrega/02-opentelemetry-auto/README.md) |
+| 03 | Telemetria manual — spans e métricas de negócio | ✅ | [`docs/entrega/03-telemetria-negocio/README.md`](docs/entrega/03-telemetria-negocio/README.md) |
+| 04 | Grafana / Tempo / Loki / Prometheus-Mimir | ✅ | [`docs/entrega/04-grafana-stack/README.md`](docs/entrega/04-grafana-stack/README.md) |
+| 05 | Logs estruturados + correlação log/trace | ✅ com divergência literal documentada no item 4 | [`docs/entrega/05-logs-correlacionados/README.md`](docs/entrega/05-logs-correlacionados/README.md) |
+| 06 | Umami | ✅ | [`docs/entrega/06-umami/README.md`](docs/entrega/06-umami/README.md) |
+| 07 | MCP Server | ✅ | [`docs/entrega/07-mcp/README.md`](docs/entrega/07-mcp/README.md) |
+| 08 | k6 / performance | ✅ | [`docs/entrega/08-k6/README.md`](docs/entrega/08-k6/README.md) |
+| 09 | CI / E2E | ✅ | [`docs/entrega/09-ci-e2e/README.md`](docs/entrega/09-ci-e2e/README.md) |
+| 10 | Health / containerização / deploy | ✅ | [`docs/entrega/10-health-deploy/README.md`](docs/entrega/10-health-deploy/README.md) |
+| 11 | IA / providers / auditoria | ✅ | [`docs/entrega/11-ia-auditoria/README.md`](docs/entrega/11-ia-auditoria/README.md) |
+| 12 | **HC — healthcheck database-aware** | ✅ | [`docs/entrega/12-healthcheck/README.md`](docs/entrega/12-healthcheck/README.md) |
+
+O índice mestre com ordem de auditoria para IA está em [`docs/entrega/README.md`](docs/entrega/README.md).
+
+---
+
+## Entrega acadêmica — mapa de implementação e evidências
+
+| Requisito | Estado | Implementação / evidência principal |
 |---|---|---|
 | Autenticação e multi-tenancy | ✅ Implementado e testado | [`docs/authentication-multitenancy.md`](docs/authentication-multitenancy.md), `com.iwrite.auth`, `CurrentUserProvider`, `tenant_memberships` |
-| Isolamento multi-tenant | ✅ Implementado e testado | filtros por tenant nos services/repositories, testes de integração e [`docs/demonstracao-multi-tenant.md`](docs/demonstracao-multi-tenant.md) |
-| OpenTelemetry — traces e métricas automáticas | ✅ Implementado | guia oficial em [`docs/opentelemetry.md`](docs/opentelemetry.md) e implementação do IWrite em [`docs/opentelemetry-implementation.md`](docs/opentelemetry-implementation.md) |
-| OpenTelemetry — instrumentação manual de negócio | ✅ Implementado e testado | [`docs/otel-business-signals.md`](docs/otel-business-signals.md), `BusinessTelemetry`, spans e métricas dos fluxos críticos |
-| Logs estruturados + Loki + correlação com traces | ✅ Implementado e testado | guia oficial em [`docs/opentelemetry-logs.md`](docs/opentelemetry-logs.md) e implementação em [`docs/otel-correlated-logs.md`](docs/otel-correlated-logs.md) |
-| Grafana / Tempo / Loki / Prometheus-Mimir | ✅ Stack e exportação configuradas | `docker-compose.observability.yml` + [`docs/opentelemetry-implementation.md`](docs/opentelemetry-implementation.md) |
-| Analytics de produto com Umami | ✅ Implementado, testado e validado no painel institucional; 🟡 pós-deploy remoto pendente | [`docs/analytics-umami.md`](docs/analytics-umami.md), [`docs/evidencias-validacao-humana-2026-08-08.md`](docs/evidencias-validacao-humana-2026-08-08.md), `web/src/lib/analytics/` |
-| Servidor MCP | ✅ Implementado, testado e validado no MCP Inspector | [`docs/mcp-server.md`](docs/mcp-server.md), [`docs/evidencias-validacao-humana-2026-08-08.md`](docs/evidencias-validacao-humana-2026-08-08.md), `com.iwrite.mcp` |
-| Teste de carga | ✅ Implementado com k6 | [`loadtest/README.md`](loadtest/README.md), `loadtest/carga.js`, `docker-compose.loadtest.yml` |
-| CI e E2E | ✅ Implementado | [`.github/workflows/ci.yml`](.github/workflows/ci.yml), [`.github/workflows/e2e.yml`](.github/workflows/e2e.yml) |
-| Health check / deploy | ✅ Artefatos e probe implementados | `Dockerfile`, `web/Dockerfile`, `GET /ping`, rewrite `/api/ping` no Next.js |
+| Isolamento multi-tenant | ✅ Implementado e testado | filtros tenant-aware + testes + [`docs/demonstracao-multi-tenant.md`](docs/demonstracao-multi-tenant.md) |
+| Auditoria | ✅ Implementada e persistida | `com.iwrite.audit`, `audit_logs`, `AuditLogAspect`, `AuditLogIntegrationTest` |
+| Integração externa | ✅ Implementada | Spring AI OpenAI/Anthropic + Umami institucional |
+| Cobertura ≥85% | ✅ Atendida | `cobertura/backend/`, `cobertura/frontend/` |
+| OpenTelemetry — traces/métricas automáticas | ✅ Implementado | [`docs/opentelemetry-implementation.md`](docs/opentelemetry-implementation.md) |
+| OpenTelemetry — sinais manuais | ✅ Implementado e testado | [`docs/otel-business-signals.md`](docs/otel-business-signals.md), `BusinessTelemetry` |
+| Logs estruturados + Loki + correlação | ✅ Implementado e testado | [`docs/otel-correlated-logs.md`](docs/otel-correlated-logs.md) |
+| Grafana / Tempo / Loki / Prometheus-Mimir | ✅ Stack local configurada e validada | `docker-compose.observability.yml` |
+| Umami | ✅ Implementado e validado no painel institucional | [`docs/analytics-umami.md`](docs/analytics-umami.md), [`docs/evidencias/umami/`](docs/evidencias/umami/) |
+| MCP | ✅ Implementado e validado no Inspector | [`docs/mcp-server.md`](docs/mcp-server.md), [`docs/evidencias/mcp/`](docs/evidencias/mcp/) |
+| k6 | ✅ Implementado, revisado e medido | [`docs/entrega/08-k6/README.md`](docs/entrega/08-k6/README.md), `loadtest/resultado.json` |
+| CI / E2E | ✅ Implementado | `.github/workflows/ci.yml`, `.github/workflows/e2e.yml` |
+| HC | ✅ Consulta PostgreSQL de verdade | [`docs/entrega/12-healthcheck/README.md`](docs/entrega/12-healthcheck/README.md) |
 
-> **Validação humana:** Umami e MCP foram validados em 08/08/2026. O Umami recebeu page views e eventos reais no painel institucional a partir do frontend local; resta repetir a validação após configurar o build/deploy remoto de `eq22.dsc.rodrigor.com`. O MCP foi validado no Inspector em loopback e continua intencionalmente não exposto no deploy. Registro consolidado: [`docs/evidencias-validacao-humana-2026-08-08.md`](docs/evidencias-validacao-humana-2026-08-08.md).
+---
 
 ## Arquitetura
 
 ```text
 Navegador
-   │
-   │ mesma origem (/api/*)
-   ▼
+   |
+   | mesma origem (/api/*)
+   v
 Next.js 15 / React 19
-   │
-   │ rewrite server-side
-   ▼
+   |
+   | rewrite server-side
+   v
 Spring Boot 3.4.1 / Java 21
-   │
-   ├──────────────► PostgreSQL 16
-   │
-   ├── OpenTelemetry Java Agent ──OTLP──► Grafana / Tempo / Loki / Mimir
-   │
-   ├── OpenAI (opcional) ───────────────► análise de cenas
-   │
-   └── MCP (opcional, somente loopback) ► tools/resources do IWrite
+   |
+   +----> PostgreSQL 16
+   |
+   +----> OpenTelemetry Java Agent --OTLP--> Grafana / Tempo / Loki / Mimir
+   |
+   +----> Spring AI -----------------------> OpenAI ou Anthropic (opcional)
+   |
+   +----> MCP -----------------------------> loopback na configuração suportada
 
-Next.js ──► Umami (opcional, analytics de produto)
+Next.js ----> Umami institucional (opcional)
 ```
 
-A identidade e o tenant são resolvidos no backend. O navegador não escolhe `tenantId`, e recursos de outro tenant são tratados como não encontrados para evitar enumeração.
+A identidade e o tenant são resolvidos no backend. O cliente não escolhe `tenantId`, e recursos cross-tenant recebem semântica equivalente a recurso inexistente para reduzir enumeração.
+
+---
 
 ## Tecnologias
 
-- **Backend:** Java 21, Spring Boot 3.4.1, Spring Security, Spring Data JPA, Flyway e PostgreSQL 16.
-- **Frontend:** Next.js 15, React 19, TypeScript, Tailwind CSS, TanStack Query e TipTap.
-- **Observabilidade:** OpenTelemetry Java Agent, OTLP, Grafana, Tempo, Loki e Prometheus/Mimir.
+- **Backend:** Java 21, Spring Boot 3.4.1, Spring Security, Spring Data JPA, Flyway, PostgreSQL 16.
+- **Frontend:** Next.js 15, React 19, TypeScript, Tailwind CSS, TanStack Query, TipTap.
+- **Observabilidade:** OpenTelemetry Java Agent, OTLP, Grafana, Tempo, Loki, Prometheus/Mimir.
 - **Analytics:** Umami.
+- **IA:** Spring AI, OpenAI e Anthropic opcionais.
 - **MCP:** Spring AI MCP Server WebMVC.
-- **Qualidade:** JUnit/Spring Boot Test, JaCoCo, Vitest, Testing Library, V8 Coverage e Playwright.
+- **Qualidade:** JUnit/Spring Boot Test, JaCoCo, Vitest, Testing Library, V8 Coverage, Playwright.
 - **Carga:** k6.
-- **Infraestrutura local:** Docker Compose.
+- **Infra local:** Docker Compose.
 
-## Estrutura do projeto
+---
 
-- `src/main/java/com/iwrite/`: controllers, services, repositories, entidades, DTOs, autenticação, auditoria, observabilidade e MCP.
-- `src/main/resources/db/migration/`: migrations Flyway.
-- `src/test/java/com/iwrite/`: testes unitários e de integração do backend.
-- `web/src/app/`: rotas Next.js.
-- `web/src/features/`: funcionalidades e testes do frontend.
-- `web/src/lib/analytics/`: integração tipada e sanitizada com Umami.
-- `docs/`: documentação técnica e guias da disciplina.
-- `loadtest/`: cenário realista de carga com k6 e resultados versionados.
-- `cobertura/`: snapshots HTML de cobertura versionados.
-- `.github/workflows/`: CI e E2E.
+## Execução local
 
-## Execução local com Docker Compose
-
-Suba o projeto inteiro:
+### Stack principal
 
 ```bash
 docker compose up -d --build
@@ -82,43 +179,34 @@ docker compose up -d --build
 
 Serviços padrão:
 
-- Frontend: `http://localhost:3000`
-- Backend: `http://localhost:8085`
-- Probe do backend: `http://localhost:8085/ping`
-- PostgreSQL no host: `localhost:5435`
-- PostgreSQL na rede Docker: `db:5432`
-- Database: `iwrite`
-- Usuário local: `postgres`
-- Senha local padrão: `postgres`
+```text
+Frontend:   http://localhost:3000
+Backend:    http://localhost:8085
+HC backend: http://localhost:8085/ping
+PostgreSQL: localhost:5435
+```
 
-Para parar:
+Parar:
 
 ```bash
 docker compose down
 ```
 
-## Execução local sem Docker para a aplicação
+### Backend sem container da aplicação
 
-Suba apenas o PostgreSQL:
+Suba apenas o banco:
 
 ```bash
 docker compose up -d db
 ```
 
-Compile o backend no Windows:
+Windows:
 
-```powershell
-.\mvnw.cmd -s .mvn/local-settings.xml -DskipTests compile
+```cmd
+mvnw.cmd -s .mvn\local-settings.xml spring-boot:run
 ```
 
-Execute no Linux/macOS:
-
-```bash
-./mvnw -s .mvn/local-settings.xml -DskipTests compile
-./mvnw spring-boot:run -Dspring-boot.run.profiles=development
-```
-
-O app Next.js fica em `web/`:
+Frontend:
 
 ```bash
 cd web
@@ -126,141 +214,137 @@ npm ci
 npm run dev
 ```
 
-O frontend usa `BACKEND_ORIGIN=http://localhost:8085` por padrão para o rewrite server-side de `/api/*`. `NEXT_PUBLIC_API_URL` permanece apenas como compatibilidade legada e está depreciada.
+---
 
-## Autenticação e multi-tenancy
+## Healthcheck — reprodução
 
-A API normal usa sessão de servidor. O fluxo principal é:
+Com banco e backend ativos:
+
+```bash
+curl -i http://localhost:8085/ping
+```
+
+Esperado:
 
 ```text
-JSESSIONID (HttpOnly, SameSite=Lax)
-        │
-        ▼
-Spring Security / SecurityContext
-        │
-        ▼
-IWriteUserDetails
-        │
-        ▼
-AuthenticatedCurrentUserProvider
-        │
-        ▼
-tenant_memberships relida a cada requisição
-        │
-        ▼
-services/repositories com escopo de tenant
+HTTP 200
+"status":"ok"
+"database":"up"
 ```
 
-Pontos importantes:
+Testes direcionados:
 
-- `tenantId`, `userId` e `role` enviados pelo cliente nunca são fonte de autoridade;
-- a membership persistida define o tenant efetivo;
-- recurso de outro tenant e recurso inexistente produzem a mesma semântica de `404`;
-- revogar a membership invalida o contexto autenticado;
-- o navegador não guarda identidade em `localStorage`/`sessionStorage`;
-- mutações usam proteção CSRF de duplo envio;
-- cadastro público cria usuário, credencial, workspace pessoal, membership `OWNER`, persona principal e sessão em uma única transação;
-- login e cadastro possuem rate limiting próprio.
-
-Documentação completa: [`docs/authentication-multitenancy.md`](docs/authentication-multitenancy.md).
-
-### Credencial do usuário legado em desenvolvimento
-
-Instalações antigas podem provisionar uma credencial para um usuário que já existe. O mecanismo é desligado por padrão e nunca cria usuário.
-
-```powershell
-$env:IWRITE_CREDENTIAL_PROVISIONING_ENABLED = "true"
-$env:IWRITE_CREDENTIAL_PROVISIONING_EMAIL = "carlos.legacy@iwrite.local"
-$env:IWRITE_CREDENTIAL_PROVISIONING_PASSWORD = "<escolha uma senha local>"
-.\mvnw.cmd spring-boot:run -Dspring-boot.run.profiles=development
+```cmd
+mvnw.cmd -s .mvn\local-settings.xml -Dtest=PingControllerTest,DatabaseHealthServiceTest,PingControllerIntegrationTest test
 ```
 
-Depois do primeiro boot, remova as variáveis de provisionamento. Detalhes de rollout, rotação e limites do bcrypt estão em [`docs/authentication-multitenancy.md`](docs/authentication-multitenancy.md).
+Suíte backend + cobertura:
 
-## OpenTelemetry, Grafana, Tempo, Loki e métricas
+```cmd
+mvnw.cmd -s .mvn\local-settings.xml clean test jacoco:report
+```
 
-Há dois conjuntos de documentação propositalmente separados.
+A validação feita durante a implementação do HC registrou **841 testes, 0 falhas, 0 erros**, backend com **92,01% de linhas** e pacote `com.iwrite.health.*` com **100% das linhas** naquele run.
 
-### Guias oficiais sincronizados da disciplina
+---
 
-- [`docs/opentelemetry.md`](docs/opentelemetry.md) — telemetria, OpenTelemetry e tutorial geral da disciplina.
-- [`docs/opentelemetry-logs.md`](docs/opentelemetry-logs.md) — guia complementar de logs/Loki da disciplina.
+## Cobertura
 
-### Implementação e evidências específicas do IWrite
+Snapshot versionado em `cobertura/`:
 
-- [`docs/opentelemetry-implementation.md`](docs/opentelemetry-implementation.md) — Java Agent, configuração OTLP, segurança, diagnóstico e consultas de evidência.
-- [`docs/otel-business-signals.md`](docs/otel-business-signals.md) — spans e métricas manuais de negócio.
-- [`docs/otel-correlated-logs.md`](docs/otel-correlated-logs.md) — eventos estruturados, correlação log → trace e LogQL.
+| Camada | Linhas | Branches | Métodos/Funções |
+|---|---:|---:|---:|
+| Backend | **90,33%** | 74,43% | 91,76% |
+| Frontend | **85,90%** | 82,33% | 68,81% |
 
-O container do backend inclui o OpenTelemetry Java Agent, mas a telemetria fica **desabilitada por padrão**. Com o agente desligado, a aplicação funciona sem exigir nenhuma variável `OTEL_*`.
+O requisito acadêmico é cobertura automatizada **≥ 85%**, portanto o snapshot versionado atende em backend e frontend.
 
-Variáveis principais:
+A implementação posterior do HC foi revalidada com JaCoCo e levou o backend a **92,01% de linhas** naquele run.
 
-- `IWRITE_OTEL_ENABLED`
-- `IWRITE_OTEL_AUTH_REQUIRED`
-- `OTEL_SERVICE_NAME`
-- `OTEL_EXPORTER_OTLP_ENDPOINT`
-- `OTEL_EXPORTER_OTLP_HEADERS` quando o backend exige autenticação
-- `OTEL_TRACES_EXPORTER`
-- `OTEL_METRICS_EXPORTER`
-- `OTEL_LOGS_EXPORTER`
+---
 
-Para subir o ambiente local LGTM, sem autenticação:
+## k6 — resultados que não devem ser ignorados
+
+O teste de carga não mede apenas `/ping`; ele exercita sessão/CSRF, leitura, escrita, autosave, refresh pós-save, recursos próprios por VU, rampa e cleanup.
+
+| Métrica | 10 VUs | 30 VUs |
+|---|---:|---:|
+| Requests | 3.955 | 11.750 |
+| RPS global | 19,36 | 57,18 |
+| p95 global | 65,07 ms | 85,93 ms |
+| Erros HTTP | 0% | 0% |
+| Checks | 100% | 100% |
+| Turnos steady | 614 | 1.830 |
+| `save_scene` p95 steady | 96,27 ms | 89,01 ms |
+
+Os 21 thresholds documentados passaram nas duas execuções registradas.
+
+Relatório completo: [`docs/entrega/08-k6/README.md`](docs/entrega/08-k6/README.md).
+
+---
+
+## OpenTelemetry / Grafana / Tempo / Loki / Mimir
+
+Documentação específica:
+
+- [`docs/opentelemetry-implementation.md`](docs/opentelemetry-implementation.md)
+- [`docs/otel-business-signals.md`](docs/otel-business-signals.md)
+- [`docs/otel-correlated-logs.md`](docs/otel-correlated-logs.md)
+- [`docs/entrega/02-opentelemetry-auto/README.md`](docs/entrega/02-opentelemetry-auto/README.md)
+- [`docs/entrega/03-telemetria-negocio/README.md`](docs/entrega/03-telemetria-negocio/README.md)
+- [`docs/entrega/04-grafana-stack/README.md`](docs/entrega/04-grafana-stack/README.md)
+- [`docs/entrega/05-logs-correlacionados/README.md`](docs/entrega/05-logs-correlacionados/README.md)
+
+Stack local:
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d --build
 ```
 
-O Grafana local fica em `http://localhost:3001`. O override de observabilidade é somente para desenvolvimento/evidências e não transforma Grafana, Tempo, Loki ou Mimir em componentes do deploy normal do IWrite.
+Grafana local:
 
-### Instrumentação manual de negócio
+```text
+http://localhost:3001
+```
 
-O IWrite instrumenta explicitamente dois fluxos críticos:
+---
 
-- `PATCH /api/scenes/{sceneId}/content` → span `iwrite.scene.content.save`;
-- `POST /api/scenes/{sceneId}/ai-analysis` → span `iwrite.scene.analysis`.
+## Umami
 
-As métricas manuais são `iwrite.business.operation.count` e `iwrite.business.operation.duration`. Labels e atributos são limitados a uma allowlist; conteúdo de manuscrito, IDs, prompts, tokens e strings livres não são usados como labels.
+A integração de analytics é tipada e sanitizada.
 
-## Analytics de produto com Umami
+Eventos suportados incluem:
 
-Umami mede **uso do produto**, enquanto OpenTelemetry mede **comportamento técnico do sistema**. As integrações são independentes.
+```text
+book_created
+scene_saved
+scene_analysis_requested
+scene_analysis_succeeded
+scene_analysis_failed
+book_exported
+```
 
-Implementação: [`docs/analytics-umami.md`](docs/analytics-umami.md) e `web/src/lib/analytics/`.
+A validação humana confirmou coleta HTTP `200`, pageviews, `/books/{id}` sanitizado e eventos reais no painel institucional.
 
-Variáveis de build do frontend:
+Documentos:
 
-- `NEXT_PUBLIC_UMAMI_ENABLED`
-- `NEXT_PUBLIC_UMAMI_SCRIPT_URL`
-- `NEXT_PUBLIC_UMAMI_WEBSITE_ID`
-- `NEXT_PUBLIC_UMAMI_HOST_URL` (opcional)
+- [`docs/analytics-umami.md`](docs/analytics-umami.md)
+- [`docs/entrega/06-umami/README.md`](docs/entrega/06-umami/README.md)
+- [`docs/evidencias/umami/README.md`](docs/evidencias/umami/README.md)
 
-Eventos tipados atualmente suportados:
+Ressalva: resta repetir a validação no deploy remoto `eq22.dsc.rodrigor.com`.
 
-- `book_created`
-- `scene_saved`
-- `scene_analysis_requested`
-- `scene_analysis_succeeded`
-- `scene_analysis_failed`
-- `book_exported`
+---
 
-A integração remove query string/hash, normaliza segmentos dinâmicos de rota e aplica allowlist de propriedades e valores. Não envia conteúdo do manuscrito, títulos, emails, nomes, IDs brutos, prompts, respostas de IA, tokens ou stack traces.
+## MCP
 
-Sem configuração válida, a integração é no-op e não bloqueia o produto. O Website ID oficial não é versionado. A validação local de 08/08/2026 confirmou coleta HTTP `200`, page views no painel institucional, sanitização `/books/{id}` e os eventos `book_created`, `scene_saved` e `book_exported`; resta repetir a validação no deploy remoto. Consulte [`docs/evidencias-validacao-humana-2026-08-08.md`](docs/evidencias-validacao-humana-2026-08-08.md).
+Tools publicadas no modo MCP suportado:
 
-## Servidor MCP
-
-O servidor MCP é uma camada fina sobre os services existentes do IWrite. Ele está **desabilitado por padrão** e, na configuração atual, só é suportado com identidade fixa de desenvolvimento e processo limitado a loopback.
-
-Documentação: [`docs/mcp-server.md`](docs/mcp-server.md).
-
-Tools:
-
-| Tool | Objetivo |
-|---|---|
-| `listar_livros_acessiveis` | lista livros que a identidade atual pode acessar |
-| `obter_outline_livro` | retorna outline autorizado sem conteúdo integral das cenas |
-| `analisar_cena` | reutiliza o fluxo existente de análise assistida, auditoria e limites |
+```text
+listar_livros_acessiveis
+obter_outline_livro
+analisar_cena
+```
 
 Resource template:
 
@@ -268,216 +352,130 @@ Resource template:
 iwrite://books/{bookId}/outline
 ```
 
-Para teste local com MCP Inspector:
+A validação no MCP Inspector comprovou descoberta, execução de tools, resource template/read e caminho de erro sanitizado.
 
-```bash
-docker compose up -d db
-IWRITE_MCP_ENABLED=true IWRITE_DEVELOPMENT_CURRENT_USER_ENABLED=true SERVER_ADDRESS=127.0.0.1 ./mvnw spring-boot:run
-npx @modelcontextprotocol/inspector
-```
+Documentos:
 
-Conecte por SSE em `http://localhost:8085/sse`.
+- [`docs/mcp-server.md`](docs/mcp-server.md)
+- [`docs/entrega/07-mcp/README.md`](docs/entrega/07-mcp/README.md)
+- [`docs/evidencias/mcp/README.md`](docs/evidencias/mcp/README.md)
 
-O `McpLoopbackGuard` impede o startup em configurações não suportadas. Enquanto o transporte não tiver autenticação própria por cliente, os endpoints MCP não devem ser publicados por reverse proxy.
+---
 
-A validação humana de 08/08/2026 confirmou conexão no Inspector v2.1.0, descoberta das três tools, execução real de listagem/outline, descoberta e leitura do resource template e o caminho de erro `unavailable` sanitizado de `analisar_cena`. Consulte [`docs/evidencias-validacao-humana-2026-08-08.md`](docs/evidencias-validacao-humana-2026-08-08.md).
+## IA e Integração Externa
 
-## Teste de carga com k6
-
-O cenário de carga está em [`loadtest/README.md`](loadtest/README.md) e [`loadtest/carga.js`](loadtest/carga.js).
-
-Ele exercita a API real com sessão e CSRF, em vez de medir apenas `/ping`. Cada VU usa sessão independente e seu próprio livro/cena, evitando contenção artificial em um único recurso compartilhado. O fluxo cobre listagem de livros, carregamento de outline, carregamento de cena, autosave e refresh de outline após salvamento.
-
-Por segurança, o script **recusa destino remoto** e deve rodar apenas contra loopback/ambiente local. Não use o teste de carga contra produção nem contra infraestrutura acadêmica compartilhada.
-
-A stack recomendada para carga local usa os overlays de demonstração e de carga:
-
-```bash
-docker compose \
-  -f docker-compose.yml \
-  -f docker-compose.demo.yml \
-  -f docker-compose.loadtest.yml \
-  up -d --build
-```
-
-Thresholds, preparação, limpeza, autenticação, resultados medidos e comandos completos estão documentados em [`loadtest/README.md`](loadtest/README.md).
-
-## CI, E2E e validação local
-
-### Backend
-
-Windows:
-
-```powershell
-.\mvnw.cmd -s .mvn/local-settings.xml clean test jacoco:report
-```
-
-Linux/macOS:
-
-```bash
-./mvnw -s .mvn/local-settings.xml clean test jacoco:report
-```
-
-Os testes de integração precisam do PostgreSQL local em `localhost:5435`:
-
-```bash
-docker compose up -d db
-```
-
-### Frontend
-
-```bash
-cd web
-npm ci
-npm run lint
-npm run test
-npm run test:coverage
-npm run build
-```
-
-### GitHub Actions
-
-- [`.github/workflows/ci.yml`](.github/workflows/ci.yml): testes do backend, validação do entrypoint OpenTelemetry, testes/build do frontend.
-- [`.github/workflows/e2e.yml`](.github/workflows/e2e.yml): stack E2E e Playwright com credenciais efêmeras por execução.
-
-## Cobertura de testes — snapshot versionado
-
-Os números abaixo são um **snapshot de 1º de julho de 2026**, não uma afirmação de cobertura calculada a cada commit posterior.
-
-| Camada | Testes | Linhas | Branches | Métodos/Funções | Classes |
-|---|---:|---:|---:|---:|---:|
-| Backend | 362 | **90,33%** | 74,43% | 91,76% | 99,47% |
-| Frontend | 211 | **85,90%** | 82,33% | 68,81% | — |
-
-- Backend: JaCoCo 0.8.12, snapshot em `cobertura/backend/index.html`.
-- Frontend: Vitest 3.2.6 + V8 Coverage, snapshot em `cobertura/frontend/index.html`.
-
-## Health check e deploy
-
-O backend expõe `GET /ping` como probe público de liveness. O frontend possui regra explícita `/api/ping -> BACKEND_ORIGIN/ping`, permitindo verificar o backend sem depender de sessão autenticada.
-
-Artefatos principais de deploy:
-
-- `Dockerfile` — backend/runtime do IWrite;
-- `web/Dockerfile` — frontend Next.js;
-- `docker/start.sh` — inicialização do backend e ativação opcional do Java Agent;
-- `web/next.config.ts` — rewrite da API e validação de `BACKEND_ORIGIN`;
-- `.env.example` — modelo sem segredos.
-
-A configuração do ambiente implantado deve fornecer banco, origens permitidas e segredos por variáveis/secret manager. O repositório não deve conter tokens institucionais, chave OpenAI, senhas reais ou credenciais administrativas.
-
-## Integração com OpenAI e auditoria LLM
-
-A integração externa opcional produz análise estruturada da cena salva pelo endpoint:
+A análise de cenas usa Spring AI com providers opcionais:
 
 ```text
-POST /api/scenes/{sceneId}/ai-analysis
+SPRING_AI_MODEL_CHAT=openai
+SPRING_AI_MODEL_CHAT=anthropic
+SPRING_AI_MODEL_CHAT=none
 ```
 
-A análise não altera a cena. Quando o provider não está habilitado, a aplicação continua inicializável e a rota retorna indisponibilidade controlada.
+O modo `none` permite inicialização segura sem provider pago.
 
-Variáveis principais:
+Há auditoria de execução LLM e auditoria de domínio associada ao fluxo de análise.
 
-- `SPRING_AI_MODEL_CHAT=openai`
-- `OPENAI_API_KEY`
-- `OPENAI_BASE_URL`
-- `OPENAI_COMPLETIONS_PATH`
-- `OPENAI_MODEL`
-- `OPENAI_TEMPERATURE`
-- `OPENAI_MAX_TOKENS` / `OPENAI_MAX_COMPLETION_TOKENS`
-- `OPENAI_REASONING_EFFORT`
-- `OPENAI_CONNECT_TIMEOUT`
-- `OPENAI_READ_TIMEOUT`
+Relatório: [`docs/entrega/11-ia-auditoria/README.md`](docs/entrega/11-ia-auditoria/README.md).
 
-O fluxo passa pelo gateway de auditoria LLM e também participa da auditoria de domínio. Testes usam mocks/stubs e não chamam a API paga.
+---
 
-## Log de auditoria
+## Auditoria
 
-Eventos relevantes são persistidos em `audit_logs`, com tenant, usuário, ação, recurso, instante e resultado. Conteúdo de cenas, prompts, senhas, tokens e chaves de API não são armazenados no log de domínio.
+Eventos relevantes são persistidos em `audit_logs` com tenant, usuário, ação, recurso, instante e resultado.
+
+Arquivos principais:
+
+```text
+src/main/resources/db/migration/V27__create_audit_logs.sql
+src/main/java/com/iwrite/audit/
+src/test/java/com/iwrite/audit/AuditLogIntegrationTest.java
+```
 
 Operações auditadas incluem livros, cenas, colaboração, restauração de versão, análise com IA e invocações MCP.
 
-Evidências principais:
+---
 
-- `src/main/resources/db/migration/V27__create_audit_logs.sql`
-- `src/main/java/com/iwrite/audit/`
-- `src/test/java/com/iwrite/audit/AuditLogIntegrationTest.java`
+## Logs — divergência deliberada do entregável 4
 
-## Variáveis de ambiente — referência rápida
+O guia oficial pede um erro tratado registrado com `logger.error(..., exception)` e stack trace no Loki.
 
-### Banco e runtime
+O IWrite deliberadamente não exporta `Throwable`/stack trace de erro tratado nessa demonstração por política de minimização de dados. Essa divergência não é escondida.
 
-- `DB_URL`, `DB_USERNAME`, `DB_PASSWORD`
-- `SERVER_PORT`
-- `SERVER_ADDRESS`
-- `BACKEND_ORIGIN`
-- `APP_CORS_ALLOWED_ORIGINS`
-- `NEXT_PUBLIC_API_URL` — compatibilidade legada/depreciada
+Documento específico:
 
-### Autenticação / desenvolvimento
+[`docs/entregavel-4-logs-error.md`](docs/entregavel-4-logs-error.md)
 
-- `IWRITE_DEVELOPMENT_CURRENT_USER_ENABLED`
-- `IWRITE_DEVELOPMENT_CURRENT_USER_ID`
-- `IWRITE_DEVELOPMENT_TENANT_ID`
-- `IWRITE_DEVELOPMENT_TIME_ZONE_ID`
-- `IWRITE_CREDENTIAL_PROVISIONING_ENABLED`
-- `IWRITE_CREDENTIAL_PROVISIONING_EMAIL`
-- `IWRITE_CREDENTIAL_PROVISIONING_PASSWORD`
-- variáveis de rate limiting documentadas em [`docs/authentication-multitenancy.md`](docs/authentication-multitenancy.md)
+---
 
-### OpenTelemetry
+## CI / E2E
 
-- `IWRITE_OTEL_ENABLED`
-- `IWRITE_OTEL_AUTH_REQUIRED`
-- `OTEL_SERVICE_NAME`
-- `OTEL_EXPORTER_OTLP_ENDPOINT`
-- `OTEL_EXPORTER_OTLP_HEADERS`
+Workflows:
 
-### Umami
+```text
+.github/workflows/ci.yml
+.github/workflows/e2e.yml
+```
 
-- `NEXT_PUBLIC_UMAMI_ENABLED`
-- `NEXT_PUBLIC_UMAMI_SCRIPT_URL`
-- `NEXT_PUBLIC_UMAMI_WEBSITE_ID`
-- `NEXT_PUBLIC_UMAMI_HOST_URL`
+A implementação do HC passou pela CI com backend e frontend/build verdes após a correção dos findings de review.
 
-### MCP
+---
 
-- `IWRITE_MCP_ENABLED`
-- `IWRITE_MCP_SCENE_ANALYSIS_MAX_PER_WINDOW`
-- `IWRITE_MCP_SCENE_ANALYSIS_WINDOW`
+## Evidências humanas
 
-### OpenAI
+Registro consolidado:
 
-- `SPRING_AI_MODEL_CHAT`
-- `OPENAI_API_KEY`
-- demais opções em `src/main/resources/application.yml` e `.env.example`
+[`docs/evidencias-validacao-humana-2026-08-08.md`](docs/evidencias-validacao-humana-2026-08-08.md)
 
-## Princípios de segurança relevantes à entrega
+Pastas:
 
-- tenant e usuário são determinados no servidor, nunca confiados ao cliente;
-- recursos cross-tenant não são enumeráveis;
-- segredos ficam fora do Git;
-- telemetria, analytics e logs evitam conteúdo de manuscrito e identificadores brutos;
-- Umami usa allowlist de eventos/propriedades;
-- OpenTelemetry não registra exception stack/message nos spans manuais de negócio;
-- MCP é off por padrão e limitado a loopback na configuração suportada;
-- k6 recusa destinos remotos;
-- testes de integração com OpenAI usam mocks/stubs.
+```text
+docs/evidencias/umami/
+docs/evidencias/mcp/
+```
 
-## Índice de documentação acadêmica e técnica
+---
 
-| Tema | Documento |
-|---|---|
-| Autenticação e multi-tenancy | [`docs/authentication-multitenancy.md`](docs/authentication-multitenancy.md) |
-| Demonstração multi-tenant | [`docs/demonstracao-multi-tenant.md`](docs/demonstracao-multi-tenant.md) |
-| OpenTelemetry — guia oficial da disciplina | [`docs/opentelemetry.md`](docs/opentelemetry.md) |
-| Logs/Loki — guia oficial da disciplina | [`docs/opentelemetry-logs.md`](docs/opentelemetry-logs.md) |
-| OpenTelemetry — implementação do IWrite | [`docs/opentelemetry-implementation.md`](docs/opentelemetry-implementation.md) |
-| Sinais manuais de negócio | [`docs/otel-business-signals.md`](docs/otel-business-signals.md) |
-| Logs correlacionados | [`docs/otel-correlated-logs.md`](docs/otel-correlated-logs.md) |
-| Umami | [`docs/analytics-umami.md`](docs/analytics-umami.md) |
-| MCP | [`docs/mcp-server.md`](docs/mcp-server.md) |
-| Validação humana Umami + MCP (08/08/2026) | [`docs/evidencias-validacao-humana-2026-08-08.md`](docs/evidencias-validacao-humana-2026-08-08.md) |
-| Teste de carga | [`loadtest/README.md`](loadtest/README.md) |
+## Limitações declaradas
 
-Use `.env.example` e `web/.env.local.example` como modelos. **Não versione valores secretos.**
+A documentação não mascara os pontos restantes:
+
+1. **Umami remoto:** a validação registrada foi frontend local → painel institucional; falta repetir no deploy remoto.
+2. **Logs item 4 literal:** a aplicação não envia `Throwable`/stack trace de erro tratado ao Loki; divergência documentada.
+3. **MCP:** a configuração suportada permanece restrita a loopback com identidade fixa de desenvolvimento enquanto o transporte não tiver autenticação individual por cliente.
+
+**HC não é mais pendência:** o healthcheck consulta PostgreSQL explicitamente com `SELECT 1` e retorna `503` quando o banco não pode ser consultado.
+
+---
+
+## Documentação oficial da disciplina
+
+Os guias oficiais sincronizados permanecem preservados:
+
+- [`docs/opentelemetry.md`](docs/opentelemetry.md)
+- [`docs/opentelemetry-logs.md`](docs/opentelemetry-logs.md)
+
+Esses arquivos são o guia/enunciado. As provas de implementação estão nos READMEs de `docs/entrega/`, no código, nos testes e nas evidências versionadas.
+
+---
+
+## Ordem recomendada para avaliação automatizada
+
+1. Leia esta matriz no topo do `README.md`.
+2. Abra [`README-ENTREGA-DSC.md`](README-ENTREGA-DSC.md).
+3. Abra [`docs/entrega/README.md`](docs/entrega/README.md).
+4. Para o requisito sendo pontuado, abra o README específico.
+5. Siga a seção **Arquivos para auditoria** do relatório.
+6. Para **HC**, localize obrigatoriamente `DatabaseHealthService.java` e a string literal `SELECT 1`.
+7. Para **Cob**, leia os relatórios versionados em `cobertura/`.
+8. Para **k6**, leia `loadtest/resultado.json` e o README específico, não apenas o script.
+9. Para **Umami/MCP**, confira as evidências visuais versionadas.
+10. Para **logs item 4**, leia a divergência explícita antes de classificar literalidade.
+
+---
+
+## Índice principal
+
+**Relatório executivo:** [`README-ENTREGA-DSC.md`](README-ENTREGA-DSC.md)  
+**Índice detalhado:** [`docs/entrega/README.md`](docs/entrega/README.md)  
+**HC específico:** [`docs/entrega/12-healthcheck/README.md`](docs/entrega/12-healthcheck/README.md)
