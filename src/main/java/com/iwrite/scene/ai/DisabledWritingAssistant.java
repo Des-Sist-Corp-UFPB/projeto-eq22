@@ -7,7 +7,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.stereotype.Component;
 
 @Component
-@ConditionalOnExpression("'${spring.ai.model.chat:none}' != 'openai'")
+@ConditionalOnExpression("'${spring.ai.model.chat:none}' != 'openai' && '${spring.ai.model.chat:none}' != 'anthropic'")
 public class DisabledWritingAssistant implements WritingAssistant {
 
     @Override

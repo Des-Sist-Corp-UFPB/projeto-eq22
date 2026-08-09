@@ -31,6 +31,15 @@ spring:
         completions-path: ${OPENAI_COMPLETIONS_PATH:/v1/chat/completions}
         options:
           model: ${OPENAI_MODEL:gpt-4o-mini}
+
+    anthropic:
+      base-url: ${ANTHROPIC_BASE_URL:https://api.anthropic.com}
+      api-key: ${ANTHROPIC_API_KEY:}
+      chat:
+        options:
+          model: ${ANTHROPIC_MODEL:claude-sonnet-4-20250514}
+          temperature: ${ANTHROPIC_TEMPERATURE:0.2}
+          max-tokens: ${ANTHROPIC_MAX_TOKENS:1200}
   application:
     name: iwrite-backend
   datasource:

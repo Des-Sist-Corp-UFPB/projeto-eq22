@@ -228,7 +228,9 @@ class BusinessTelemetryTest {
         assertThat(BusinessTelemetry.modelFamily("gpt-4.1-mini")).isEqualTo(BusinessTelemetry.MODEL_FAMILY_GPT_4_1);
         assertThat(BusinessTelemetry.modelFamily("gpt-5")).isEqualTo(BusinessTelemetry.MODEL_FAMILY_GPT_5);
         assertThat(BusinessTelemetry.modelFamily("gpt-5-mini")).isEqualTo(BusinessTelemetry.MODEL_FAMILY_GPT_5);
-        assertThat(BusinessTelemetry.modelFamily("claude-opus-5")).isEqualTo(BusinessTelemetry.MODEL_FAMILY_OTHER);
+        assertThat(BusinessTelemetry.modelFamily("claude-opus-5")).isEqualTo(BusinessTelemetry.MODEL_FAMILY_CLAUDE);
+        assertThat(BusinessTelemetry.modelFamily("claude-sonnet-4-20250514"))
+                .isEqualTo(BusinessTelemetry.MODEL_FAMILY_CLAUDE);
         assertThat(BusinessTelemetry.modelFamily("modelo desconhecido")).isEqualTo(BusinessTelemetry.MODEL_FAMILY_OTHER);
         assertThat(BusinessTelemetry.modelFamily("sk-test-canary")).isEqualTo(BusinessTelemetry.MODEL_FAMILY_OTHER);
         assertThat(BusinessTelemetry.modelFamily(null)).isEqualTo(BusinessTelemetry.MODEL_FAMILY_UNKNOWN);
@@ -265,7 +267,10 @@ class BusinessTelemetryTest {
 
     @Test
     void everyProviderVocabularyValueIsAccepted() {
-        for (String value : List.of(BusinessTelemetry.PROVIDER_OPENAI, BusinessTelemetry.PROVIDER_DISABLED)) {
+        for (String value : List.of(
+                BusinessTelemetry.PROVIDER_OPENAI,
+                BusinessTelemetry.PROVIDER_ANTHROPIC,
+                BusinessTelemetry.PROVIDER_DISABLED)) {
             recording.reset();
             recording.telemetry().sceneAnalysis().attribute(BusinessTelemetry.AI_PROVIDER, value).close();
             assertThat(recording.span(BusinessTelemetry.SPAN_SCENE_ANALYSIS).getAttributes()
@@ -277,8 +282,8 @@ class BusinessTelemetryTest {
     void everyModelFamilyVocabularyValueIsAccepted() {
         for (String value : List.of(
                 BusinessTelemetry.MODEL_FAMILY_GPT_4O, BusinessTelemetry.MODEL_FAMILY_GPT_4_1,
-                BusinessTelemetry.MODEL_FAMILY_GPT_5, BusinessTelemetry.MODEL_FAMILY_OTHER,
-                BusinessTelemetry.MODEL_FAMILY_UNKNOWN)) {
+                BusinessTelemetry.MODEL_FAMILY_GPT_5, BusinessTelemetry.MODEL_FAMILY_CLAUDE,
+                BusinessTelemetry.MODEL_FAMILY_OTHER, BusinessTelemetry.MODEL_FAMILY_UNKNOWN)) {
             recording.reset();
             recording.telemetry().sceneAnalysis().attribute(BusinessTelemetry.AI_MODEL_FAMILY, value).close();
             assertThat(recording.span(BusinessTelemetry.SPAN_SCENE_ANALYSIS).getAttributes()
