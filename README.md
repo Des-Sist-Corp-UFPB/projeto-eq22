@@ -219,7 +219,7 @@ docker compose down
 Suba apenas o banco:
 
 ```bash
-docker compose up -d db
+docker compose up -d --wait db
 ```
 
 #### Windows
@@ -235,6 +235,12 @@ chmod +x ./mvnw
 ./mvnw -s .mvn/local-settings.xml spring-boot:run
 ```
 
+Quando terminar essa execução isolada, remova apenas o container do banco, preservando o volume:
+
+```bash
+docker compose rm -sf db
+```
+
 ### Frontend
 
 ```bash
@@ -247,6 +253,12 @@ npm run dev
 
 ## Testes e cobertura — reprodução
 
+A suíte backend possui testes de integração e usa por padrão PostgreSQL em `localhost:5435`. A partir da raiz do repositório, suba e aguarde o banco antes de executar Maven:
+
+```bash
+docker compose up -d --wait db
+```
+
 ### Backend — Windows
 
 ```cmd
@@ -258,6 +270,12 @@ mvnw.cmd -s .mvn\local-settings.xml clean test jacoco:report
 ```bash
 chmod +x ./mvnw
 ./mvnw -s .mvn/local-settings.xml clean test jacoco:report
+```
+
+Após a execução backend, faça cleanup apenas do container `db`; o volume nomeado permanece:
+
+```bash
+docker compose rm -sf db
 ```
 
 ### Frontend — qualquer plataforma suportada pelo Node
@@ -292,6 +310,12 @@ HTTP 200
 "database":"up"
 ```
 
+Os testes direcionados abaixo incluem `PingControllerIntegrationTest`, então, se o banco não estiver ativo, suba-o primeiro:
+
+```bash
+docker compose up -d --wait db
+```
+
 ### Testes direcionados — Windows
 
 ```cmd
@@ -303,6 +327,12 @@ mvnw.cmd -s .mvn\local-settings.xml -Dtest=PingControllerTest,DatabaseHealthServ
 ```bash
 chmod +x ./mvnw
 ./mvnw -s .mvn/local-settings.xml -Dtest=PingControllerTest,DatabaseHealthServiceTest,PingControllerIntegrationTest test
+```
+
+Cleanup do banco usado nos testes direcionados:
+
+```bash
+docker compose rm -sf db
 ```
 
 ---
