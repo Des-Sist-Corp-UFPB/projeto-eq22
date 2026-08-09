@@ -164,7 +164,41 @@ docker compose -f docker-compose.e2e.yml up -d --build
 
 ## 14. Credenciais efêmeras
 
-As senhas de demonstração são geradas por execução com `openssl rand -base64 32`, mascaradas e injetadas no ambiente. Não existe senha fixa versionada para login E2E.
+As senhas de demonstração são obrigatórias tanto para o seed do backend quanto para o login do Playwright. `docker-compose.e2e.yml` rejeita valores ausentes usando `${VAR:?...}`.
+
+Na CI, as duas senhas são geradas a cada execução com `openssl rand -base64 32`, mascaradas com `::add-mask::` e gravadas em `GITHUB_ENV`. Não existe senha fixa versionada para login E2E.
+
+Para reprodução local, o shell que inicia o Compose e o Playwright também precisa exportar/definir **as mesmas duas variáveis** antes de subir a stack.
+
+### Linux/macOS — gerar valores efêmeros
+
+```bash
+export IWRITE_DEMO_AUTOR_A_PASSWORD="$(openssl rand -base64 32)"
+export IWRITE_DEMO_AUTOR_B_PASSWORD="$(openssl rand -base64 32)"
+
+docker compose -f docker-compose.e2e.yml up -d --build
+cd web
+npm run e2e
+```
+
+### Windows CMD — gerar valores efêmeros
+
+```cmd
+for /f %A in ('powershell -NoProfile -Command "[guid]::NewGuid().ToString('N')"') do set "IWRITE_DEMO_AUTOR_A_PASSWORD=%A"
+for /f %B in ('powershell -NoProfile -Command "[guid]::NewGuid().ToString('N')"') do set "IWRITE_DEMO_AUTOR_B_PASSWORD=%B"
+
+docker compose -f docker-compose.e2e.yml up -d --build
+cd web
+npm run e2e
+```
+
+> Os comandos acima são para um **CMD interativo**. Em arquivo `.bat`, use `%%A` e `%%B`. Os valores são efêmeros para aquela execução e não devem ser commitados.
+
+Depois da execução local, faça o cleanup da stack:
+
+```bash
+docker compose -f docker-compose.e2e.yml down -v
+```
 
 ## 15. Readiness
 
@@ -187,7 +221,7 @@ cd web
 npm run e2e
 ```
 
-O navegador usa a stack real levantada para a execução.
+O navegador usa a stack real levantada para a execução e lê as mesmas variáveis `IWRITE_DEMO_AUTOR_A_PASSWORD` e `IWRITE_DEMO_AUTOR_B_PASSWORD` usadas pelo seed da stack.
 
 ## 17. Evidências em falha
 
@@ -247,9 +281,21 @@ npm test
 npm run build
 ```
 
-### E2E
+### E2E Linux/macOS
 
 ```bash
+export IWRITE_DEMO_AUTOR_A_PASSWORD="$(openssl rand -base64 32)"
+export IWRITE_DEMO_AUTOR_B_PASSWORD="$(openssl rand -base64 32)"
+docker compose -f docker-compose.e2e.yml up -d --build
+cd web
+npm run e2e
+```
+
+### E2E Windows CMD
+
+```cmd
+for /f %A in ('powershell -NoProfile -Command "[guid]::NewGuid().ToString('N')"') do set "IWRITE_DEMO_AUTOR_A_PASSWORD=%A"
+for /f %B in ('powershell -NoProfile -Command "[guid]::NewGuid().ToString('N')"') do set "IWRITE_DEMO_AUTOR_B_PASSWORD=%B"
 docker compose -f docker-compose.e2e.yml up -d --build
 cd web
 npm run e2e
@@ -267,6 +313,7 @@ npm run e2e
 8. A CI #253 registrou 87,16% de linhas e 375 testes frontend.
 9. O frontend é buildado depois do gate.
 10. O E2E possui dispatch, schedule, credenciais efêmeras, wait loops, Playwright e cleanup.
+11. A receita local define `IWRITE_DEMO_AUTOR_A_PASSWORD` e `IWRITE_DEMO_AUTOR_B_PASSWORD` antes do Compose e mantém os valores no ambiente para o Playwright.
 
 ## 24. Arquivos para auditoria
 
