@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="pt"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>CharacterResponse.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">iwrite-backend</a> &gt; <a href="index.source.html" class="el_package">com.iwrite.character.dto</a> &gt; <span class="el_source">CharacterResponse.java</span></div><h1>CharacterResponse.java</h1><pre class="source lang-java linenums">package com.iwrite.character.dto;
+
+import com.iwrite.character.entity.Character;
+
+import java.time.OffsetDateTime;
+import java.util.UUID;
+
+<span class="fc" id="L8">public record CharacterResponse(</span>
+        UUID id,
+        UUID bookId,
+        String name,
+        String nickname,
+        Integer age,
+        String sex,
+        String narrativeFunction,
+        String goal,
+        String conflict,
+        String arc,
+        String physicalDescription,
+        String personality,
+        String biography,
+        String notes,
+        OffsetDateTime createdAt,
+        OffsetDateTime updatedAt
+) {
+
+    public static CharacterResponse fromEntity(Character character) {
+<span class="fc" id="L28">        return new CharacterResponse(</span>
+<span class="fc" id="L29">                character.getId(),</span>
+<span class="fc" id="L30">                character.getBook().getId(),</span>
+<span class="fc" id="L31">                character.getName(),</span>
+<span class="fc" id="L32">                character.getNickname(),</span>
+<span class="fc" id="L33">                character.getAge(),</span>
+<span class="fc" id="L34">                character.getSex(),</span>
+<span class="fc" id="L35">                character.getNarrativeFunction(),</span>
+<span class="fc" id="L36">                character.getGoal(),</span>
+<span class="fc" id="L37">                character.getConflict(),</span>
+<span class="fc" id="L38">                character.getArc(),</span>
+<span class="fc" id="L39">                character.getPhysicalDescription(),</span>
+<span class="fc" id="L40">                character.getPersonality(),</span>
+<span class="fc" id="L41">                character.getBiography(),</span>
+<span class="fc" id="L42">                character.getNotes(),</span>
+<span class="fc" id="L43">                character.getCreatedAt(),</span>
+<span class="fc" id="L44">                character.getUpdatedAt()</span>
+        );
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

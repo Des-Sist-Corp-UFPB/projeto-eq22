@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="pt"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ChapterController.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">iwrite-backend</a> &gt; <a href="index.source.html" class="el_package">com.iwrite.chapter.controller</a> &gt; <span class="el_source">ChapterController.java</span></div><h1>ChapterController.java</h1><pre class="source lang-java linenums">package com.iwrite.chapter.controller;
+
+import com.iwrite.chapter.dto.ChapterRequest;
+import com.iwrite.chapter.dto.ChapterResponse;
+import com.iwrite.chapter.dto.ChapterUpdateRequest;
+import com.iwrite.chapter.service.ChapterService;
+import com.iwrite.common.dto.ReorderRequest;
+import jakarta.validation.Valid;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.ResponseStatus;
+import org.springframework.web.bind.annotation.RestController;
+
+import java.util.UUID;
+
+@RestController
+@RequestMapping(&quot;/api&quot;)
+public class ChapterController {
+
+    private final ChapterService chapterService;
+
+<span class="fc" id="L27">    public ChapterController(ChapterService chapterService) {</span>
+<span class="fc" id="L28">        this.chapterService = chapterService;</span>
+<span class="fc" id="L29">    }</span>
+
+    @PostMapping(&quot;/sections/{sectionId}/chapters&quot;)
+    @ResponseStatus(HttpStatus.CREATED)
+    public ChapterResponse create(@PathVariable UUID sectionId, @Valid @RequestBody ChapterRequest request) {
+<span class="nc" id="L34">        return chapterService.create(sectionId, request);</span>
+    }
+
+    @PatchMapping(&quot;/chapters/{chapterId}&quot;)
+    public ChapterResponse update(@PathVariable UUID chapterId, @Valid @RequestBody ChapterUpdateRequest request) {
+<span class="fc" id="L39">        return chapterService.update(chapterId, request);</span>
+    }
+
+    @PatchMapping(&quot;/sections/{sectionId}/chapters/reorder&quot;)
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void reorder(@PathVariable UUID sectionId, @Valid @RequestBody ReorderRequest request) {
+<span class="nc" id="L45">        chapterService.reorder(sectionId, request);</span>
+<span class="nc" id="L46">    }</span>
+
+    @DeleteMapping(&quot;/chapters/{chapterId}&quot;)
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void delete(@PathVariable UUID chapterId) {
+<span class="fc" id="L51">        chapterService.delete(chapterId);</span>
+<span class="fc" id="L52">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

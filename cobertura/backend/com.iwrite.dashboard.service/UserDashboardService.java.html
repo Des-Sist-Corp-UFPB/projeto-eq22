@@ -1,0 +1,338 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="pt"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>UserDashboardService.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">iwrite-backend</a> &gt; <a href="index.source.html" class="el_package">com.iwrite.dashboard.service</a> &gt; <span class="el_source">UserDashboardService.java</span></div><h1>UserDashboardService.java</h1><pre class="source lang-java linenums">package com.iwrite.dashboard.service;
+
+import com.iwrite.book.entity.Book;
+import com.iwrite.book.service.BookAccessService;
+import com.iwrite.common.exception.ResourceNotFoundException;
+import com.iwrite.dashboard.dto.BookContributionDashboardResponse;
+import com.iwrite.dashboard.dto.ContributionDailyWritingResponse;
+import com.iwrite.dashboard.dto.ContributionSummaryResponse;
+import com.iwrite.dashboard.dto.ContributorSummaryResponse;
+import com.iwrite.dashboard.dto.UserBookContributionResponse;
+import com.iwrite.dashboard.dto.UserDailyWritingResponse;
+import com.iwrite.dashboard.dto.UserDashboardResponse;
+import com.iwrite.dashboard.dto.UserWritingSummaryResponse;
+import com.iwrite.dashboard.dto.WritingProgressPeriodResponse;
+import com.iwrite.user.context.CurrentUserMembershipService;
+import com.iwrite.user.context.CurrentUserProvider;
+import com.iwrite.user.entity.User;
+import com.iwrite.user.repository.UserRepository;
+import com.iwrite.writingprogress.entity.DailyWritingProgress;
+import com.iwrite.writingprogress.repository.DailyWritingProgressRepository;
+import com.iwrite.writingprogress.service.WritingDayResolver;
+import com.iwrite.writingprogress.service.WritingProgressPeriod;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.time.LocalDate;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
+import java.util.function.Function;
+import java.util.stream.Collectors;
+
+@Service
+public class UserDashboardService {
+
+    private static final String ALL_CONTRIBUTORS_SCOPE = &quot;ALL_CONTRIBUTORS&quot;;
+    private static final String SINGLE_CONTRIBUTOR_SCOPE = &quot;SINGLE_CONTRIBUTOR&quot;;
+
+    private final CurrentUserProvider currentUserProvider;
+    private final CurrentUserMembershipService currentUserMembershipService;
+    private final DailyWritingProgressRepository progressRepository;
+    private final WritingDayResolver writingDayResolver;
+    private final BookAccessService bookAccessService;
+    private final UserRepository userRepository;
+
+    public UserDashboardService(
+            CurrentUserProvider currentUserProvider,
+            CurrentUserMembershipService currentUserMembershipService,
+            DailyWritingProgressRepository progressRepository,
+            WritingDayResolver writingDayResolver,
+            BookAccessService bookAccessService,
+            UserRepository userRepository
+<span class="fc" id="L58">    ) {</span>
+<span class="fc" id="L59">        this.currentUserProvider = currentUserProvider;</span>
+<span class="fc" id="L60">        this.currentUserMembershipService = currentUserMembershipService;</span>
+<span class="fc" id="L61">        this.progressRepository = progressRepository;</span>
+<span class="fc" id="L62">        this.writingDayResolver = writingDayResolver;</span>
+<span class="fc" id="L63">        this.bookAccessService = bookAccessService;</span>
+<span class="fc" id="L64">        this.userRepository = userRepository;</span>
+<span class="fc" id="L65">    }</span>
+
+    @Transactional(readOnly = true)
+    public UserDashboardResponse getCurrentUserDashboard(WritingProgressPeriod progressPeriod) {
+<span class="fc" id="L69">        UUID currentUserId = currentUserMembershipService.requireCurrentUserMemberId();</span>
+<span class="fc" id="L70">        UUID tenantId = currentUserProvider.tenantId();</span>
+<span class="fc" id="L71">        LocalDate today = writingDayResolver.currentWritingDate();</span>
+<span class="fc" id="L72">        LocalDate startDate = progressPeriod.startDateInclusive(today);</span>
+<span class="fc" id="L73">        List&lt;DailyWritingProgress&gt; progressRows = progressRepository.findCurrentUserTenantProgressBetween(</span>
+                currentUserId,
+                tenantId,
+                startDate,
+                today
+        );
+<span class="fc" id="L79">        Set&lt;LocalDate&gt; positiveDates = new HashSet&lt;&gt;(</span>
+<span class="fc" id="L80">                progressRepository.findPositiveProgressDatesForUserTenantThroughDate(currentUserId, tenantId, today)</span>
+        );
+
+<span class="fc" id="L83">        return new UserDashboardResponse(</span>
+<span class="fc" id="L84">                period(progressPeriod, startDate, today),</span>
+<span class="fc" id="L85">                userSummary(progressRows, positiveDates, today),</span>
+<span class="fc" id="L86">                userDailySeries(startDate, today, progressRows),</span>
+<span class="fc" id="L87">                userBookContributions(progressRows)</span>
+        );
+    }
+
+    @Transactional(readOnly = true)
+    public BookContributionDashboardResponse getBookContributions(
+            UUID bookId,
+            WritingProgressPeriod progressPeriod,
+            UUID contributorId
+    ) {
+<span class="fc" id="L97">        Book book = bookAccessService.requireBookReadAccess(bookId);</span>
+<span class="fc" id="L98">        UUID currentUserId = currentUserMembershipService.requireCurrentUserMemberId();</span>
+<span class="fc" id="L99">        LocalDate today = writingDayResolver.currentWritingDate();</span>
+<span class="fc" id="L100">        LocalDate startDate = progressPeriod.startDateInclusive(today);</span>
+<span class="fc" id="L101">        List&lt;User&gt; contributors = progressRepository.findRecordedContributorsForBook(book.getId())</span>
+<span class="fc" id="L102">                .stream()</span>
+<span class="fc" id="L103">                .sorted(Comparator.comparing(User::getDisplayName).thenComparing(User::getId))</span>
+<span class="fc" id="L104">                .toList();</span>
+<span class="fc" id="L105">        Map&lt;UUID, User&gt; contributorsById = contributors.stream()</span>
+<span class="pc" id="L106">                .collect(Collectors.toMap(User::getId, Function.identity(), (left, right) -&gt; left, LinkedHashMap::new));</span>
+<span class="fc" id="L107">        List&lt;ContributorSummaryResponse&gt; contributorSummaries = contributors.stream()</span>
+<span class="fc" id="L108">                .map(this::toContributorSummary)</span>
+<span class="fc" id="L109">                .toList();</span>
+
+<span class="fc bfc" id="L111" title="All 2 branches covered.">        if (contributorId == null) {</span>
+<span class="fc" id="L112">            List&lt;DailyWritingProgress&gt; progressRows = progressRepository.findBookProgressBetweenWithUsers(</span>
+<span class="fc" id="L113">                    book.getId(),</span>
+                    startDate,
+                    today
+            );
+<span class="fc" id="L117">            return new BookContributionDashboardResponse(</span>
+<span class="fc" id="L118">                    period(progressPeriod, startDate, today),</span>
+                    ALL_CONTRIBUTORS_SCOPE,
+                    null,
+                    contributorSummaries,
+<span class="fc" id="L122">                    contributionSummary(progressRows),</span>
+<span class="fc" id="L123">                    contributionDailySeries(startDate, today, progressRows)</span>
+            );
+        }
+
+<span class="fc" id="L127">        User selectedContributor = contributorsById.get(contributorId);</span>
+<span class="fc bfc" id="L128" title="All 2 branches covered.">        if (selectedContributor == null) {</span>
+<span class="fc bfc" id="L129" title="All 2 branches covered.">            if (!contributorId.equals(currentUserId)) {</span>
+<span class="fc" id="L130">                throw new ResourceNotFoundException(&quot;Recorded contributor not found for book: &quot; + book.getId());</span>
+            }
+<span class="fc" id="L132">            selectedContributor = userRepository.findById(currentUserId)</span>
+<span class="pc" id="L133">                    .orElseThrow(() -&gt; new ResourceNotFoundException(&quot;Current user not found: &quot; + currentUserId));</span>
+        }
+
+<span class="fc" id="L136">        List&lt;DailyWritingProgress&gt; progressRows = progressRepository.findBookContributorProgressBetweenWithUsers(</span>
+<span class="fc" id="L137">                book.getId(),</span>
+                contributorId,
+                startDate,
+                today
+        );
+<span class="fc" id="L142">        return new BookContributionDashboardResponse(</span>
+<span class="fc" id="L143">                period(progressPeriod, startDate, today),</span>
+                SINGLE_CONTRIBUTOR_SCOPE,
+<span class="fc" id="L145">                toContributorSummary(selectedContributor),</span>
+                contributorSummaries,
+<span class="fc" id="L147">                contributionSummary(progressRows),</span>
+<span class="fc" id="L148">                contributionDailySeries(startDate, today, progressRows)</span>
+        );
+    }
+
+    private WritingProgressPeriodResponse period(WritingProgressPeriod progressPeriod, LocalDate startDate, LocalDate today) {
+<span class="fc" id="L153">        return new WritingProgressPeriodResponse(progressPeriod.requestValue(), startDate, today);</span>
+    }
+
+    private UserWritingSummaryResponse userSummary(
+            List&lt;DailyWritingProgress&gt; progressRows,
+            Set&lt;LocalDate&gt; positiveDates,
+            LocalDate today
+    ) {
+<span class="fc" id="L161">        long productiveWords = progressRows.stream().mapToLong(DailyWritingProgress::getProductiveWordCountChange).sum();</span>
+<span class="fc" id="L162">        long manuscriptAdjustments = progressRows.stream().mapToLong(DailyWritingProgress::getManuscriptAdjustmentWordCount).sum();</span>
+<span class="fc" id="L163">        long writingDays = progressRows.stream()</span>
+<span class="fc bfc" id="L164" title="All 2 branches covered.">                .filter(progress -&gt; progress.getProductiveWordCountChange() &gt; 0)</span>
+<span class="fc" id="L165">                .map(DailyWritingProgress::getProgressDate)</span>
+<span class="fc" id="L166">                .distinct()</span>
+<span class="fc" id="L167">                .count();</span>
+<span class="fc" id="L168">        long booksWrittenIn = progressRows.stream()</span>
+<span class="fc bfc" id="L169" title="All 2 branches covered.">                .filter(progress -&gt; progress.getProductiveWordCountChange() &gt; 0)</span>
+<span class="fc" id="L170">                .map(progress -&gt; progress.getBook().getId())</span>
+<span class="fc" id="L171">                .distinct()</span>
+<span class="fc" id="L172">                .count();</span>
+<span class="fc" id="L173">        long writingDaysThisMonth = positiveDates.stream()</span>
+<span class="pc bpc" id="L174" title="1 of 4 branches missed.">                .filter(date -&gt; !date.isBefore(today.withDayOfMonth(1)) &amp;&amp; !date.isAfter(today))</span>
+<span class="fc" id="L175">                .count();</span>
+
+<span class="fc" id="L177">        return new UserWritingSummaryResponse(</span>
+                productiveWords,
+                manuscriptAdjustments,
+                writingDays,
+                booksWrittenIn,
+<span class="fc" id="L182">                currentStreak(positiveDates, today),</span>
+<span class="fc" id="L183">                bestStreak(positiveDates),</span>
+                writingDaysThisMonth
+        );
+    }
+
+    private List&lt;UserDailyWritingResponse&gt; userDailySeries(
+            LocalDate startDate,
+            LocalDate endDate,
+            List&lt;DailyWritingProgress&gt; progressRows
+    ) {
+<span class="fc" id="L193">        Map&lt;LocalDate, ProgressTotals&gt; totalsByDate = new HashMap&lt;&gt;();</span>
+<span class="fc bfc" id="L194" title="All 2 branches covered.">        for (DailyWritingProgress progress : progressRows) {</span>
+<span class="fc" id="L195">            totalsByDate</span>
+<span class="fc" id="L196">                    .computeIfAbsent(progress.getProgressDate(), ignored -&gt; new ProgressTotals())</span>
+<span class="fc" id="L197">                    .add(progress);</span>
+<span class="fc" id="L198">        }</span>
+
+<span class="fc" id="L200">        return startDate.datesUntil(endDate.plusDays(1))</span>
+<span class="fc" id="L201">                .map(date -&gt; {</span>
+<span class="fc" id="L202">                    ProgressTotals totals = totalsByDate.getOrDefault(date, ProgressTotals.EMPTY);</span>
+<span class="fc" id="L203">                    return new UserDailyWritingResponse(date, totals.productiveWords, totals.manuscriptAdjustments);</span>
+                })
+<span class="fc" id="L205">                .toList();</span>
+    }
+
+    private List&lt;UserBookContributionResponse&gt; userBookContributions(List&lt;DailyWritingProgress&gt; progressRows) {
+<span class="fc" id="L209">        Map&lt;UUID, BookTotals&gt; totalsByBook = new HashMap&lt;&gt;();</span>
+<span class="fc bfc" id="L210" title="All 2 branches covered.">        for (DailyWritingProgress progress : progressRows) {</span>
+<span class="fc" id="L211">            totalsByBook</span>
+<span class="fc" id="L212">                    .computeIfAbsent(progress.getBook().getId(), ignored -&gt; new BookTotals(progress.getBook()))</span>
+<span class="fc" id="L213">                    .add(progress);</span>
+<span class="fc" id="L214">        }</span>
+
+<span class="fc" id="L216">        return totalsByBook.values()</span>
+<span class="fc" id="L217">                .stream()</span>
+<span class="fc" id="L218">                .filter(BookTotals::hasRecordedContribution)</span>
+<span class="fc" id="L219">                .sorted(Comparator</span>
+<span class="fc" id="L220">                        .comparing((BookTotals totals) -&gt; totals.book.getTitle())</span>
+<span class="pc" id="L221">                        .thenComparing(totals -&gt; totals.book.getId()))</span>
+<span class="fc" id="L222">                .map(totals -&gt; new UserBookContributionResponse(</span>
+<span class="fc" id="L223">                        totals.book.getId(),</span>
+<span class="fc" id="L224">                        totals.book.getTitle(),</span>
+                        totals.productiveWords,
+                        totals.manuscriptAdjustments,
+<span class="fc" id="L227">                        totals.positiveDates.size()</span>
+                ))
+<span class="fc" id="L229">                .toList();</span>
+    }
+
+    private ContributionSummaryResponse contributionSummary(List&lt;DailyWritingProgress&gt; progressRows) {
+<span class="fc" id="L233">        long productiveWords = progressRows.stream().mapToLong(DailyWritingProgress::getProductiveWordCountChange).sum();</span>
+<span class="fc" id="L234">        long manuscriptAdjustments = progressRows.stream().mapToLong(DailyWritingProgress::getManuscriptAdjustmentWordCount).sum();</span>
+<span class="fc" id="L235">        long writingDays = progressRows.stream()</span>
+<span class="fc bfc" id="L236" title="All 2 branches covered.">                .filter(progress -&gt; progress.getProductiveWordCountChange() &gt; 0)</span>
+<span class="fc" id="L237">                .map(DailyWritingProgress::getProgressDate)</span>
+<span class="fc" id="L238">                .distinct()</span>
+<span class="fc" id="L239">                .count();</span>
+<span class="fc" id="L240">        long contributorsCount = progressRows.stream()</span>
+<span class="fc" id="L241">                .filter(UserDashboardService::hasRecordedContribution)</span>
+<span class="fc" id="L242">                .map(progress -&gt; progress.getUser().getId())</span>
+<span class="fc" id="L243">                .distinct()</span>
+<span class="fc" id="L244">                .count();</span>
+
+<span class="fc" id="L246">        return new ContributionSummaryResponse(productiveWords, manuscriptAdjustments, writingDays, contributorsCount);</span>
+    }
+
+    private List&lt;ContributionDailyWritingResponse&gt; contributionDailySeries(
+            LocalDate startDate,
+            LocalDate endDate,
+            List&lt;DailyWritingProgress&gt; progressRows
+    ) {
+<span class="fc" id="L254">        Map&lt;LocalDate, ProgressTotals&gt; totalsByDate = new HashMap&lt;&gt;();</span>
+<span class="fc bfc" id="L255" title="All 2 branches covered.">        for (DailyWritingProgress progress : progressRows) {</span>
+<span class="fc" id="L256">            totalsByDate</span>
+<span class="fc" id="L257">                    .computeIfAbsent(progress.getProgressDate(), ignored -&gt; new ProgressTotals())</span>
+<span class="fc" id="L258">                    .add(progress);</span>
+<span class="fc" id="L259">        }</span>
+
+<span class="fc" id="L261">        return startDate.datesUntil(endDate.plusDays(1))</span>
+<span class="fc" id="L262">                .map(date -&gt; {</span>
+<span class="fc" id="L263">                    ProgressTotals totals = totalsByDate.getOrDefault(date, ProgressTotals.EMPTY);</span>
+<span class="fc" id="L264">                    return new ContributionDailyWritingResponse(date, totals.productiveWords, totals.manuscriptAdjustments);</span>
+                })
+<span class="fc" id="L266">                .toList();</span>
+    }
+
+    private long currentStreak(Set&lt;LocalDate&gt; positiveDates, LocalDate today) {
+<span class="fc bfc" id="L270" title="All 2 branches covered.">        LocalDate cursor = positiveDates.contains(today) ? today : today.minusDays(1);</span>
+<span class="fc" id="L271">        long streak = 0;</span>
+<span class="fc bfc" id="L272" title="All 2 branches covered.">        while (positiveDates.contains(cursor)) {</span>
+<span class="fc" id="L273">            streak++;</span>
+<span class="fc" id="L274">            cursor = cursor.minusDays(1);</span>
+        }
+<span class="fc" id="L276">        return streak;</span>
+    }
+
+    private long bestStreak(Set&lt;LocalDate&gt; positiveDates) {
+<span class="fc" id="L280">        long best = 0;</span>
+<span class="fc" id="L281">        long current = 0;</span>
+<span class="fc" id="L282">        LocalDate previousDate = null;</span>
+<span class="fc bfc" id="L283" title="All 2 branches covered.">        for (LocalDate date : positiveDates.stream().sorted().toList()) {</span>
+<span class="fc bfc" id="L284" title="All 4 branches covered.">            current = previousDate != null &amp;&amp; date.equals(previousDate.plusDays(1)) ? current + 1 : 1;</span>
+<span class="fc" id="L285">            best = Math.max(best, current);</span>
+<span class="fc" id="L286">            previousDate = date;</span>
+<span class="fc" id="L287">        }</span>
+<span class="fc" id="L288">        return best;</span>
+    }
+
+    private ContributorSummaryResponse toContributorSummary(User user) {
+<span class="fc" id="L292">        return new ContributorSummaryResponse(user.getId(), user.getDisplayName());</span>
+    }
+
+    private static boolean hasRecordedContribution(DailyWritingProgress progress) {
+<span class="fc bfc" id="L296" title="All 4 branches covered.">        return progress.getProductiveWordCountChange() != 0 || progress.getManuscriptAdjustmentWordCount() != 0;</span>
+    }
+
+    private static class ProgressTotals {
+<span class="fc" id="L300">        private static final ProgressTotals EMPTY = new ProgressTotals();</span>
+
+        private long productiveWords;
+        private long manuscriptAdjustments;
+
+        void add(DailyWritingProgress progress) {
+<span class="fc" id="L306">            productiveWords += progress.getProductiveWordCountChange();</span>
+<span class="fc" id="L307">            manuscriptAdjustments += progress.getManuscriptAdjustmentWordCount();</span>
+<span class="fc" id="L308">        }</span>
+    }
+
+    private static class BookTotals {
+        private final Book book;
+<span class="fc" id="L313">        private final Set&lt;LocalDate&gt; positiveDates = new HashSet&lt;&gt;();</span>
+        private boolean recordedContribution;
+        private long productiveWords;
+        private long manuscriptAdjustments;
+
+<span class="fc" id="L318">        BookTotals(Book book) {</span>
+<span class="fc" id="L319">            this.book = book;</span>
+<span class="fc" id="L320">        }</span>
+
+        void add(DailyWritingProgress progress) {
+<span class="fc" id="L323">            productiveWords += progress.getProductiveWordCountChange();</span>
+<span class="fc" id="L324">            manuscriptAdjustments += progress.getManuscriptAdjustmentWordCount();</span>
+<span class="fc bfc" id="L325" title="All 2 branches covered.">            if (UserDashboardService.hasRecordedContribution(progress)) {</span>
+<span class="fc" id="L326">                recordedContribution = true;</span>
+            }
+<span class="fc bfc" id="L328" title="All 2 branches covered.">            if (progress.getProductiveWordCountChange() &gt; 0) {</span>
+<span class="fc" id="L329">                positiveDates.add(progress.getProgressDate());</span>
+            }
+<span class="fc" id="L331">        }</span>
+
+        boolean hasRecordedContribution() {
+<span class="fc" id="L334">            return recordedContribution;</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

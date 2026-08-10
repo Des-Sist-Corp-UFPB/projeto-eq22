@@ -1,0 +1,30 @@
+# Override opcional SOMENTE para desenvolvimento/evidências: substitui o
+# provider OpenAI por um stub local com atraso determinístico, para exercitar a
+# rota real de análise assistida sem chamada paga. Não faz parte do Dockerfile
+# nem de nenhum deploy; o atraso existe apenas neste stub, nunca na aplicação.
+#
+# Uso (junto com o override de observabilidade):
+#   docker compose -f docker-compose.yml \
+#     -f docker-compose.observability.yml \
+#     -f docker-compose.llm-stub.yml up --build
+services:
+  llm-stub:
+    image: python:3.12-alpine
+    container_name: iwrite-llm-stub
+    command: ["python", "-u", "/app/openai_stub.py"]
+    environment:
+      # Atraso determinístico do provider falso; ajuste para reproduzir o gargalo.
+      IWRITE_LLM_STUB_DELAY_MS: "${IWRITE_LLM_STUB_DELAY_MS:-2500}"
+    volumes:
+      - ./docker/llm-stub/openai_stub.py:/app/openai_stub.py:ro
+
+  backend:
+    environment:
+      SPRING_AI_MODEL_CHAT: openai
+      OPENAI_BASE_URL: http://llm-stub:8080
+      # Valor obviamente falso: o stub não valida credencial e nenhum token real
+      # entra neste arquivo.
+      OPENAI_API_KEY: stub-not-a-real-key
+    depends_on:
+      llm-stub:
+        condition: service_started

@@ -1,0 +1,206 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="pt"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>TipTapPlainTextRenderer.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">iwrite-backend</a> &gt; <a href="index.source.html" class="el_package">com.iwrite.export.service</a> &gt; <span class="el_source">TipTapPlainTextRenderer.java</span></div><h1>TipTapPlainTextRenderer.java</h1><pre class="source lang-java linenums">package com.iwrite.export.service;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.stereotype.Component;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Optional;
+
+@Component
+public class TipTapPlainTextRenderer {
+
+    public static final String TEXT_SEPARATOR = &quot;----------------------------------------&quot;;
+
+    private final ObjectMapper objectMapper;
+
+<span class="fc" id="L18">    public TipTapPlainTextRenderer(ObjectMapper objectMapper) {</span>
+<span class="fc" id="L19">        this.objectMapper = objectMapper;</span>
+<span class="fc" id="L20">    }</span>
+
+    public Optional&lt;String&gt; render(String contentJson) {
+<span class="pc bpc" id="L23" title="1 of 4 branches missed.">        if (contentJson == null || contentJson.isBlank()) {</span>
+<span class="fc" id="L24">            return Optional.empty();</span>
+        }
+
+        try {
+<span class="fc" id="L28">            JsonNode root = objectMapper.readTree(contentJson);</span>
+<span class="pc bpc" id="L29" title="1 of 2 branches missed.">            if (!&quot;doc&quot;.equals(root.path(&quot;type&quot;).asText())) {</span>
+<span class="nc" id="L30">                return Optional.empty();</span>
+            }
+
+<span class="fc" id="L33">            List&lt;String&gt; blocks = new ArrayList&lt;&gt;();</span>
+<span class="fc bfc" id="L34" title="All 2 branches covered.">            for (JsonNode node : root.path(&quot;content&quot;)) {</span>
+<span class="fc" id="L35">                renderBlock(node).ifPresent(blocks::add);</span>
+<span class="fc" id="L36">            }</span>
+
+<span class="fc" id="L38">            String text = String.join(&quot;\n\n&quot;, blocks).strip();</span>
+<span class="fc bfc" id="L39" title="All 2 branches covered.">            return text.isBlank() ? Optional.empty() : Optional.of(text);</span>
+<span class="fc" id="L40">        } catch (Exception exception) {</span>
+<span class="fc" id="L41">            return Optional.empty();</span>
+        }
+    }
+
+    private Optional&lt;String&gt; renderBlock(JsonNode node) {
+<span class="fc" id="L46">        String type = node.path(&quot;type&quot;).asText();</span>
+
+<span class="fc bfc" id="L48" title="All 4 branches covered.">        if (&quot;paragraph&quot;.equals(type) || &quot;heading&quot;.equals(type)) {</span>
+<span class="pc bpc" id="L49" title="1 of 2 branches missed.">            return renderInlineContent(node).map(String::strip).filter(text -&gt; !text.isBlank());</span>
+        }
+
+<span class="fc bfc" id="L52" title="All 2 branches covered.">        if (&quot;bulletList&quot;.equals(type)) {</span>
+<span class="fc" id="L53">            return renderList(node, &quot;• &quot;, 1);</span>
+        }
+
+<span class="fc bfc" id="L56" title="All 2 branches covered.">        if (&quot;orderedList&quot;.equals(type)) {</span>
+<span class="fc" id="L57">            return renderList(node, null, node.path(&quot;attrs&quot;).path(&quot;start&quot;).asInt(1));</span>
+        }
+
+<span class="pc bpc" id="L60" title="1 of 2 branches missed.">        if (&quot;listItem&quot;.equals(type)) {</span>
+<span class="nc" id="L61">            return renderListItemContent(node);</span>
+        }
+
+<span class="fc bfc" id="L64" title="All 2 branches covered.">        if (&quot;blockquote&quot;.equals(type)) {</span>
+<span class="fc" id="L65">            return renderChildBlocks(node)</span>
+<span class="fc" id="L66">                    .map(block -&gt; &quot;CITAÇÃO:\n&quot; + block)</span>
+<span class="pc bpc" id="L67" title="1 of 2 branches missed.">                    .filter(text -&gt; !text.isBlank());</span>
+        }
+
+<span class="pc bpc" id="L70" title="1 of 2 branches missed.">        if (&quot;codeBlock&quot;.equals(type)) {</span>
+<span class="nc" id="L71">            String code = plainText(node).stripTrailing();</span>
+<span class="nc bnc" id="L72" title="All 2 branches missed.">            return code.isBlank() ? Optional.empty() : Optional.of(code);</span>
+        }
+
+<span class="pc bpc" id="L75" title="1 of 2 branches missed.">        if (&quot;horizontalRule&quot;.equals(type)) {</span>
+<span class="fc" id="L76">            return Optional.of(TEXT_SEPARATOR);</span>
+        }
+
+<span class="nc bnc" id="L79" title="All 2 branches missed.">        if (hasTextContent(node)) {</span>
+<span class="nc" id="L80">            throw new UnsupportedContentNodeException();</span>
+        }
+
+<span class="nc" id="L83">        return Optional.empty();</span>
+    }
+
+    private Optional&lt;String&gt; renderList(JsonNode node, String unorderedMarker, int startNumber) {
+<span class="fc" id="L87">        List&lt;String&gt; items = new ArrayList&lt;&gt;();</span>
+<span class="fc" id="L88">        int number = startNumber;</span>
+
+<span class="fc bfc" id="L90" title="All 2 branches covered.">        for (JsonNode child : node.path(&quot;content&quot;)) {</span>
+<span class="pc bpc" id="L91" title="1 of 2 branches missed.">            if (!&quot;listItem&quot;.equals(child.path(&quot;type&quot;).asText())) {</span>
+<span class="nc bnc" id="L92" title="All 2 branches missed.">                if (hasTextContent(child)) {</span>
+<span class="nc" id="L93">                    throw new UnsupportedContentNodeException();</span>
+                }
+                continue;
+            }
+
+<span class="fc" id="L98">            Optional&lt;String&gt; itemContent = renderListItemContent(child);</span>
+<span class="pc bpc" id="L99" title="1 of 2 branches missed.">            if (itemContent.isPresent()) {</span>
+<span class="fc bfc" id="L100" title="All 2 branches covered.">                String marker = unorderedMarker == null ? number + &quot;. &quot; : unorderedMarker;</span>
+<span class="fc" id="L101">                items.add(formatListItem(marker, itemContent.get()));</span>
+            }
+<span class="fc" id="L103">            number++;</span>
+<span class="fc" id="L104">        }</span>
+
+<span class="fc" id="L106">        String text = String.join(&quot;\n&quot;, items);</span>
+<span class="pc bpc" id="L107" title="1 of 2 branches missed.">        return text.isBlank() ? Optional.empty() : Optional.of(text);</span>
+    }
+
+    private Optional&lt;String&gt; renderListItemContent(JsonNode node) {
+<span class="fc" id="L111">        return renderChildBlocks(node).map(text -&gt; text.replaceAll(&quot;\\n{3,}&quot;, &quot;\n\n&quot;));</span>
+    }
+
+    private Optional&lt;String&gt; renderChildBlocks(JsonNode node) {
+<span class="fc" id="L115">        List&lt;String&gt; blocks = new ArrayList&lt;&gt;();</span>
+<span class="fc bfc" id="L116" title="All 2 branches covered.">        for (JsonNode child : node.path(&quot;content&quot;)) {</span>
+<span class="fc" id="L117">            renderBlock(child).ifPresent(blocks::add);</span>
+<span class="fc" id="L118">        }</span>
+
+<span class="fc" id="L120">        String text = String.join(&quot;\n\n&quot;, blocks).strip();</span>
+<span class="pc bpc" id="L121" title="1 of 2 branches missed.">        return text.isBlank() ? Optional.empty() : Optional.of(text);</span>
+    }
+
+    private String formatListItem(String marker, String content) {
+<span class="fc" id="L125">        String[] lines = content.split(&quot;\\R&quot;, -1);</span>
+<span class="fc" id="L126">        StringBuilder item = new StringBuilder(marker).append(lines[0]);</span>
+
+<span class="pc bpc" id="L128" title="1 of 2 branches missed.">        for (int index = 1; index &lt; lines.length; index++) {</span>
+<span class="nc" id="L129">            item.append(&quot;\n  &quot;).append(lines[index]);</span>
+        }
+
+<span class="fc" id="L132">        return item.toString();</span>
+    }
+
+    private Optional&lt;String&gt; renderInlineContent(JsonNode node) {
+<span class="fc" id="L136">        StringBuilder text = new StringBuilder();</span>
+
+<span class="fc bfc" id="L138" title="All 2 branches covered.">        for (JsonNode child : node.path(&quot;content&quot;)) {</span>
+<span class="fc" id="L139">            String renderedChild = renderInlineNode(child);</span>
+<span class="pc bpc" id="L140" title="1 of 2 branches missed.">            if (renderedChild != null) {</span>
+<span class="fc" id="L141">                text.append(renderedChild);</span>
+            }
+<span class="fc" id="L143">        }</span>
+
+<span class="fc" id="L145">        String renderedText = text.toString();</span>
+<span class="fc bfc" id="L146" title="All 2 branches covered.">        return renderedText.isBlank() ? Optional.empty() : Optional.of(renderedText);</span>
+    }
+
+    private String renderInlineNode(JsonNode node) {
+<span class="fc" id="L150">        String type = node.path(&quot;type&quot;).asText();</span>
+
+<span class="fc bfc" id="L152" title="All 2 branches covered.">        if (&quot;text&quot;.equals(type)) {</span>
+<span class="fc" id="L153">            return node.path(&quot;text&quot;).asText(&quot;&quot;);</span>
+        }
+
+<span class="pc bpc" id="L156" title="1 of 2 branches missed.">        if (&quot;hardBreak&quot;.equals(type)) {</span>
+<span class="fc" id="L157">            return &quot;\n&quot;;</span>
+        }
+
+<span class="nc bnc" id="L160" title="All 2 branches missed.">        if (hasTextContent(node)) {</span>
+<span class="nc" id="L161">            throw new UnsupportedContentNodeException();</span>
+        }
+
+<span class="nc" id="L164">        return null;</span>
+    }
+
+    private String plainText(JsonNode node) {
+<span class="nc" id="L168">        StringBuilder text = new StringBuilder();</span>
+<span class="nc" id="L169">        appendPlainText(node, text);</span>
+<span class="nc" id="L170">        return text.toString();</span>
+    }
+
+    private void appendPlainText(JsonNode node, StringBuilder text) {
+<span class="nc" id="L174">        String type = node.path(&quot;type&quot;).asText();</span>
+<span class="nc bnc" id="L175" title="All 2 branches missed.">        if (&quot;text&quot;.equals(type)) {</span>
+<span class="nc" id="L176">            text.append(node.path(&quot;text&quot;).asText(&quot;&quot;));</span>
+<span class="nc" id="L177">            return;</span>
+        }
+<span class="nc bnc" id="L179" title="All 2 branches missed.">        if (&quot;hardBreak&quot;.equals(type)) {</span>
+<span class="nc" id="L180">            text.append(&quot;\n&quot;);</span>
+<span class="nc" id="L181">            return;</span>
+        }
+
+<span class="nc bnc" id="L184" title="All 2 branches missed.">        for (JsonNode child : node.path(&quot;content&quot;)) {</span>
+<span class="nc" id="L185">            appendPlainText(child, text);</span>
+<span class="nc" id="L186">        }</span>
+<span class="nc" id="L187">    }</span>
+
+    private boolean hasTextContent(JsonNode node) {
+<span class="nc bnc" id="L190" title="All 4 branches missed.">        if (&quot;text&quot;.equals(node.path(&quot;type&quot;).asText()) &amp;&amp; !node.path(&quot;text&quot;).asText(&quot;&quot;).isBlank()) {</span>
+<span class="nc" id="L191">            return true;</span>
+        }
+
+<span class="nc bnc" id="L194" title="All 2 branches missed.">        for (JsonNode child : node.path(&quot;content&quot;)) {</span>
+<span class="nc bnc" id="L195" title="All 2 branches missed.">            if (hasTextContent(child)) {</span>
+<span class="nc" id="L196">                return true;</span>
+            }
+<span class="nc" id="L198">        }</span>
+
+<span class="nc" id="L200">        return false;</span>
+    }
+
+    private static class UnsupportedContentNodeException extends RuntimeException {
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

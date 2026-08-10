@@ -1,0 +1,621 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="pt"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>SceneService.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">iwrite-backend</a> &gt; <a href="index.source.html" class="el_package">com.iwrite.scene.service</a> &gt; <span class="el_source">SceneService.java</span></div><h1>SceneService.java</h1><pre class="source lang-java linenums">package com.iwrite.scene.service;
+
+import com.iwrite.book.entity.Book;
+import com.iwrite.book.service.BookAccessService;
+import com.iwrite.chapter.entity.Chapter;
+import com.iwrite.chapter.service.ChapterService;
+import com.iwrite.character.entity.Character;
+import com.iwrite.character.service.CharacterService;
+import com.iwrite.common.dto.ReorderRequest;
+import com.iwrite.common.exception.BadRequestException;
+import com.iwrite.common.exception.ConflictException;
+import com.iwrite.common.exception.ResourceNotFoundException;
+import com.iwrite.common.validation.RequestValidation;
+import com.iwrite.common.wordcount.WordCountService;
+import com.iwrite.item.entity.Item;
+import com.iwrite.item.service.ItemService;
+import com.iwrite.location.entity.Location;
+import com.iwrite.location.service.LocationService;
+import com.iwrite.scene.dto.SceneContentRequest;
+import com.iwrite.scene.dto.ScenePlanningRequest;
+import com.iwrite.scene.dto.SceneRequest;
+import com.iwrite.scene.dto.SceneResponse;
+import com.iwrite.scene.dto.SceneUpdateRequest;
+import com.iwrite.scene.entity.Scene;
+import com.iwrite.scene.entity.SceneStatus;
+import com.iwrite.scene.repository.SceneRepository;
+import com.iwrite.sceneversion.dto.SceneVersionRestoreRequest;
+import com.iwrite.sceneversion.entity.SceneVersion;
+import com.iwrite.sceneversion.entity.SceneVersionSource;
+import com.iwrite.sceneversion.service.SceneVersionService;
+import com.iwrite.user.context.CurrentUserProvider;
+import com.iwrite.writingprogress.ledger.entity.BookWordCountEvent;
+import com.iwrite.writingprogress.ledger.entity.BookWordCountEventType;
+import com.iwrite.writingprogress.ledger.repository.BookWordCountEventRepository;
+import com.iwrite.writingprogress.ledger.service.WordCountEventCommand;
+import com.iwrite.writingprogress.ledger.service.WordCountEventConflictException;
+import com.iwrite.writingprogress.ledger.service.WordCountEventRecordResult;
+import com.iwrite.writingprogress.ledger.service.WordCountEventService;
+import com.iwrite.writingprogress.ledger.service.WordCountRequestFingerprint;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.HashSet;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
+import java.util.function.Function;
+import java.util.stream.Collectors;
+
+@Service
+public class SceneService {
+
+    private final SceneRepository sceneRepository;
+    private final ChapterService chapterService;
+    private final WordCountService wordCountService;
+    private final CharacterService characterService;
+    private final LocationService locationService;
+    private final ItemService itemService;
+    private final ScenePlanningCompletenessService planningCompletenessService;
+    private final SceneVersionService sceneVersionService;
+    private final SceneDeletionLedgerService sceneDeletionLedgerService;
+    private final WordCountEventService wordCountEventService;
+    private final BookWordCountEventRepository wordCountEventRepository;
+    private final BookAccessService bookAccessService;
+    private final CurrentUserProvider currentUserProvider;
+
+    public SceneService(
+            SceneRepository sceneRepository,
+            ChapterService chapterService,
+            WordCountService wordCountService,
+            CharacterService characterService,
+            LocationService locationService,
+            ItemService itemService,
+            ScenePlanningCompletenessService planningCompletenessService,
+            SceneVersionService sceneVersionService,
+            SceneDeletionLedgerService sceneDeletionLedgerService,
+            WordCountEventService wordCountEventService,
+            BookWordCountEventRepository wordCountEventRepository,
+            BookAccessService bookAccessService,
+            CurrentUserProvider currentUserProvider
+<span class="fc" id="L83">    ) {</span>
+<span class="fc" id="L84">        this.sceneRepository = sceneRepository;</span>
+<span class="fc" id="L85">        this.chapterService = chapterService;</span>
+<span class="fc" id="L86">        this.wordCountService = wordCountService;</span>
+<span class="fc" id="L87">        this.characterService = characterService;</span>
+<span class="fc" id="L88">        this.locationService = locationService;</span>
+<span class="fc" id="L89">        this.itemService = itemService;</span>
+<span class="fc" id="L90">        this.planningCompletenessService = planningCompletenessService;</span>
+<span class="fc" id="L91">        this.sceneVersionService = sceneVersionService;</span>
+<span class="fc" id="L92">        this.sceneDeletionLedgerService = sceneDeletionLedgerService;</span>
+<span class="fc" id="L93">        this.wordCountEventService = wordCountEventService;</span>
+<span class="fc" id="L94">        this.wordCountEventRepository = wordCountEventRepository;</span>
+<span class="fc" id="L95">        this.bookAccessService = bookAccessService;</span>
+<span class="fc" id="L96">        this.currentUserProvider = currentUserProvider;</span>
+<span class="fc" id="L97">    }</span>
+
+    @Transactional(readOnly = true)
+    public SceneResponse findById(UUID sceneId) {
+<span class="fc" id="L101">        return SceneResponse.fromEntity(getScene(sceneId));</span>
+    }
+
+    @Transactional
+    public SceneResponse create(UUID chapterId, SceneRequest request) {
+<span class="fc" id="L106">        Chapter chapter = chapterService.getChapter(chapterId);</span>
+<span class="fc" id="L107">        UUID bookId = chapter.getBook().getId();</span>
+<span class="fc" id="L108">        Book lockedBook = bookAccessService.requireBookEditAccessForUpdate(bookId);</span>
+<span class="fc bfc" id="L109" title="All 2 branches covered.">        UUID operationId = request.operationId() == null ? UUID.randomUUID() : request.operationId();</span>
+<span class="fc" id="L110">        String requestFingerprint = WordCountRequestFingerprint.sceneCreate(</span>
+<span class="fc" id="L111">                currentUserProvider.userId(),</span>
+                bookId,
+                chapterId,
+<span class="fc" id="L114">                request.title(),</span>
+<span class="fc" id="L115">                request.summary(),</span>
+<span class="fc" id="L116">                request.status(),</span>
+<span class="fc" id="L117">                request.sortOrder(),</span>
+<span class="fc" id="L118">                request.contentJson(),</span>
+<span class="fc" id="L119">                request.contentText()</span>
+        );
+<span class="fc" id="L121">        SceneResponse idempotentCreateResponse = idempotentCreateRetryResponse(bookId, operationId, requestFingerprint);</span>
+<span class="fc bfc" id="L122" title="All 2 branches covered.">        if (idempotentCreateResponse != null) {</span>
+<span class="fc" id="L123">            return idempotentCreateResponse;</span>
+        }
+
+<span class="fc" id="L126">        int totalBefore = Math.toIntExact(sceneRepository.sumWordCountByBookId(bookId));</span>
+<span class="fc" id="L127">        int newWordCount = wordCountService.countWords(request.contentText());</span>
+
+<span class="fc" id="L129">        Scene scene = new Scene();</span>
+<span class="fc" id="L130">        scene.setBook(lockedBook);</span>
+<span class="fc" id="L131">        scene.setChapter(chapter);</span>
+<span class="fc" id="L132">        scene.setTitle(request.title());</span>
+<span class="fc" id="L133">        scene.setSummary(request.summary());</span>
+<span class="pc bpc" id="L134" title="1 of 2 branches missed.">        scene.setStatus(request.status() == null ? SceneStatus.IDEA : request.status());</span>
+<span class="fc bfc" id="L135" title="All 2 branches covered.">        scene.setSortOrder(request.sortOrder() == null ? sceneRepository.countByChapterId(chapterId) : request.sortOrder());</span>
+<span class="fc" id="L136">        scene.setContentJson(request.contentJson());</span>
+<span class="fc" id="L137">        scene.setContentText(request.contentText());</span>
+<span class="fc" id="L138">        scene.setWordCount(newWordCount);</span>
+<span class="fc" id="L139">        scene.setContentRevision(0L);</span>
+<span class="fc bfc" id="L140" title="All 2 branches covered.">        if (scene.getStatus() == SceneStatus.PLANNED) {</span>
+<span class="nc" id="L141">            rejectIncompletePlanning(scene);</span>
+        }
+
+<span class="fc" id="L144">        Scene savedScene = sceneRepository.save(scene);</span>
+<span class="pc bpc" id="L145" title="1 of 4 branches missed.">        if (newWordCount &gt; 0 || request.operationId() != null) {</span>
+<span class="fc" id="L146">            recordFreshEvent(lockedBook, new WordCountEventCommand(</span>
+                    bookId,
+<span class="fc" id="L148">                    savedScene.getId(),</span>
+<span class="fc" id="L149">                    savedScene.getId(),</span>
+<span class="fc" id="L150">                    savedScene.getTitle(),</span>
+                    BookWordCountEventType.CONTENT_SAVE,
+                    newWordCount,
+                    newWordCount,
+                    operationId,
+                    operationId,
+                    null,
+<span class="fc" id="L157">                    savedScene.getContentRevision(),</span>
+                    requestFingerprint,
+                    totalBefore + newWordCount
+            ));
+        }
+
+<span class="fc" id="L163">        return SceneResponse.fromEntity(savedScene);</span>
+    }
+
+    @Transactional
+    public SceneResponse update(UUID sceneId, SceneUpdateRequest request) {
+<span class="fc" id="L168">        Scene scene = getSceneForEdit(sceneId);</span>
+<span class="fc" id="L169">        RequestValidation.rejectBlankWhenPresent(&quot;title&quot;, request.title());</span>
+
+<span class="fc bfc" id="L171" title="All 2 branches covered.">        if (request.title() != null) {</span>
+<span class="fc" id="L172">            scene.setTitle(request.title());</span>
+        }
+<span class="fc bfc" id="L174" title="All 2 branches covered.">        if (request.summary() != null) {</span>
+<span class="fc" id="L175">            scene.setSummary(request.summary());</span>
+        }
+<span class="fc bfc" id="L177" title="All 2 branches covered.">        if (request.status() != null) {</span>
+<span class="fc bfc" id="L178" title="All 4 branches covered.">            boolean enteringPlanned = scene.getStatus() != SceneStatus.PLANNED &amp;&amp; request.status() == SceneStatus.PLANNED;</span>
+<span class="fc bfc" id="L179" title="All 2 branches covered.">            if (enteringPlanned) {</span>
+<span class="fc" id="L180">                rejectIncompletePlanning(scene);</span>
+            }
+<span class="fc" id="L182">            scene.setStatus(request.status());</span>
+        }
+<span class="pc bpc" id="L184" title="1 of 2 branches missed.">        if (request.sortOrder() != null) {</span>
+<span class="nc" id="L185">            scene.setSortOrder(request.sortOrder());</span>
+        }
+
+<span class="fc" id="L188">        return SceneResponse.fromEntity(scene);</span>
+    }
+
+    @Transactional
+    public SceneResponse updateContent(UUID sceneId, SceneContentRequest request) {
+<span class="fc" id="L193">        Scene scene = getSceneForUpdate(sceneId);</span>
+<span class="fc" id="L194">        rejectMissingOperationId(request.operationId());</span>
+<span class="fc" id="L195">        Book lockedBook = bookAccessService.requireBookEditAccessForUpdate(scene.getBook().getId());</span>
+<span class="fc" id="L196">        SceneVersionSource source = contentSource(request.source());</span>
+<span class="fc" id="L197">        String requestFingerprint = WordCountRequestFingerprint.contentSave(</span>
+<span class="fc" id="L198">                currentUserProvider.userId(),</span>
+<span class="fc" id="L199">                lockedBook.getId(),</span>
+<span class="fc" id="L200">                scene.getId(),</span>
+<span class="fc" id="L201">                request.expectedContentRevision(),</span>
+                source,
+<span class="fc" id="L203">                request.contentJson(),</span>
+<span class="fc" id="L204">                request.contentText()</span>
+        );
+<span class="fc" id="L206">        SceneResponse idempotentRetryResponse = idempotentRetryResponse(scene, request.operationId(), requestFingerprint);</span>
+<span class="fc bfc" id="L207" title="All 2 branches covered.">        if (idempotentRetryResponse != null) {</span>
+<span class="fc" id="L208">            return idempotentRetryResponse;</span>
+        }
+<span class="fc" id="L210">        rejectStaleContentRevision(scene, request.expectedContentRevision());</span>
+<span class="fc bfc" id="L211" title="All 2 branches covered.">        if (sameContent(scene, request.contentJson(), request.contentText())) {</span>
+<span class="fc" id="L212">            long revision = scene.getContentRevision();</span>
+<span class="fc" id="L213">            recordFreshEvent(lockedBook, new WordCountEventCommand(</span>
+<span class="fc" id="L214">                    lockedBook.getId(),</span>
+<span class="fc" id="L215">                    scene.getId(),</span>
+<span class="fc" id="L216">                    scene.getId(),</span>
+<span class="fc" id="L217">                    scene.getTitle(),</span>
+                    BookWordCountEventType.CONTENT_SAVE,
+                    0,
+                    0,
+<span class="fc" id="L221">                    request.operationId(),</span>
+<span class="fc" id="L222">                    request.operationId(),</span>
+<span class="fc" id="L223">                    revision,</span>
+<span class="fc" id="L224">                    revision,</span>
+                    requestFingerprint,
+<span class="fc" id="L226">                    Math.toIntExact(sceneRepository.sumWordCountByBookId(lockedBook.getId()))</span>
+            ));
+<span class="fc" id="L228">            return SceneResponse.fromEntity(scene);</span>
+        }
+
+<span class="fc" id="L231">        UUID bookId = lockedBook.getId();</span>
+<span class="fc" id="L232">        int totalBefore = Math.toIntExact(sceneRepository.sumWordCountByBookId(bookId));</span>
+<span class="fc" id="L233">        int oldWordCount = wordCount(scene);</span>
+<span class="fc" id="L234">        int newWordCount = wordCountService.countWords(request.contentText());</span>
+<span class="fc" id="L235">        int wordCountDelta = newWordCount - oldWordCount;</span>
+<span class="fc" id="L236">        long revisionBefore = scene.getContentRevision();</span>
+
+<span class="fc" id="L238">        sceneVersionService.checkpointBeforeContentOverwrite(scene, source);</span>
+<span class="fc" id="L239">        scene.setContentJson(request.contentJson());</span>
+<span class="fc" id="L240">        scene.setContentText(request.contentText());</span>
+<span class="fc" id="L241">        scene.setWordCount(newWordCount);</span>
+<span class="fc" id="L242">        scene.incrementContentRevision();</span>
+<span class="fc bfc" id="L243" title="All 2 branches covered.">        if (source == SceneVersionSource.MANUAL_SAVE) {</span>
+<span class="fc" id="L244">            sceneVersionService.checkpointAfterManualContentSave(scene);</span>
+        }
+<span class="fc" id="L246">        recordFreshEvent(lockedBook, new WordCountEventCommand(</span>
+                bookId,
+<span class="fc" id="L248">                scene.getId(),</span>
+<span class="fc" id="L249">                scene.getId(),</span>
+<span class="fc" id="L250">                scene.getTitle(),</span>
+                BookWordCountEventType.CONTENT_SAVE,
+                wordCountDelta,
+                wordCountDelta,
+<span class="fc" id="L254">                request.operationId(),</span>
+<span class="fc" id="L255">                request.operationId(),</span>
+<span class="fc" id="L256">                revisionBefore,</span>
+<span class="fc" id="L257">                scene.getContentRevision(),</span>
+                requestFingerprint,
+                totalBefore + wordCountDelta
+        ));
+
+<span class="fc" id="L262">        return SceneResponse.fromEntity(scene);</span>
+    }
+
+    @Transactional
+    public SceneResponse restoreVersion(UUID sceneId, UUID versionId, SceneVersionRestoreRequest request) {
+<span class="fc" id="L267">        Scene scene = getSceneForUpdate(sceneId);</span>
+<span class="fc" id="L268">        rejectMissingOperationId(request.operationId());</span>
+<span class="fc" id="L269">        Book lockedBook = bookAccessService.requireBookEditAccessForUpdate(scene.getBook().getId());</span>
+<span class="fc" id="L270">        SceneVersion version = sceneVersionService.getCurrentSceneVersion(sceneId, versionId);</span>
+<span class="fc" id="L271">        String requestFingerprint = WordCountRequestFingerprint.versionRestore(</span>
+<span class="fc" id="L272">                currentUserProvider.userId(),</span>
+<span class="fc" id="L273">                lockedBook.getId(),</span>
+<span class="fc" id="L274">                scene.getId(),</span>
+                versionId,
+<span class="fc" id="L276">                request.expectedContentRevision()</span>
+        );
+<span class="fc" id="L278">        SceneResponse idempotentRetryResponse = idempotentRestoreRetryResponse(scene, request.operationId(), requestFingerprint);</span>
+<span class="fc bfc" id="L279" title="All 2 branches covered.">        if (idempotentRetryResponse != null) {</span>
+<span class="fc" id="L280">            return idempotentRetryResponse;</span>
+        }
+<span class="fc" id="L282">        rejectStaleContentRevision(scene, request.expectedContentRevision());</span>
+
+<span class="fc bfc" id="L284" title="All 2 branches covered.">        if (sameContent(scene, version.getContentJson(), version.getContentText())) {</span>
+<span class="fc" id="L285">            return SceneResponse.fromEntity(scene);</span>
+        }
+
+<span class="fc" id="L288">        UUID bookId = lockedBook.getId();</span>
+<span class="fc" id="L289">        int totalBefore = Math.toIntExact(sceneRepository.sumWordCountByBookId(bookId));</span>
+<span class="fc" id="L290">        int previousWordCount = wordCount(scene);</span>
+<span class="fc" id="L291">        int newWordCount = wordCountService.countWords(version.getContentText());</span>
+<span class="fc" id="L292">        int manuscriptWordDelta = newWordCount - previousWordCount;</span>
+<span class="fc" id="L293">        long revisionBefore = scene.getContentRevision();</span>
+
+<span class="fc" id="L295">        sceneVersionService.checkpointBeforeRestore(scene);</span>
+<span class="fc" id="L296">        scene.setContentJson(version.getContentJson());</span>
+<span class="fc" id="L297">        scene.setContentText(version.getContentText());</span>
+<span class="fc" id="L298">        scene.setWordCount(newWordCount);</span>
+<span class="fc" id="L299">        scene.incrementContentRevision();</span>
+<span class="fc" id="L300">        recordFreshEvent(lockedBook, new WordCountEventCommand(</span>
+                bookId,
+<span class="fc" id="L302">                scene.getId(),</span>
+<span class="fc" id="L303">                scene.getId(),</span>
+<span class="fc" id="L304">                scene.getTitle(),</span>
+                BookWordCountEventType.VERSION_RESTORE,
+                0,
+                manuscriptWordDelta,
+<span class="fc" id="L308">                request.operationId(),</span>
+<span class="fc" id="L309">                request.operationId(),</span>
+<span class="fc" id="L310">                revisionBefore,</span>
+<span class="fc" id="L311">                scene.getContentRevision(),</span>
+                requestFingerprint,
+                totalBefore + manuscriptWordDelta
+        ));
+
+<span class="fc" id="L316">        return SceneResponse.fromEntity(scene);</span>
+    }
+
+    @Transactional
+    public SceneResponse updatePlanning(UUID sceneId, ScenePlanningRequest request) {
+<span class="fc" id="L321">        Scene scene = getSceneForEdit(sceneId);</span>
+<span class="fc" id="L322">        UUID bookId = scene.getBook().getId();</span>
+<span class="fc bfc" id="L323" title="All 2 branches covered.">        List&lt;String&gt; gapsBefore = scene.getStatus() == SceneStatus.PLANNED</span>
+<span class="fc" id="L324">                ? planningCompletenessService.planningGaps(scene)</span>
+<span class="fc" id="L325">                : List.of();</span>
+<span class="fc" id="L326">        Character povCharacter = findCharacterForBook(bookId, request.povCharacterId(), &quot;povCharacterId&quot;);</span>
+<span class="fc" id="L327">        Location mainLocation = findLocationForBook(bookId, request.mainLocationId());</span>
+<span class="fc" id="L328">        Set&lt;Character&gt; participantCharacters = findParticipantsForBook(bookId, request.participantCharacterIds());</span>
+<span class="fc" id="L329">        Set&lt;Item&gt; items = findItemsForBook(bookId, request.itemIds());</span>
+
+<span class="fc" id="L331">        scene.setGoal(request.goal());</span>
+<span class="fc" id="L332">        scene.setConflict(request.conflict());</span>
+<span class="fc" id="L333">        scene.setOutcome(request.outcome());</span>
+<span class="fc" id="L334">        scene.setPlanningNotes(request.planningNotes());</span>
+<span class="fc" id="L335">        scene.setPovCharacter(povCharacter);</span>
+<span class="fc" id="L336">        scene.setMainLocation(mainLocation);</span>
+<span class="fc" id="L337">        scene.setParticipantCharacters(participantCharacters);</span>
+<span class="fc" id="L338">        scene.setItems(items);</span>
+<span class="fc bfc" id="L339" title="All 2 branches covered.">        if (scene.getStatus() == SceneStatus.PLANNED) {</span>
+<span class="fc" id="L340">            rejectIntroducedPlanningGaps(scene, gapsBefore);</span>
+        }
+
+<span class="fc" id="L343">        return SceneResponse.fromEntity(scene);</span>
+    }
+
+    @Transactional
+    public void delete(UUID sceneId) {
+<span class="fc" id="L348">        Scene scene = getSceneForUpdate(sceneId);</span>
+<span class="fc" id="L349">        Book lockedBook = bookAccessService.requireBookEditAccessForUpdate(scene.getBook().getId());</span>
+<span class="fc" id="L350">        sceneDeletionLedgerService.prepareSceneDelete(scene, lockedBook);</span>
+<span class="fc" id="L351">        sceneRepository.delete(scene);</span>
+<span class="fc" id="L352">    }</span>
+
+    @Transactional
+    public void reorder(UUID chapterId, ReorderRequest request) {
+<span class="fc" id="L356">        chapterService.getChapter(chapterId);</span>
+<span class="fc" id="L357">        List&lt;Scene&gt; scenes = sceneRepository.findByChapterIdOrderBySortOrderAsc(chapterId);</span>
+<span class="nc" id="L358">        applyReorder(scenes, request.orderedIds(), Scene::getId, Scene::setSortOrder, &quot;scenes&quot;);</span>
+<span class="nc" id="L359">    }</span>
+
+    @Transactional(readOnly = true)
+    public Scene getScene(UUID sceneId) {
+<span class="fc" id="L363">        Scene scene = sceneRepository.findByIdAndTenantId(sceneId, currentUserProvider.tenantId())</span>
+<span class="fc" id="L364">                .orElseThrow(() -&gt; sceneNotFound(sceneId));</span>
+<span class="fc" id="L365">        requireSceneBookAccess(scene, sceneId, false);</span>
+<span class="fc" id="L366">        return scene;</span>
+    }
+
+    private Scene getSceneForUpdate(UUID sceneId) {
+<span class="fc" id="L370">        Scene scene = sceneRepository.findByIdAndTenantIdForUpdate(sceneId, currentUserProvider.tenantId())</span>
+<span class="fc" id="L371">                .orElseThrow(() -&gt; sceneNotFound(sceneId));</span>
+<span class="fc" id="L372">        requireSceneBookAccess(scene, sceneId, true);</span>
+<span class="fc" id="L373">        return scene;</span>
+    }
+
+    private Scene getSceneForEdit(UUID sceneId) {
+<span class="fc" id="L377">        Scene scene = sceneRepository.findByIdAndTenantId(sceneId, currentUserProvider.tenantId())</span>
+<span class="fc" id="L378">                .orElseThrow(() -&gt; sceneNotFound(sceneId));</span>
+<span class="fc" id="L379">        requireSceneBookAccess(scene, sceneId, true);</span>
+<span class="fc" id="L380">        return scene;</span>
+    }
+
+    private void requireSceneBookAccess(Scene scene, UUID sceneId, boolean edit) {
+        try {
+<span class="fc bfc" id="L385" title="All 2 branches covered.">            if (edit) {</span>
+<span class="fc" id="L386">                bookAccessService.requireBookEditAccess(scene.getBook().getId());</span>
+            } else {
+<span class="fc" id="L388">                bookAccessService.requireBookReadAccess(scene.getBook().getId());</span>
+            }
+<span class="fc" id="L390">        } catch (ResourceNotFoundException exception) {</span>
+<span class="fc" id="L391">            throw sceneNotFound(sceneId);</span>
+<span class="fc" id="L392">        }</span>
+<span class="fc" id="L393">    }</span>
+
+    private ResourceNotFoundException sceneNotFound(UUID sceneId) {
+<span class="fc" id="L396">        return new ResourceNotFoundException(&quot;Scene not found: &quot; + sceneId);</span>
+    }
+
+    private Character findCharacterForBook(UUID bookId, UUID characterId, String fieldName) {
+<span class="fc bfc" id="L400" title="All 2 branches covered.">        if (characterId == null) {</span>
+<span class="fc" id="L401">            return null;</span>
+        }
+
+<span class="fc" id="L404">        Character character = characterService.getCharacter(characterId);</span>
+<span class="fc bfc" id="L405" title="All 2 branches covered.">        if (!character.getBook().getId().equals(bookId)) {</span>
+<span class="fc" id="L406">            throw new BadRequestException(fieldName + &quot; must belong to the same book as the scene&quot;);</span>
+        }
+
+<span class="fc" id="L409">        return character;</span>
+    }
+
+    private Location findLocationForBook(UUID bookId, UUID locationId) {
+<span class="fc bfc" id="L413" title="All 2 branches covered.">        if (locationId == null) {</span>
+<span class="fc" id="L414">            return null;</span>
+        }
+
+<span class="fc" id="L417">        Location location = locationService.getLocation(locationId);</span>
+<span class="fc bfc" id="L418" title="All 2 branches covered.">        if (!location.getBook().getId().equals(bookId)) {</span>
+<span class="fc" id="L419">            throw new BadRequestException(&quot;mainLocationId must belong to the same book as the scene&quot;);</span>
+        }
+
+<span class="fc" id="L422">        return location;</span>
+    }
+
+    private Item findItemForBook(UUID bookId, UUID itemId) {
+<span class="fc" id="L426">        Item item = itemService.getItem(itemId);</span>
+<span class="fc bfc" id="L427" title="All 2 branches covered.">        if (!item.getBook().getId().equals(bookId)) {</span>
+<span class="fc" id="L428">            throw new BadRequestException(&quot;itemIds must belong to the same book as the scene&quot;);</span>
+        }
+
+<span class="fc" id="L431">        return item;</span>
+    }
+
+    private Set&lt;Character&gt; findParticipantsForBook(UUID bookId, List&lt;UUID&gt; participantCharacterIds) {
+<span class="fc" id="L435">        rejectNullIds(&quot;participantCharacterIds&quot;, participantCharacterIds);</span>
+<span class="fc" id="L436">        rejectDuplicateIds(&quot;participantCharacterIds&quot;, participantCharacterIds);</span>
+
+<span class="fc" id="L438">        return participantCharacterIds.stream()</span>
+<span class="fc" id="L439">                .map(characterId -&gt; findCharacterForBook(bookId, characterId, &quot;participantCharacterIds&quot;))</span>
+<span class="fc" id="L440">                .collect(Collectors.toCollection(LinkedHashSet::new));</span>
+    }
+
+    private Set&lt;Item&gt; findItemsForBook(UUID bookId, List&lt;UUID&gt; itemIds) {
+<span class="fc" id="L444">        rejectNullIds(&quot;itemIds&quot;, itemIds);</span>
+<span class="fc" id="L445">        rejectDuplicateIds(&quot;itemIds&quot;, itemIds);</span>
+
+<span class="fc" id="L447">        return itemIds.stream()</span>
+<span class="fc" id="L448">                .map(itemId -&gt; findItemForBook(bookId, itemId))</span>
+<span class="fc" id="L449">                .collect(Collectors.toCollection(LinkedHashSet::new));</span>
+    }
+
+    private void rejectDuplicateIds(String fieldName, List&lt;UUID&gt; ids) {
+<span class="fc bfc" id="L453" title="All 2 branches covered.">        if (ids.size() != new HashSet&lt;&gt;(ids).size()) {</span>
+<span class="fc" id="L454">            throw new BadRequestException(fieldName + &quot; must not contain duplicate IDs&quot;);</span>
+        }
+<span class="fc" id="L456">    }</span>
+
+    private void rejectNullIds(String fieldName, List&lt;UUID&gt; ids) {
+<span class="fc bfc" id="L459" title="All 4 branches covered.">        if (ids.stream().anyMatch(id -&gt; id == null)) {</span>
+<span class="fc" id="L460">            throw new BadRequestException(fieldName + &quot; must not contain null IDs&quot;);</span>
+        }
+<span class="fc" id="L462">    }</span>
+
+    private &lt;T&gt; void applyReorder(
+            List&lt;T&gt; children,
+            List&lt;UUID&gt; orderedIds,
+            Function&lt;T, UUID&gt; idGetter,
+            OrderSetter&lt;T&gt; orderSetter,
+            String childName
+    ) {
+<span class="pc bpc" id="L471" title="1 of 2 branches missed.">        if (orderedIds.size() != new HashSet&lt;&gt;(orderedIds).size()) {</span>
+<span class="nc" id="L472">            throw new BadRequestException(&quot;Duplicate IDs are not allowed&quot;);</span>
+        }
+<span class="pc bpc" id="L474" title="1 of 2 branches missed.">        if (orderedIds.size() != children.size()) {</span>
+<span class="nc" id="L475">            throw new BadRequestException(&quot;Reorder list must include all &quot; + childName + &quot; for the parent&quot;);</span>
+        }
+
+<span class="fc" id="L478">        Map&lt;UUID, T&gt; childrenById = children.stream()</span>
+<span class="fc" id="L479">                .collect(Collectors.toMap(idGetter, Function.identity()));</span>
+
+<span class="pc bpc" id="L481" title="1 of 2 branches missed.">        if (!childrenById.keySet().equals(new HashSet&lt;&gt;(orderedIds))) {</span>
+<span class="fc" id="L482">            throw new BadRequestException(&quot;All IDs must exist and belong to the parent&quot;);</span>
+        }
+
+<span class="nc bnc" id="L485" title="All 2 branches missed.">        for (int index = 0; index &lt; orderedIds.size(); index++) {</span>
+<span class="nc" id="L486">            T child = childrenById.get(orderedIds.get(index));</span>
+<span class="nc" id="L487">            orderSetter.setSortOrder(child, index);</span>
+        }
+<span class="nc" id="L489">    }</span>
+
+    private int wordCount(Scene scene) {
+<span class="pc bpc" id="L492" title="1 of 2 branches missed.">        return scene.getWordCount() == null ? 0 : scene.getWordCount();</span>
+    }
+
+    private void rejectStaleContentRevision(Scene scene, Long expectedContentRevision) {
+<span class="pc bpc" id="L496" title="1 of 2 branches missed.">        if (expectedContentRevision == null) {</span>
+<span class="nc" id="L497">            throw new BadRequestException(&quot;expectedContentRevision is required&quot;);</span>
+        }
+<span class="fc bfc" id="L499" title="All 2 branches covered.">        if (!expectedContentRevision.equals(scene.getContentRevision())) {</span>
+<span class="fc" id="L500">            throw new ConflictException(&quot;Scene content has changed. Reload the scene before saving.&quot;);</span>
+        }
+<span class="fc" id="L502">    }</span>
+
+    private void rejectMissingOperationId(UUID operationId) {
+<span class="pc bpc" id="L505" title="1 of 2 branches missed.">        if (operationId == null) {</span>
+<span class="nc" id="L506">            throw new BadRequestException(&quot;operationId is required&quot;);</span>
+        }
+<span class="fc" id="L508">    }</span>
+
+    private SceneVersionSource contentSource(SceneVersionSource source) {
+<span class="fc bfc" id="L511" title="All 2 branches covered.">        if (source == null) {</span>
+<span class="fc" id="L512">            return SceneVersionSource.AUTO_SAVE;</span>
+        }
+<span class="pc bpc" id="L514" title="1 of 4 branches missed.">        if (source != SceneVersionSource.AUTO_SAVE &amp;&amp; source != SceneVersionSource.MANUAL_SAVE) {</span>
+<span class="nc" id="L515">            throw new BadRequestException(&quot;source must be AUTO_SAVE or MANUAL_SAVE&quot;);</span>
+        }
+<span class="fc" id="L517">        return source;</span>
+    }
+
+    private boolean sameContent(Scene scene, String contentJson, String contentText) {
+<span class="fc bfc" id="L521" title="All 2 branches covered.">        return normalized(scene.getContentJson()).equals(normalized(contentJson))</span>
+<span class="fc bfc" id="L522" title="All 2 branches covered.">                &amp;&amp; normalized(scene.getContentText()).equals(normalized(contentText));</span>
+    }
+
+    private SceneResponse idempotentCreateRetryResponse(UUID bookId, UUID idempotencyKey, String requestFingerprint) {
+<span class="fc" id="L526">        return wordCountEventRepository.findByBookIdAndIdempotencyKey(bookId, idempotencyKey)</span>
+<span class="fc" id="L527">                .map(event -&gt; {</span>
+<span class="fc" id="L528">                    requireMatchingFingerprint(</span>
+                            event,
+                            requestFingerprint,
+                            &quot;Idempotency key was already used for a different scene creation.&quot;
+                    );
+<span class="fc bfc" id="L533" title="All 2 branches covered.">                    if (event.getScene() == null) {</span>
+<span class="fc" id="L534">                        throw new ResourceNotFoundException(&quot;Scene not found for idempotent create retry.&quot;);</span>
+                    }
+<span class="fc" id="L536">                    return SceneResponse.fromEntity(event.getScene());</span>
+                })
+<span class="fc" id="L538">                .orElse(null);</span>
+    }
+
+    private SceneResponse idempotentRetryResponse(Scene scene, UUID idempotencyKey, String requestFingerprint) {
+<span class="fc" id="L542">        return wordCountEventRepository.findByBookIdAndIdempotencyKey(scene.getBook().getId(), idempotencyKey)</span>
+<span class="fc" id="L543">                .map(event -&gt; {</span>
+<span class="fc" id="L544">                    requireMatchingFingerprint(</span>
+                            event,
+                            requestFingerprint,
+                            &quot;Idempotency key was already used for a different scene content update.&quot;
+                    );
+<span class="fc" id="L549">                    return SceneResponse.fromEntity(scene);</span>
+                })
+<span class="fc" id="L551">                .orElse(null);</span>
+    }
+
+    private SceneResponse idempotentRestoreRetryResponse(
+            Scene scene,
+            UUID idempotencyKey,
+            String requestFingerprint
+    ) {
+<span class="fc" id="L559">        return wordCountEventRepository.findByBookIdAndIdempotencyKey(scene.getBook().getId(), idempotencyKey)</span>
+<span class="fc" id="L560">                .map(event -&gt; {</span>
+<span class="fc" id="L561">                    requireMatchingFingerprint(</span>
+                            event,
+                            requestFingerprint,
+                            &quot;Idempotency key was already used for a different scene version restore.&quot;
+                    );
+<span class="fc" id="L566">                    return SceneResponse.fromEntity(scene);</span>
+                })
+<span class="fc" id="L568">                .orElse(null);</span>
+    }
+
+    private void requireMatchingFingerprint(
+            BookWordCountEvent event,
+            String requestFingerprint,
+            String conflictMessage
+    ) {
+<span class="fc bfc" id="L576" title="All 2 branches covered.">        if (event.getRequestFingerprint() == null) {</span>
+<span class="fc" id="L577">            throw new WordCountEventConflictException(</span>
+                    &quot;Legacy idempotency event cannot prove a matching retry. Please reload and retry with a new operation.&quot;
+            );
+        }
+<span class="fc bfc" id="L581" title="All 2 branches covered.">        if (!event.getRequestFingerprint().equals(requestFingerprint)) {</span>
+<span class="fc" id="L582">            throw new WordCountEventConflictException(conflictMessage);</span>
+        }
+<span class="fc" id="L584">    }</span>
+
+    private void recordFreshEvent(Book lockedBook, WordCountEventCommand command) {
+<span class="fc" id="L587">        WordCountEventRecordResult result = wordCountEventService.recordForLockedBook(lockedBook, command);</span>
+<span class="pc bpc" id="L588" title="1 of 2 branches missed.">        if (result == WordCountEventRecordResult.ALREADY_RECORDED) {</span>
+<span class="nc" id="L589">            throw new WordCountEventConflictException(&quot;Idempotency key was already used for a different word-count event.&quot;);</span>
+        }
+<span class="fc" id="L591">    }</span>
+
+    private String normalized(String value) {
+<span class="fc bfc" id="L594" title="All 2 branches covered.">        return value == null ? &quot;&quot; : value;</span>
+    }
+
+    private void rejectIncompletePlanning(Scene scene) {
+<span class="fc bfc" id="L598" title="All 2 branches covered.">        if (!planningCompletenessService.isComplete(scene)) {</span>
+<span class="fc" id="L599">            throw new BadRequestException(</span>
+                    &quot;Scene status PLANNED requires complete planning. Missing fields: &quot;
+<span class="fc" id="L601">                            + planningCompletenessService.formatMissingPlanningFields(scene)</span>
+            );
+        }
+<span class="fc" id="L604">    }</span>
+
+    private void rejectIntroducedPlanningGaps(Scene scene, List&lt;String&gt; gapsBefore) {
+<span class="fc" id="L607">        List&lt;String&gt; gapsAfter = planningCompletenessService.planningGaps(scene);</span>
+<span class="fc bfc" id="L608" title="All 4 branches covered.">        if (gapsAfter.stream().anyMatch(gap -&gt; !gapsBefore.contains(gap))) {</span>
+<span class="fc" id="L609">            throw new BadRequestException(</span>
+                    &quot;Scene status PLANNED cannot lose required planning fields. Missing fields: &quot;
+<span class="fc" id="L611">                            + planningCompletenessService.formatMissingPlanningFields(scene)</span>
+            );
+        }
+<span class="fc" id="L614">    }</span>
+
+    @FunctionalInterface
+    private interface OrderSetter&lt;T&gt; {
+        void setSortOrder(T child, int sortOrder);
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

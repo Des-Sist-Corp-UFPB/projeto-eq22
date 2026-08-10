@@ -1,0 +1,128 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="pt"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>OutlineService.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">iwrite-backend</a> &gt; <a href="index.source.html" class="el_package">com.iwrite.outline.service</a> &gt; <span class="el_source">OutlineService.java</span></div><h1>OutlineService.java</h1><pre class="source lang-java linenums">package com.iwrite.outline.service;
+
+import com.iwrite.book.entity.Book;
+import com.iwrite.book.service.BookAccessService;
+import com.iwrite.chapter.entity.Chapter;
+import com.iwrite.chapter.repository.ChapterRepository;
+import com.iwrite.outline.dto.BookOutlineResponse;
+import com.iwrite.outline.dto.OutlineChapterResponse;
+import com.iwrite.outline.dto.OutlineSceneResponse;
+import com.iwrite.outline.dto.OutlineSectionResponse;
+import com.iwrite.scene.entity.Scene;
+import com.iwrite.scene.repository.SceneRepository;
+import com.iwrite.scene.service.ScenePlanningCompletenessService;
+import com.iwrite.section.entity.BookSection;
+import com.iwrite.section.repository.BookSectionRepository;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+import java.util.stream.Collectors;
+
+@Service
+public class OutlineService {
+
+    private final BookAccessService bookAccessService;
+    private final BookSectionRepository sectionRepository;
+    private final ChapterRepository chapterRepository;
+    private final SceneRepository sceneRepository;
+    private final ScenePlanningCompletenessService planningCompletenessService;
+
+    public OutlineService(
+            BookAccessService bookAccessService,
+            BookSectionRepository sectionRepository,
+            ChapterRepository chapterRepository,
+            SceneRepository sceneRepository,
+            ScenePlanningCompletenessService planningCompletenessService
+<span class="fc" id="L39">    ) {</span>
+<span class="fc" id="L40">        this.bookAccessService = bookAccessService;</span>
+<span class="fc" id="L41">        this.sectionRepository = sectionRepository;</span>
+<span class="fc" id="L42">        this.chapterRepository = chapterRepository;</span>
+<span class="fc" id="L43">        this.sceneRepository = sceneRepository;</span>
+<span class="fc" id="L44">        this.planningCompletenessService = planningCompletenessService;</span>
+<span class="fc" id="L45">    }</span>
+
+    @Transactional(readOnly = true)
+    public BookOutlineResponse getOutline(UUID bookId) {
+<span class="fc" id="L49">        Book book = bookAccessService.requireBookReadAccess(bookId);</span>
+<span class="fc" id="L50">        List&lt;BookSection&gt; sections = sectionRepository.findByBookIdOrderBySortOrderAsc(bookId);</span>
+<span class="fc" id="L51">        List&lt;Chapter&gt; chapters = chapterRepository.findByBookIdOrderBySortOrderAsc(bookId);</span>
+<span class="fc" id="L52">        List&lt;Scene&gt; scenes = sceneRepository.findOutlineScenesByBookId(bookId);</span>
+
+<span class="fc" id="L54">        Map&lt;UUID, List&lt;Scene&gt;&gt; scenesByChapter = scenes.stream()</span>
+<span class="fc" id="L55">                .collect(Collectors.groupingBy(scene -&gt; scene.getChapter().getId()));</span>
+
+<span class="fc" id="L57">        Map&lt;UUID, List&lt;Chapter&gt;&gt; chaptersBySection = chapters.stream()</span>
+<span class="fc" id="L58">                .collect(Collectors.groupingBy(chapter -&gt; chapter.getSection().getId()));</span>
+
+<span class="fc" id="L60">        List&lt;OutlineSectionResponse&gt; sectionResponses = sections.stream()</span>
+<span class="fc" id="L61">                .map(section -&gt; mapSection(section, chaptersBySection.getOrDefault(section.getId(), List.of()), scenesByChapter))</span>
+<span class="fc" id="L62">                .toList();</span>
+
+<span class="fc" id="L64">        int bookWordCount = sectionResponses.stream()</span>
+<span class="fc" id="L65">                .mapToInt(OutlineSectionResponse::wordCount)</span>
+<span class="fc" id="L66">                .sum();</span>
+
+<span class="fc" id="L68">        return new BookOutlineResponse(</span>
+<span class="fc" id="L69">                book.getId(),</span>
+<span class="fc" id="L70">                book.getTitle(),</span>
+<span class="fc" id="L71">                book.getStatus(),</span>
+<span class="fc" id="L72">                bookWordCount,</span>
+                sectionResponses
+        );
+    }
+
+    private OutlineSectionResponse mapSection(
+            BookSection section,
+            List&lt;Chapter&gt; chapters,
+            Map&lt;UUID, List&lt;Scene&gt;&gt; scenesByChapter
+    ) {
+<span class="fc" id="L82">        List&lt;OutlineChapterResponse&gt; chapterResponses = chapters.stream()</span>
+<span class="fc" id="L83">                .map(chapter -&gt; mapChapter(chapter, scenesByChapter.getOrDefault(chapter.getId(), List.of())))</span>
+<span class="fc" id="L84">                .toList();</span>
+
+<span class="fc" id="L86">        int sectionWordCount = chapterResponses.stream()</span>
+<span class="fc" id="L87">                .mapToInt(OutlineChapterResponse::wordCount)</span>
+<span class="fc" id="L88">                .sum();</span>
+
+<span class="fc" id="L90">        return new OutlineSectionResponse(</span>
+<span class="fc" id="L91">                section.getId(),</span>
+<span class="fc" id="L92">                section.getTitle(),</span>
+<span class="fc" id="L93">                section.getType(),</span>
+<span class="fc" id="L94">                section.getSortOrder(),</span>
+<span class="fc" id="L95">                sectionWordCount,</span>
+                chapterResponses
+        );
+    }
+
+    private OutlineChapterResponse mapChapter(Chapter chapter, List&lt;Scene&gt; scenes) {
+<span class="fc" id="L101">        List&lt;OutlineSceneResponse&gt; sceneResponses = scenes.stream()</span>
+<span class="fc" id="L102">                .map(scene -&gt; new OutlineSceneResponse(</span>
+<span class="fc" id="L103">                        scene.getId(),</span>
+<span class="fc" id="L104">                        scene.getTitle(),</span>
+<span class="fc" id="L105">                        scene.getStatus(),</span>
+<span class="fc" id="L106">                        scene.getSortOrder(),</span>
+<span class="fc" id="L107">                        scene.getWordCount(),</span>
+<span class="fc bfc" id="L108" title="All 2 branches covered.">                        scene.getPovCharacter() == null ? null : scene.getPovCharacter().getId(),</span>
+<span class="fc bfc" id="L109" title="All 2 branches covered.">                        scene.getPovCharacter() == null ? null : scene.getPovCharacter().getName(),</span>
+<span class="fc" id="L110">                        planningCompletenessService.planningGaps(scene)</span>
+                ))
+<span class="fc" id="L112">                .toList();</span>
+
+<span class="fc" id="L114">        int chapterWordCount = sceneResponses.stream()</span>
+<span class="fc" id="L115">                .mapToInt(OutlineSceneResponse::wordCount)</span>
+<span class="fc" id="L116">                .sum();</span>
+
+<span class="fc" id="L118">        return new OutlineChapterResponse(</span>
+<span class="fc" id="L119">                chapter.getId(),</span>
+<span class="fc" id="L120">                chapter.getTitle(),</span>
+<span class="fc" id="L121">                chapter.getSummary(),</span>
+<span class="fc" id="L122">                chapter.getSortOrder(),</span>
+<span class="fc" id="L123">                chapterWordCount,</span>
+                sceneResponses
+        );
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

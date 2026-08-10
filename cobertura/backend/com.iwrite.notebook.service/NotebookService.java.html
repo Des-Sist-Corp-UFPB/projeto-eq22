@@ -1,0 +1,314 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="pt"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>NotebookService.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">iwrite-backend</a> &gt; <a href="index.source.html" class="el_package">com.iwrite.notebook.service</a> &gt; <span class="el_source">NotebookService.java</span></div><h1>NotebookService.java</h1><pre class="source lang-java linenums">package com.iwrite.notebook.service;
+
+import com.iwrite.book.entity.Book;
+import com.iwrite.book.service.BookAccessService;
+import com.iwrite.common.exception.BadRequestException;
+import com.iwrite.common.exception.ConflictException;
+import com.iwrite.common.exception.ResourceNotFoundException;
+import com.iwrite.common.validation.RequestValidation;
+import com.iwrite.notebook.NotebookCategoryOrdering;
+import com.iwrite.notebook.dto.NotebookCategoryRequest;
+import com.iwrite.notebook.dto.NotebookCategoryResponse;
+import com.iwrite.notebook.dto.NotebookCategoryUpdateRequest;
+import com.iwrite.notebook.dto.NotebookNoteRequest;
+import com.iwrite.notebook.dto.NotebookNoteResponse;
+import com.iwrite.notebook.dto.NotebookNoteUpdateRequest;
+import com.iwrite.notebook.entity.NotebookCategory;
+import com.iwrite.notebook.entity.NotebookNote;
+import com.iwrite.notebook.entity.NotebookNoteStatus;
+import com.iwrite.notebook.repository.BookNotebookSettingsRepository;
+import com.iwrite.notebook.repository.NotebookCategoryRepository;
+import com.iwrite.notebook.repository.NotebookNoteRepository;
+import com.iwrite.user.context.CurrentUserProvider;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.List;
+import java.util.UUID;
+
+@Service
+public class NotebookService {
+
+<span class="fc" id="L33">    private static final List&lt;String&gt; STARTER_CATEGORY_NAMES = List.of(</span>
+            &quot;Ideia&quot;,
+            &quot;Pesquisa&quot;,
+            &quot;Mundo&quot;,
+            &quot;Revisão&quot;,
+            &quot;Pergunta&quot;,
+            &quot;Referência&quot;,
+            &quot;Trecho&quot;,
+            &quot;Outro&quot;
+    );
+
+    private final NotebookCategoryRepository categoryRepository;
+    private final NotebookNoteRepository noteRepository;
+    private final BookNotebookSettingsRepository settingsRepository;
+    private final BookAccessService bookAccessService;
+    private final CurrentUserProvider currentUserProvider;
+
+    public NotebookService(
+            NotebookCategoryRepository categoryRepository,
+            NotebookNoteRepository noteRepository,
+            BookNotebookSettingsRepository settingsRepository,
+            BookAccessService bookAccessService,
+            CurrentUserProvider currentUserProvider
+<span class="fc" id="L56">    ) {</span>
+<span class="fc" id="L57">        this.categoryRepository = categoryRepository;</span>
+<span class="fc" id="L58">        this.noteRepository = noteRepository;</span>
+<span class="fc" id="L59">        this.settingsRepository = settingsRepository;</span>
+<span class="fc" id="L60">        this.bookAccessService = bookAccessService;</span>
+<span class="fc" id="L61">        this.currentUserProvider = currentUserProvider;</span>
+<span class="fc" id="L62">    }</span>
+
+    @Transactional
+    public List&lt;NotebookCategoryResponse&gt; findCategoriesByBook(UUID bookId) {
+<span class="fc" id="L66">        Book book = bookAccessService.requireBookReadAccess(bookId);</span>
+<span class="fc" id="L67">        initializeStarterCategories(book);</span>
+<span class="fc" id="L68">        return orderedCategories(bookId, currentUserProvider.tenantId())</span>
+<span class="fc" id="L69">                .stream()</span>
+<span class="fc" id="L70">                .map(NotebookCategoryResponse::fromEntity)</span>
+<span class="fc" id="L71">                .toList();</span>
+    }
+
+    @Transactional
+    public NotebookCategoryResponse createCategory(UUID bookId, NotebookCategoryRequest request) {
+<span class="fc" id="L76">        Book book = bookAccessService.requireBookEditAccess(bookId);</span>
+<span class="fc" id="L77">        initializeStarterCategories(book);</span>
+<span class="fc" id="L78">        UUID tenantId = currentUserProvider.tenantId();</span>
+<span class="fc" id="L79">        rejectDuplicateCategoryName(bookId, tenantId, request.name());</span>
+
+<span class="fc" id="L81">        NotebookCategory category = new NotebookCategory();</span>
+<span class="fc" id="L82">        category.setBook(book);</span>
+<span class="fc" id="L83">        category.setName(request.name());</span>
+<span class="fc bfc" id="L84" title="All 2 branches covered.">        category.setSortOrder(request.sortOrder() == null ? nextSortOrder(bookId, tenantId) : request.sortOrder());</span>
+
+<span class="fc" id="L86">        return NotebookCategoryResponse.fromEntity(categoryRepository.save(category));</span>
+    }
+
+    @Transactional
+    public NotebookCategoryResponse updateCategory(UUID categoryId, NotebookCategoryUpdateRequest request) {
+<span class="fc" id="L91">        NotebookCategory category = getCategory(categoryId);</span>
+<span class="fc" id="L92">        requireCategoryBookAccess(category, categoryId, true);</span>
+<span class="fc" id="L93">        RequestValidation.rejectBlankWhenPresent(&quot;name&quot;, request.name());</span>
+
+<span class="pc bpc" id="L95" title="2 of 4 branches missed.">        if (request.name() != null &amp;&amp; !category.getName().equals(request.name())) {</span>
+<span class="fc bfc" id="L96" title="All 2 branches covered.">            if (!category.getName().equalsIgnoreCase(request.name())) {</span>
+<span class="fc" id="L97">                rejectDuplicateCategoryName(</span>
+<span class="fc" id="L98">                        category.getBook().getId(),</span>
+<span class="fc" id="L99">                        currentUserProvider.tenantId(),</span>
+<span class="fc" id="L100">                        request.name()</span>
+                );
+            }
+<span class="fc" id="L103">            category.setName(request.name());</span>
+        }
+<span class="fc bfc" id="L105" title="All 2 branches covered.">        if (request.sortOrder() != null) {</span>
+<span class="fc" id="L106">            category.setSortOrder(request.sortOrder());</span>
+        }
+
+<span class="fc" id="L109">        return NotebookCategoryResponse.fromEntity(category);</span>
+    }
+
+    @Transactional
+    public void deleteCategory(UUID categoryId) {
+<span class="fc" id="L114">        NotebookCategory category = getCategoryForUpdate(categoryId);</span>
+<span class="fc" id="L115">        UUID bookId = category.getBook().getId();</span>
+<span class="fc bfc" id="L116" title="All 2 branches covered.">        if (noteRepository.existsByCategoryIdAndBookIdNot(categoryId, bookId)) {</span>
+<span class="fc" id="L117">            throw notebookCategoryReferencedConflict();</span>
+        }
+
+<span class="fc" id="L120">        noteRepository.findByBook_IdAndCategory_Id(bookId, categoryId)</span>
+<span class="fc" id="L121">                .forEach(note -&gt; note.setCategory(null));</span>
+        try {
+<span class="fc" id="L123">            categoryRepository.delete(category);</span>
+<span class="fc" id="L124">            categoryRepository.flush();</span>
+<span class="nc" id="L125">        } catch (DataIntegrityViolationException exception) {</span>
+<span class="nc" id="L126">            throw notebookCategoryReferencedConflict();</span>
+<span class="fc" id="L127">        }</span>
+<span class="fc" id="L128">    }</span>
+
+    @Transactional(readOnly = true)
+    public List&lt;NotebookNoteResponse&gt; findNotesByBook(UUID bookId, UUID categoryId) {
+<span class="fc" id="L132">        bookAccessService.requireBookReadAccess(bookId);</span>
+<span class="fc" id="L133">        UUID tenantId = currentUserProvider.tenantId();</span>
+
+<span class="fc bfc" id="L135" title="All 2 branches covered.">        if (categoryId != null) {</span>
+<span class="fc" id="L136">            NotebookCategory category = getCategory(categoryId);</span>
+<span class="pc bpc" id="L137" title="1 of 2 branches missed.">            if (!category.getBook().getId().equals(bookId)) {</span>
+<span class="nc" id="L138">                throw new BadRequestException(&quot;categoryId must belong to the same book&quot;);</span>
+            }
+<span class="fc" id="L140">            return noteRepository.findByBook_IdAndBook_Tenant_IdAndCategory_IdOrderByUpdatedAtDescIdAsc(</span>
+                            bookId,
+                            tenantId,
+                            categoryId
+                    )
+<span class="fc" id="L145">                    .stream()</span>
+<span class="fc" id="L146">                    .map(NotebookNoteResponse::fromEntity)</span>
+<span class="fc" id="L147">                    .toList();</span>
+        }
+
+<span class="fc" id="L150">        return noteRepository.findByBook_IdAndBook_Tenant_IdOrderByUpdatedAtDescIdAsc(bookId, tenantId)</span>
+<span class="fc" id="L151">                .stream()</span>
+<span class="fc" id="L152">                .map(NotebookNoteResponse::fromEntity)</span>
+<span class="fc" id="L153">                .toList();</span>
+    }
+
+    @Transactional
+    public NotebookNoteResponse createNote(UUID bookId, NotebookNoteRequest request) {
+<span class="fc" id="L158">        Book book = bookAccessService.requireBookEditAccess(bookId);</span>
+<span class="fc" id="L159">        NotebookCategory category = findCategoryForBook(bookId, request.categoryId());</span>
+
+<span class="fc" id="L161">        NotebookNote note = new NotebookNote();</span>
+<span class="fc" id="L162">        note.setBook(book);</span>
+<span class="fc" id="L163">        note.setTitle(request.title());</span>
+<span class="fc" id="L164">        note.setContent(request.content());</span>
+<span class="fc" id="L165">        note.setCategory(category);</span>
+<span class="fc bfc" id="L166" title="All 2 branches covered.">        note.setStatus(request.status() == null ? NotebookNoteStatus.OPEN : request.status());</span>
+
+<span class="fc" id="L168">        return NotebookNoteResponse.fromEntity(noteRepository.save(note));</span>
+    }
+
+    @Transactional(readOnly = true)
+    public NotebookNoteResponse findNoteById(UUID noteId) {
+<span class="fc" id="L173">        return NotebookNoteResponse.fromEntity(getNote(noteId));</span>
+    }
+
+    @Transactional
+    public NotebookNoteResponse updateNote(UUID noteId, NotebookNoteUpdateRequest request) {
+<span class="fc" id="L178">        NotebookNote note = getNote(noteId);</span>
+<span class="fc" id="L179">        requireNoteBookAccess(note, noteId, true);</span>
+<span class="fc" id="L180">        RequestValidation.rejectBlankWhenPresent(&quot;title&quot;, request.title());</span>
+<span class="fc bfc" id="L181" title="All 2 branches covered.">        NotebookCategory category = request.isCategoryIdPresent()</span>
+<span class="fc" id="L182">                ? findCategoryForBook(note.getBook().getId(), request.categoryId())</span>
+<span class="fc" id="L183">                : note.getCategory();</span>
+
+<span class="fc bfc" id="L185" title="All 2 branches covered.">        if (request.title() != null) {</span>
+<span class="fc" id="L186">            note.setTitle(request.title());</span>
+        }
+<span class="fc bfc" id="L188" title="All 2 branches covered.">        if (request.isContentPresent()) {</span>
+<span class="fc" id="L189">            note.setContent(request.content());</span>
+        }
+<span class="fc bfc" id="L191" title="All 2 branches covered.">        if (request.isCategoryIdPresent()) {</span>
+<span class="fc" id="L192">            note.setCategory(category);</span>
+        }
+<span class="fc bfc" id="L194" title="All 2 branches covered.">        if (request.status() != null) {</span>
+<span class="fc" id="L195">            note.setStatus(request.status());</span>
+        }
+
+<span class="fc" id="L198">        return NotebookNoteResponse.fromEntity(note);</span>
+    }
+
+    @Transactional
+    public void deleteNote(UUID noteId) {
+<span class="fc" id="L203">        NotebookNote note = getNote(noteId);</span>
+<span class="fc" id="L204">        requireNoteBookAccess(note, noteId, true);</span>
+<span class="fc" id="L205">        noteRepository.delete(note);</span>
+<span class="fc" id="L206">    }</span>
+
+    @Transactional(readOnly = true)
+    public NotebookCategory getCategory(UUID categoryId) {
+<span class="fc" id="L210">        NotebookCategory category = categoryRepository.findByIdAndBook_Tenant_Id(categoryId, currentUserProvider.tenantId())</span>
+<span class="fc" id="L211">                .orElseThrow(() -&gt; categoryNotFound(categoryId));</span>
+<span class="fc" id="L212">        requireCategoryBookAccess(category, categoryId, false);</span>
+<span class="fc" id="L213">        return category;</span>
+    }
+
+    @Transactional(readOnly = true)
+    public NotebookNote getNote(UUID noteId) {
+<span class="fc" id="L218">        NotebookNote note = noteRepository.findByIdAndBook_Tenant_Id(noteId, currentUserProvider.tenantId())</span>
+<span class="fc" id="L219">                .orElseThrow(() -&gt; noteNotFound(noteId));</span>
+<span class="fc" id="L220">        requireNoteBookAccess(note, noteId, false);</span>
+<span class="fc" id="L221">        return note;</span>
+    }
+
+    private void initializeStarterCategories(Book book) {
+<span class="fc" id="L225">        UUID bookId = book.getId();</span>
+<span class="fc" id="L226">        int insertedSettingsRows = settingsRepository.insertInitializedIfMissing(bookId);</span>
+<span class="fc bfc" id="L227" title="All 2 branches covered.">        if (insertedSettingsRows == 0) {</span>
+<span class="fc" id="L228">            return;</span>
+        }
+
+<span class="fc" id="L231">        int sortOrder = 0;</span>
+<span class="fc bfc" id="L232" title="All 2 branches covered.">        for (String name : STARTER_CATEGORY_NAMES) {</span>
+<span class="fc" id="L233">            categoryRepository.insertStarterCategoryIfMissing(UUID.randomUUID(), bookId, name, sortOrder);</span>
+<span class="fc" id="L234">            sortOrder++;</span>
+<span class="fc" id="L235">        }</span>
+<span class="fc" id="L236">    }</span>
+
+    private NotebookCategory findCategoryForBook(UUID bookId, UUID categoryId) {
+<span class="fc bfc" id="L239" title="All 2 branches covered.">        if (categoryId == null) {</span>
+<span class="fc" id="L240">            return null;</span>
+        }
+
+<span class="fc" id="L243">        NotebookCategory category = getCategory(categoryId);</span>
+<span class="fc bfc" id="L244" title="All 2 branches covered.">        if (!category.getBook().getId().equals(bookId)) {</span>
+<span class="fc" id="L245">            throw new BadRequestException(&quot;categoryId must belong to the same book&quot;);</span>
+        }
+
+<span class="fc" id="L248">        return category;</span>
+    }
+
+    private NotebookCategory getCategoryForUpdate(UUID categoryId) {
+<span class="fc" id="L252">        NotebookCategory category = categoryRepository.findByIdAndBookTenantIdForUpdate(categoryId, currentUserProvider.tenantId())</span>
+<span class="fc" id="L253">                .orElseThrow(() -&gt; categoryNotFound(categoryId));</span>
+<span class="fc" id="L254">        requireCategoryBookAccess(category, categoryId, true);</span>
+<span class="fc" id="L255">        return category;</span>
+    }
+
+    private int nextSortOrder(UUID bookId, UUID tenantId) {
+<span class="fc" id="L259">        return orderedCategories(bookId, tenantId)</span>
+<span class="fc" id="L260">                .stream()</span>
+<span class="fc" id="L261">                .map(NotebookCategory::getSortOrder)</span>
+<span class="fc" id="L262">                .max(Integer::compareTo)</span>
+<span class="fc" id="L263">                .map(value -&gt; value + 1)</span>
+<span class="fc" id="L264">                .orElse(0);</span>
+    }
+
+    private void rejectDuplicateCategoryName(UUID bookId, UUID tenantId, String name) {
+<span class="fc bfc" id="L268" title="All 2 branches covered.">        if (categoryRepository.existsByBook_IdAndBook_Tenant_IdAndNameIgnoreCase(bookId, tenantId, name)) {</span>
+<span class="fc" id="L269">            throw new BadRequestException(&quot;Notebook category name must be unique within the book&quot;);</span>
+        }
+<span class="fc" id="L271">    }</span>
+
+    private List&lt;NotebookCategory&gt; orderedCategories(UUID bookId, UUID tenantId) {
+<span class="fc" id="L274">        return NotebookCategoryOrdering.ordered(</span>
+<span class="fc" id="L275">                categoryRepository.findByBook_IdAndBook_Tenant_IdOrderBySortOrderAscNameAscIdAsc(bookId, tenantId));</span>
+    }
+
+    private ConflictException notebookCategoryReferencedConflict() {
+<span class="fc" id="L279">        return new ConflictException(&quot;Notebook category cannot be deleted while it is referenced.&quot;);</span>
+    }
+
+    private void requireCategoryBookAccess(NotebookCategory category, UUID categoryId, boolean edit) {
+        try {
+<span class="fc bfc" id="L284" title="All 2 branches covered.">            if (edit) {</span>
+<span class="fc" id="L285">                bookAccessService.requireBookEditAccess(category.getBook().getId());</span>
+            } else {
+<span class="fc" id="L287">                bookAccessService.requireBookReadAccess(category.getBook().getId());</span>
+            }
+<span class="nc" id="L289">        } catch (ResourceNotFoundException exception) {</span>
+<span class="nc" id="L290">            throw categoryNotFound(categoryId);</span>
+<span class="fc" id="L291">        }</span>
+<span class="fc" id="L292">    }</span>
+
+    private void requireNoteBookAccess(NotebookNote note, UUID noteId, boolean edit) {
+        try {
+<span class="fc bfc" id="L296" title="All 2 branches covered.">            if (edit) {</span>
+<span class="fc" id="L297">                bookAccessService.requireBookEditAccess(note.getBook().getId());</span>
+            } else {
+<span class="fc" id="L299">                bookAccessService.requireBookReadAccess(note.getBook().getId());</span>
+            }
+<span class="nc" id="L301">        } catch (ResourceNotFoundException exception) {</span>
+<span class="nc" id="L302">            throw noteNotFound(noteId);</span>
+<span class="fc" id="L303">        }</span>
+<span class="fc" id="L304">    }</span>
+
+    private ResourceNotFoundException categoryNotFound(UUID categoryId) {
+<span class="fc" id="L307">        return new ResourceNotFoundException(&quot;Notebook category not found: &quot; + categoryId);</span>
+    }
+
+    private ResourceNotFoundException noteNotFound(UUID noteId) {
+<span class="fc" id="L311">        return new ResourceNotFoundException(&quot;Notebook note not found: &quot; + noteId);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

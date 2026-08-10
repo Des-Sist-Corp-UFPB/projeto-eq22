@@ -1,0 +1,340 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="pt"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>TipTapMarkdownRenderer.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">iwrite-backend</a> &gt; <a href="index.source.html" class="el_package">com.iwrite.export.service</a> &gt; <span class="el_source">TipTapMarkdownRenderer.java</span></div><h1>TipTapMarkdownRenderer.java</h1><pre class="source lang-java linenums">package com.iwrite.export.service;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.stereotype.Component;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Optional;
+
+@Component
+public class TipTapMarkdownRenderer {
+
+    private final ObjectMapper objectMapper;
+
+<span class="fc" id="L16">    public TipTapMarkdownRenderer(ObjectMapper objectMapper) {</span>
+<span class="fc" id="L17">        this.objectMapper = objectMapper;</span>
+<span class="fc" id="L18">    }</span>
+
+    public Optional&lt;String&gt; render(String contentJson) {
+<span class="pc bpc" id="L21" title="2 of 4 branches missed.">        if (contentJson == null || contentJson.isBlank()) {</span>
+<span class="nc" id="L22">            return Optional.empty();</span>
+        }
+
+        try {
+<span class="fc" id="L26">            JsonNode root = objectMapper.readTree(contentJson);</span>
+<span class="pc bpc" id="L27" title="1 of 2 branches missed.">            if (!&quot;doc&quot;.equals(root.path(&quot;type&quot;).asText())) {</span>
+<span class="nc" id="L28">                return Optional.empty();</span>
+            }
+
+<span class="fc" id="L31">            List&lt;String&gt; blocks = new ArrayList&lt;&gt;();</span>
+<span class="fc bfc" id="L32" title="All 2 branches covered.">            for (JsonNode node : root.path(&quot;content&quot;)) {</span>
+<span class="fc" id="L33">                renderBlock(node).ifPresent(blocks::add);</span>
+<span class="fc" id="L34">            }</span>
+
+<span class="fc" id="L36">            String markdown = String.join(&quot;\n\n&quot;, blocks).strip();</span>
+<span class="fc bfc" id="L37" title="All 2 branches covered.">            return markdown.isBlank() ? Optional.empty() : Optional.of(markdown);</span>
+<span class="fc" id="L38">        } catch (Exception exception) {</span>
+<span class="fc" id="L39">            return Optional.empty();</span>
+        }
+    }
+
+    private Optional&lt;String&gt; renderBlock(JsonNode node) {
+<span class="fc" id="L44">        String type = node.path(&quot;type&quot;).asText();</span>
+
+<span class="fc bfc" id="L46" title="All 2 branches covered.">        if (&quot;paragraph&quot;.equals(type)) {</span>
+<span class="pc bpc" id="L47" title="1 of 2 branches missed.">            return renderInlineContent(node).map(String::strip).filter(text -&gt; !text.isBlank());</span>
+        }
+
+<span class="fc bfc" id="L50" title="All 2 branches covered.">        if (&quot;heading&quot;.equals(type)) {</span>
+<span class="fc" id="L51">            int level = node.path(&quot;attrs&quot;).path(&quot;level&quot;).asInt(1);</span>
+
+<span class="fc" id="L53">            return renderInlineContent(node)</span>
+<span class="fc" id="L54">                    .map(String::strip)</span>
+<span class="pc bpc" id="L55" title="1 of 2 branches missed.">                    .filter(text -&gt; !text.isBlank())</span>
+<span class="fc" id="L56">                    .map(text -&gt; &quot;#&quot;.repeat(internalHeadingLevel(level)) + &quot; &quot; + text);</span>
+        }
+
+<span class="fc bfc" id="L59" title="All 2 branches covered.">        if (&quot;bulletList&quot;.equals(type)) {</span>
+<span class="fc" id="L60">            return renderList(node, &quot;- &quot;, 1);</span>
+        }
+
+<span class="pc bpc" id="L63" title="1 of 2 branches missed.">        if (&quot;orderedList&quot;.equals(type)) {</span>
+<span class="nc" id="L64">            return renderList(node, null, node.path(&quot;attrs&quot;).path(&quot;start&quot;).asInt(1));</span>
+        }
+
+<span class="pc bpc" id="L67" title="1 of 2 branches missed.">        if (&quot;listItem&quot;.equals(type)) {</span>
+<span class="nc" id="L68">            return renderListItemContent(node);</span>
+        }
+
+<span class="fc bfc" id="L71" title="All 2 branches covered.">        if (&quot;blockquote&quot;.equals(type)) {</span>
+<span class="fc" id="L72">            return renderChildBlocks(node)</span>
+<span class="fc" id="L73">                    .map(block -&gt; prefixLines(block, &quot;&gt; &quot;))</span>
+<span class="pc bpc" id="L74" title="1 of 2 branches missed.">                    .filter(text -&gt; !text.isBlank());</span>
+        }
+
+<span class="fc bfc" id="L77" title="All 2 branches covered.">        if (&quot;codeBlock&quot;.equals(type)) {</span>
+<span class="fc" id="L78">            String code = plainText(node);</span>
+<span class="pc bpc" id="L79" title="1 of 2 branches missed.">            if (code.isBlank()) {</span>
+<span class="nc" id="L80">                return Optional.empty();</span>
+            }
+
+<span class="fc" id="L83">            String fence = codeFenceFor(code);</span>
+<span class="fc" id="L84">            return Optional.of(fence + &quot;\n&quot; + code.stripTrailing() + &quot;\n&quot; + fence);</span>
+        }
+
+<span class="pc bpc" id="L87" title="1 of 2 branches missed.">        if (&quot;horizontalRule&quot;.equals(type)) {</span>
+<span class="nc" id="L88">            return Optional.of(&quot;---&quot;);</span>
+        }
+
+<span class="pc bpc" id="L91" title="1 of 2 branches missed.">        if (hasTextContent(node)) {</span>
+<span class="fc" id="L92">            throw new UnsupportedContentNodeException();</span>
+        }
+
+<span class="nc" id="L95">        return Optional.empty();</span>
+    }
+
+    private Optional&lt;String&gt; renderList(JsonNode node, String unorderedMarker, int startNumber) {
+<span class="fc" id="L99">        List&lt;String&gt; items = new ArrayList&lt;&gt;();</span>
+<span class="fc" id="L100">        int number = startNumber;</span>
+
+<span class="fc bfc" id="L102" title="All 2 branches covered.">        for (JsonNode child : node.path(&quot;content&quot;)) {</span>
+<span class="pc bpc" id="L103" title="1 of 2 branches missed.">            if (!&quot;listItem&quot;.equals(child.path(&quot;type&quot;).asText())) {</span>
+<span class="nc bnc" id="L104" title="All 2 branches missed.">                if (hasTextContent(child)) {</span>
+<span class="nc" id="L105">                    throw new UnsupportedContentNodeException();</span>
+                }
+                continue;
+            }
+
+<span class="fc" id="L110">            Optional&lt;String&gt; itemContent = renderListItemContent(child);</span>
+<span class="pc bpc" id="L111" title="1 of 2 branches missed.">            if (itemContent.isPresent()) {</span>
+<span class="pc bpc" id="L112" title="1 of 2 branches missed.">                String marker = unorderedMarker == null ? number + &quot;. &quot; : unorderedMarker;</span>
+<span class="fc" id="L113">                items.add(formatListItem(marker, itemContent.get()));</span>
+            }
+<span class="fc" id="L115">            number++;</span>
+<span class="fc" id="L116">        }</span>
+
+<span class="fc" id="L118">        String markdown = String.join(&quot;\n&quot;, items);</span>
+<span class="pc bpc" id="L119" title="1 of 2 branches missed.">        return markdown.isBlank() ? Optional.empty() : Optional.of(markdown);</span>
+    }
+
+    private int internalHeadingLevel(int tipTapLevel) {
+<span class="fc bfc" id="L123" title="All 2 branches covered.">        if (tipTapLevel &lt;= 1) {</span>
+<span class="fc" id="L124">            return 4;</span>
+        }
+<span class="pc bpc" id="L126" title="1 of 2 branches missed.">        if (tipTapLevel == 2) {</span>
+<span class="nc" id="L127">            return 5;</span>
+        }
+<span class="fc" id="L129">        return 6;</span>
+    }
+
+    private Optional&lt;String&gt; renderListItemContent(JsonNode node) {
+<span class="fc" id="L133">        return renderChildBlocks(node).map(text -&gt; text.replaceAll(&quot;\\n{3,}&quot;, &quot;\n\n&quot;));</span>
+    }
+
+    private Optional&lt;String&gt; renderChildBlocks(JsonNode node) {
+<span class="fc" id="L137">        List&lt;String&gt; blocks = new ArrayList&lt;&gt;();</span>
+<span class="fc bfc" id="L138" title="All 2 branches covered.">        for (JsonNode child : node.path(&quot;content&quot;)) {</span>
+<span class="fc" id="L139">            renderBlock(child).ifPresent(blocks::add);</span>
+<span class="fc" id="L140">        }</span>
+
+<span class="fc" id="L142">        String markdown = String.join(&quot;\n\n&quot;, blocks).strip();</span>
+<span class="pc bpc" id="L143" title="1 of 2 branches missed.">        return markdown.isBlank() ? Optional.empty() : Optional.of(markdown);</span>
+    }
+
+    private String formatListItem(String marker, String content) {
+<span class="fc" id="L147">        String[] lines = content.split(&quot;\\R&quot;, -1);</span>
+<span class="fc" id="L148">        StringBuilder item = new StringBuilder(marker).append(lines[0]);</span>
+
+<span class="pc bpc" id="L150" title="1 of 2 branches missed.">        for (int index = 1; index &lt; lines.length; index++) {</span>
+<span class="nc" id="L151">            item.append(&quot;\n  &quot;).append(lines[index]);</span>
+        }
+
+<span class="fc" id="L154">        return item.toString();</span>
+    }
+
+    private String prefixLines(String text, String prefix) {
+<span class="fc" id="L158">        String[] lines = text.split(&quot;\\R&quot;, -1);</span>
+<span class="fc" id="L159">        StringBuilder prefixedText = new StringBuilder();</span>
+
+<span class="fc bfc" id="L161" title="All 2 branches covered.">        for (int index = 0; index &lt; lines.length; index++) {</span>
+<span class="pc bpc" id="L162" title="1 of 2 branches missed.">            if (index &gt; 0) {</span>
+<span class="nc" id="L163">                prefixedText.append(&quot;\n&quot;);</span>
+            }
+<span class="fc" id="L165">            prefixedText.append(prefix).append(lines[index]);</span>
+        }
+
+<span class="fc" id="L168">        return prefixedText.toString();</span>
+    }
+
+    private Optional&lt;String&gt; renderInlineContent(JsonNode node) {
+<span class="fc" id="L172">        StringBuilder text = new StringBuilder();</span>
+
+<span class="fc bfc" id="L174" title="All 2 branches covered.">        for (JsonNode child : node.path(&quot;content&quot;)) {</span>
+<span class="fc bfc" id="L175" title="All 4 branches covered.">            String renderedChild = renderInlineNode(child, text.isEmpty() || text.charAt(text.length() - 1) == '\n');</span>
+<span class="pc bpc" id="L176" title="1 of 2 branches missed.">            if (renderedChild != null) {</span>
+<span class="fc" id="L177">                text.append(renderedChild);</span>
+            }
+<span class="fc" id="L179">        }</span>
+
+<span class="fc" id="L181">        String renderedText = text.toString();</span>
+<span class="pc bpc" id="L182" title="1 of 2 branches missed.">        return renderedText.isBlank() ? Optional.empty() : Optional.of(renderedText);</span>
+    }
+
+    private String renderInlineNode(JsonNode node, boolean atLineStart) {
+<span class="fc" id="L186">        String type = node.path(&quot;type&quot;).asText();</span>
+
+<span class="fc bfc" id="L188" title="All 2 branches covered.">        if (&quot;text&quot;.equals(type)) {</span>
+<span class="fc" id="L189">            return applyMarks(escapeText(node.path(&quot;text&quot;).asText(&quot;&quot;), atLineStart), node.path(&quot;marks&quot;));</span>
+        }
+
+<span class="pc bpc" id="L192" title="1 of 2 branches missed.">        if (&quot;hardBreak&quot;.equals(type)) {</span>
+<span class="fc" id="L193">            return &quot;\n&quot;;</span>
+        }
+
+<span class="nc bnc" id="L196" title="All 2 branches missed.">        if (hasTextContent(node)) {</span>
+<span class="nc" id="L197">            throw new UnsupportedContentNodeException();</span>
+        }
+
+<span class="nc" id="L200">        return null;</span>
+    }
+
+    private String applyMarks(String text, JsonNode marks) {
+<span class="fc" id="L204">        boolean hasBold = false;</span>
+<span class="fc" id="L205">        boolean hasItalic = false;</span>
+
+<span class="fc bfc" id="L207" title="All 2 branches covered.">        for (JsonNode mark : marks) {</span>
+<span class="fc" id="L208">            String markType = mark.path(&quot;type&quot;).asText();</span>
+<span class="fc bfc" id="L209" title="All 2 branches covered.">            if (&quot;bold&quot;.equals(markType)) {</span>
+<span class="fc" id="L210">                hasBold = true;</span>
+            }
+<span class="fc bfc" id="L212" title="All 2 branches covered.">            if (&quot;italic&quot;.equals(markType)) {</span>
+<span class="fc" id="L213">                hasItalic = true;</span>
+            }
+<span class="fc" id="L215">        }</span>
+
+<span class="fc bfc" id="L217" title="All 4 branches covered.">        if (!hasBold &amp;&amp; !hasItalic) {</span>
+<span class="fc" id="L218">            return text;</span>
+        }
+
+<span class="fc" id="L221">        int contentStart = 0;</span>
+<span class="pc bpc" id="L222" title="1 of 4 branches missed.">        while (contentStart &lt; text.length() &amp;&amp; Character.isWhitespace(text.charAt(contentStart))) {</span>
+<span class="fc" id="L223">            contentStart++;</span>
+        }
+
+<span class="fc" id="L226">        int contentEnd = text.length();</span>
+<span class="pc bpc" id="L227" title="1 of 4 branches missed.">        while (contentEnd &gt; contentStart &amp;&amp; Character.isWhitespace(text.charAt(contentEnd - 1))) {</span>
+<span class="fc" id="L228">            contentEnd--;</span>
+        }
+
+<span class="pc bpc" id="L231" title="1 of 2 branches missed.">        if (contentStart == contentEnd) {</span>
+<span class="nc" id="L232">            return text;</span>
+        }
+
+<span class="fc" id="L235">        String leadingWhitespace = text.substring(0, contentStart);</span>
+<span class="fc" id="L236">        String markedText = text.substring(contentStart, contentEnd);</span>
+<span class="fc" id="L237">        String trailingWhitespace = text.substring(contentEnd);</span>
+
+<span class="fc" id="L239">        return leadingWhitespace + wrapMarkedText(markedText, hasBold, hasItalic) + trailingWhitespace;</span>
+    }
+
+    private String wrapMarkedText(String text, boolean hasBold, boolean hasItalic) {
+<span class="fc bfc" id="L243" title="All 4 branches covered.">        if (hasBold &amp;&amp; hasItalic) {</span>
+<span class="fc" id="L244">            return &quot;**_&quot; + text + &quot;_**&quot;;</span>
+        }
+<span class="fc bfc" id="L246" title="All 2 branches covered.">        if (hasBold) {</span>
+<span class="fc" id="L247">            return &quot;**&quot; + text + &quot;**&quot;;</span>
+        }
+<span class="pc bpc" id="L249" title="1 of 2 branches missed.">        if (hasItalic) {</span>
+<span class="fc" id="L250">            return &quot;*&quot; + text + &quot;*&quot;;</span>
+        }
+
+<span class="nc" id="L253">        return text;</span>
+    }
+
+    private String escapeText(String text, boolean atLineStart) {
+<span class="fc" id="L257">        StringBuilder escapedText = new StringBuilder();</span>
+<span class="fc" id="L258">        boolean isLineStart = atLineStart;</span>
+<span class="fc" id="L259">        int index = 0;</span>
+
+<span class="fc bfc" id="L261" title="All 2 branches covered.">        while (index &lt; text.length()) {</span>
+<span class="fc bfc" id="L262" title="All 4 branches covered.">            if (isLineStart &amp;&amp; startsWithMarkdownSyntax(text, index)) {</span>
+<span class="fc" id="L263">                escapedText.append('\\');</span>
+            }
+
+<span class="fc" id="L266">            char character = text.charAt(index);</span>
+<span class="fc" id="L267">            escapedText.append(character);</span>
+<span class="pc bpc" id="L268" title="1 of 2 branches missed.">            isLineStart = character == '\n';</span>
+<span class="fc" id="L269">            index++;</span>
+<span class="fc" id="L270">        }</span>
+
+<span class="fc" id="L272">        return escapedText.toString();</span>
+    }
+
+    private boolean startsWithMarkdownSyntax(String text, int index) {
+<span class="fc bfc" id="L276" title="All 2 branches covered.">        return text.startsWith(&quot;***&quot;, index)</span>
+<span class="pc bpc" id="L277" title="1 of 2 branches missed.">                || text.startsWith(&quot;---&quot;, index)</span>
+<span class="fc bfc" id="L278" title="All 2 branches covered.">                || text.startsWith(&quot;#&quot;, index)</span>
+<span class="fc bfc" id="L279" title="All 2 branches covered.">                || text.startsWith(&quot;&gt;&quot;, index)</span>
+<span class="fc bfc" id="L280" title="All 2 branches covered.">                || text.startsWith(&quot;- &quot;, index)</span>
+<span class="pc bpc" id="L281" title="1 of 2 branches missed.">                || text.startsWith(&quot;* &quot;, index)</span>
+<span class="pc bpc" id="L282" title="1 of 2 branches missed.">                || text.startsWith(&quot;+ &quot;, index);</span>
+    }
+
+    private String plainText(JsonNode node) {
+<span class="fc" id="L286">        StringBuilder text = new StringBuilder();</span>
+<span class="fc" id="L287">        appendPlainText(node, text);</span>
+<span class="fc" id="L288">        return text.toString();</span>
+    }
+
+    private void appendPlainText(JsonNode node, StringBuilder text) {
+<span class="fc" id="L292">        String type = node.path(&quot;type&quot;).asText();</span>
+<span class="fc bfc" id="L293" title="All 2 branches covered.">        if (&quot;text&quot;.equals(type)) {</span>
+<span class="fc" id="L294">            text.append(node.path(&quot;text&quot;).asText(&quot;&quot;));</span>
+<span class="fc" id="L295">            return;</span>
+        }
+<span class="pc bpc" id="L297" title="1 of 2 branches missed.">        if (&quot;hardBreak&quot;.equals(type)) {</span>
+<span class="nc" id="L298">            text.append(&quot;\n&quot;);</span>
+<span class="nc" id="L299">            return;</span>
+        }
+
+<span class="fc bfc" id="L302" title="All 2 branches covered.">        for (JsonNode child : node.path(&quot;content&quot;)) {</span>
+<span class="fc" id="L303">            appendPlainText(child, text);</span>
+<span class="fc" id="L304">        }</span>
+<span class="fc" id="L305">    }</span>
+
+    private String codeFenceFor(String code) {
+<span class="fc" id="L308">        int longestRun = 0;</span>
+<span class="fc" id="L309">        int currentRun = 0;</span>
+
+<span class="fc bfc" id="L311" title="All 2 branches covered.">        for (int index = 0; index &lt; code.length(); index++) {</span>
+<span class="pc bpc" id="L312" title="1 of 2 branches missed.">            if (code.charAt(index) == '`') {</span>
+<span class="nc" id="L313">                currentRun++;</span>
+<span class="nc" id="L314">                longestRun = Math.max(longestRun, currentRun);</span>
+            } else {
+<span class="fc" id="L316">                currentRun = 0;</span>
+            }
+        }
+
+<span class="fc" id="L320">        return &quot;`&quot;.repeat(Math.max(3, longestRun + 1));</span>
+    }
+
+    private boolean hasTextContent(JsonNode node) {
+<span class="pc bpc" id="L324" title="1 of 4 branches missed.">        if (&quot;text&quot;.equals(node.path(&quot;type&quot;).asText()) &amp;&amp; !node.path(&quot;text&quot;).asText(&quot;&quot;).isBlank()) {</span>
+<span class="fc" id="L325">            return true;</span>
+        }
+
+<span class="pc bpc" id="L328" title="1 of 2 branches missed.">        for (JsonNode child : node.path(&quot;content&quot;)) {</span>
+<span class="pc bpc" id="L329" title="1 of 2 branches missed.">            if (hasTextContent(child)) {</span>
+<span class="fc" id="L330">                return true;</span>
+            }
+<span class="nc" id="L332">        }</span>
+
+<span class="nc" id="L334">        return false;</span>
+    }
+
+    private static class UnsupportedContentNodeException extends RuntimeException {
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

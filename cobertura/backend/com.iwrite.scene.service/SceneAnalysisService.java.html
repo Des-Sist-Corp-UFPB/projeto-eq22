@@ -1,0 +1,159 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="pt"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>SceneAnalysisService.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">iwrite-backend</a> &gt; <a href="index.source.html" class="el_package">com.iwrite.scene.service</a> &gt; <span class="el_source">SceneAnalysisService.java</span></div><h1>SceneAnalysisService.java</h1><pre class="source lang-java linenums">package com.iwrite.scene.service;
+
+import com.iwrite.common.exception.BadRequestException;
+import com.iwrite.common.exception.ServiceUnavailableException;
+import com.iwrite.export.service.TipTapPlainTextRenderer;
+import com.iwrite.scene.ai.SceneAnalysisPrompt;
+import com.iwrite.scene.ai.WritingAssistant;
+import com.iwrite.scene.dto.SceneAnalysisRequest;
+import com.iwrite.scene.dto.SceneAnalysisResponse;
+import com.iwrite.scene.entity.Scene;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
+
+import java.util.List;
+import java.util.UUID;
+
+@Service
+public class SceneAnalysisService {
+
+<span class="fc" id="L23">    private static final Logger LOGGER = LoggerFactory.getLogger(SceneAnalysisService.class);</span>
+    private static final int MAX_SCENE_TEXT_CHARS = 12_000;
+    private static final int MAX_LIST_ITEMS = 5;
+
+    private final SceneService sceneService;
+    private final WritingAssistant writingAssistant;
+    private final TipTapPlainTextRenderer tipTapPlainTextRenderer;
+    private final TransactionTemplate readOnlyTransactionTemplate;
+
+    public SceneAnalysisService(
+            SceneService sceneService,
+            WritingAssistant writingAssistant,
+            TipTapPlainTextRenderer tipTapPlainTextRenderer,
+            PlatformTransactionManager transactionManager
+<span class="fc" id="L37">    ) {</span>
+<span class="fc" id="L38">        this.sceneService = sceneService;</span>
+<span class="fc" id="L39">        this.writingAssistant = writingAssistant;</span>
+<span class="fc" id="L40">        this.tipTapPlainTextRenderer = tipTapPlainTextRenderer;</span>
+<span class="fc" id="L41">        this.readOnlyTransactionTemplate = new TransactionTemplate(transactionManager);</span>
+<span class="fc" id="L42">        this.readOnlyTransactionTemplate.setReadOnly(true);</span>
+<span class="fc" id="L43">    }</span>
+
+    public SceneAnalysisResponse analyze(UUID sceneId, SceneAnalysisRequest request) {
+<span class="fc" id="L46">        SceneAnalysisPrompt prompt = readOnlyTransactionTemplate.execute(status -&gt; loadPrompt(sceneId, request));</span>
+
+<span class="fc" id="L48">        long startedAt = System.nanoTime();</span>
+        try {
+<span class="fc" id="L50">            SceneAnalysisResponse response = sanitize(writingAssistant.analyzeScene(prompt));</span>
+<span class="fc" id="L51">            logResult(sceneId, startedAt, &quot;success&quot;, &quot;none&quot;);</span>
+<span class="fc" id="L52">            return response;</span>
+<span class="fc" id="L53">        } catch (ServiceUnavailableException exception) {</span>
+<span class="fc" id="L54">            logResult(sceneId, startedAt, &quot;failure&quot;, &quot;assistant_unavailable&quot;);</span>
+<span class="fc" id="L55">            throw exception;</span>
+<span class="fc" id="L56">        } catch (RuntimeException exception) {</span>
+<span class="fc" id="L57">            logResult(sceneId, startedAt, &quot;failure&quot;, &quot;assistant_failure&quot;);</span>
+<span class="fc" id="L58">            throw new ServiceUnavailableException(&quot;AI scene analysis could not be completed.&quot;, exception);</span>
+        }
+    }
+
+    private SceneAnalysisPrompt loadPrompt(UUID sceneId, SceneAnalysisRequest request) {
+<span class="fc" id="L63">        Scene scene = sceneService.getScene(sceneId);</span>
+<span class="fc" id="L64">        String sceneText = usableSceneText(scene);</span>
+<span class="fc" id="L65">        return new SceneAnalysisPrompt(</span>
+<span class="fc" id="L66">                truncateForModel(sceneText),</span>
+<span class="fc" id="L67">                usableFocus(request),</span>
+<span class="fc bfc" id="L68" title="All 2 branches covered.">                sceneText.length() &gt; MAX_SCENE_TEXT_CHARS</span>
+        );
+    }
+
+    private String usableSceneText(Scene scene) {
+<span class="fc" id="L73">        String sceneText = tipTapPlainTextRenderer.render(scene.getContentJson())</span>
+<span class="pc bpc" id="L74" title="1 of 4 branches missed.">                .orElseGet(() -&gt; scene.getContentText() == null || scene.getContentText().isBlank()</span>
+<span class="fc" id="L75">                        ? null</span>
+<span class="fc" id="L76">                        : scene.getContentText());</span>
+<span class="pc bpc" id="L77" title="1 of 4 branches missed.">        if (sceneText == null || sceneText.trim().isEmpty()) {</span>
+<span class="fc" id="L78">            throw new BadRequestException(&quot;Scene must contain textual content before AI analysis.&quot;);</span>
+        }
+<span class="fc" id="L80">        return sceneText;</span>
+    }
+
+    private String usableFocus(SceneAnalysisRequest request) {
+<span class="pc bpc" id="L84" title="2 of 6 branches missed.">        if (request == null || request.focus() == null || request.focus().trim().isEmpty()) {</span>
+<span class="fc" id="L85">            return null;</span>
+        }
+<span class="fc" id="L87">        return request.focus().trim();</span>
+    }
+
+    /*
+     * The model receives the first 12,000 Java characters. This preserves the
+     * scene opening and keeps long-scene handling deterministic and reviewable.
+     */
+    private String truncateForModel(String sceneText) {
+<span class="fc bfc" id="L95" title="All 2 branches covered.">        if (sceneText.length() &lt;= MAX_SCENE_TEXT_CHARS) {</span>
+<span class="fc" id="L96">            return sceneText;</span>
+        }
+<span class="fc" id="L98">        return sceneText.substring(0, MAX_SCENE_TEXT_CHARS);</span>
+    }
+
+    private SceneAnalysisResponse sanitize(SceneAnalysisResponse response) {
+<span class="pc bpc" id="L102" title="1 of 2 branches missed.">        if (response == null) {</span>
+<span class="nc" id="L103">            throw malformedResponse();</span>
+        }
+
+<span class="fc" id="L106">        SceneAnalysisResponse sanitized = new SceneAnalysisResponse(</span>
+<span class="fc" id="L107">                scalar(response.summary()),</span>
+<span class="fc" id="L108">                scalar(response.tone()),</span>
+<span class="fc" id="L109">                scalar(response.pacing()),</span>
+<span class="fc" id="L110">                list(response.strengths()),</span>
+<span class="fc" id="L111">                list(response.issues()),</span>
+<span class="fc" id="L112">                list(response.suggestions())</span>
+        );
+<span class="fc bfc" id="L114" title="All 2 branches covered.">        if (isEmpty(sanitized)) {</span>
+<span class="fc" id="L115">            throw malformedResponse();</span>
+        }
+<span class="fc" id="L117">        return sanitized;</span>
+    }
+
+    private String scalar(String value) {
+<span class="fc bfc" id="L121" title="All 2 branches covered.">        return value == null ? &quot;&quot; : value.trim();</span>
+    }
+
+    private List&lt;String&gt; list(List&lt;String&gt; values) {
+<span class="fc bfc" id="L125" title="All 2 branches covered.">        if (values == null) {</span>
+<span class="fc" id="L126">            return List.of();</span>
+        }
+<span class="fc" id="L128">        return values.stream()</span>
+<span class="fc bfc" id="L129" title="All 4 branches covered.">                .filter(value -&gt; value != null &amp;&amp; !value.trim().isEmpty())</span>
+<span class="fc" id="L130">                .map(String::trim)</span>
+<span class="fc" id="L131">                .limit(MAX_LIST_ITEMS)</span>
+<span class="fc" id="L132">                .toList();</span>
+    }
+
+    private boolean isEmpty(SceneAnalysisResponse response) {
+<span class="fc bfc" id="L136" title="All 2 branches covered.">        return response.summary().isEmpty()</span>
+<span class="fc bfc" id="L137" title="All 2 branches covered.">                &amp;&amp; response.tone().isEmpty()</span>
+<span class="pc bpc" id="L138" title="1 of 2 branches missed.">                &amp;&amp; response.pacing().isEmpty()</span>
+<span class="pc bpc" id="L139" title="1 of 2 branches missed.">                &amp;&amp; response.strengths().isEmpty()</span>
+<span class="pc bpc" id="L140" title="1 of 2 branches missed.">                &amp;&amp; response.issues().isEmpty()</span>
+<span class="pc bpc" id="L141" title="1 of 2 branches missed.">                &amp;&amp; response.suggestions().isEmpty();</span>
+    }
+
+    private ServiceUnavailableException malformedResponse() {
+<span class="fc" id="L145">        return new ServiceUnavailableException(&quot;AI scene analysis returned an invalid response. Please try again later.&quot;);</span>
+    }
+
+    private void logResult(UUID sceneId, long startedAt, String outcome, String category) {
+<span class="fc" id="L149">        long elapsedMs = (System.nanoTime() - startedAt) / 1_000_000;</span>
+<span class="fc" id="L150">        LOGGER.info(</span>
+                &quot;AI scene analysis sceneId={} elapsedMs={} outcome={} category={}&quot;,
+                sceneId,
+<span class="fc" id="L153">                elapsedMs,</span>
+                outcome,
+                category
+        );
+<span class="fc" id="L157">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

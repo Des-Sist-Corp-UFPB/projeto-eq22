@@ -1,0 +1,139 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="pt"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>BookCollaboratorService.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">iwrite-backend</a> &gt; <a href="index.source.html" class="el_package">com.iwrite.book.service</a> &gt; <span class="el_source">BookCollaboratorService.java</span></div><h1>BookCollaboratorService.java</h1><pre class="source lang-java linenums">package com.iwrite.book.service;
+
+import com.iwrite.book.dto.BookCollaboratorResponse;
+import com.iwrite.book.entity.Book;
+import com.iwrite.book.entity.BookCollaborator;
+import com.iwrite.book.repository.BookCollaboratorRepository;
+import com.iwrite.book.repository.BookRepository;
+import com.iwrite.common.exception.ConflictException;
+import com.iwrite.common.exception.ResourceNotFoundException;
+import com.iwrite.tenant.repository.TenantMembershipRepository;
+import com.iwrite.user.context.CurrentUserMembershipService;
+import com.iwrite.user.context.CurrentUserProvider;
+import com.iwrite.user.repository.UserRepository;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.List;
+import java.util.UUID;
+
+@Service
+public class BookCollaboratorService {
+
+    private final BookAccessService bookAccessService;
+    private final BookRepository bookRepository;
+    private final BookCollaboratorRepository collaboratorRepository;
+    private final TenantMembershipRepository membershipRepository;
+    private final UserRepository userRepository;
+    private final CurrentUserProvider currentUserProvider;
+    private final CurrentUserMembershipService currentUserMembershipService;
+
+    public BookCollaboratorService(
+            BookAccessService bookAccessService,
+            BookRepository bookRepository,
+            BookCollaboratorRepository collaboratorRepository,
+            TenantMembershipRepository membershipRepository,
+            UserRepository userRepository,
+            CurrentUserProvider currentUserProvider,
+            CurrentUserMembershipService currentUserMembershipService
+<span class="fc" id="L40">    ) {</span>
+<span class="fc" id="L41">        this.bookAccessService = bookAccessService;</span>
+<span class="fc" id="L42">        this.bookRepository = bookRepository;</span>
+<span class="fc" id="L43">        this.collaboratorRepository = collaboratorRepository;</span>
+<span class="fc" id="L44">        this.membershipRepository = membershipRepository;</span>
+<span class="fc" id="L45">        this.userRepository = userRepository;</span>
+<span class="fc" id="L46">        this.currentUserProvider = currentUserProvider;</span>
+<span class="fc" id="L47">        this.currentUserMembershipService = currentUserMembershipService;</span>
+<span class="fc" id="L48">    }</span>
+
+    @Transactional(readOnly = true)
+    public List&lt;BookCollaboratorResponse&gt; list(UUID bookId) {
+<span class="fc" id="L52">        Book book = bookAccessService.requireBookOwnerAccess(bookId);</span>
+<span class="fc" id="L53">        return collaboratorRepository.findByBook_IdAndTenant_IdOrderByUser_DisplayNameAscUser_IdAsc(</span>
+<span class="fc" id="L54">                        book.getId(),</span>
+<span class="fc" id="L55">                        book.getTenant().getId()</span>
+                )
+<span class="fc" id="L57">                .stream()</span>
+<span class="fc" id="L58">                .map(BookCollaboratorResponse::fromEntity)</span>
+<span class="fc" id="L59">                .toList();</span>
+    }
+
+    @Transactional
+    public BookCollaboratorResponse add(UUID bookId, UUID targetUserId) {
+<span class="fc" id="L64">        Book book = bookAccessService.requireBookOwnerAccessForUpdate(bookId);</span>
+<span class="fc" id="L65">        UUID grantorUserId = currentUserMembershipService.requireCurrentUserMemberId();</span>
+<span class="fc" id="L66">        BookCollaboratorGrantResult result = grantLocked(book, targetUserId, grantorUserId);</span>
+<span class="fc bfc" id="L67" title="All 2 branches covered.">        if (result == BookCollaboratorGrantResult.ALREADY_GRANTED) {</span>
+<span class="fc" id="L68">            throw new ConflictException(&quot;Book collaborator already exists.&quot;);</span>
+        }
+<span class="fc" id="L70">        return collaboratorRepository.findByBook_IdAndTenant_IdAndUser_Id(</span>
+<span class="fc" id="L71">                        book.getId(),</span>
+<span class="fc" id="L72">                        book.getTenant().getId(),</span>
+                        targetUserId
+                )
+<span class="fc" id="L75">                .map(BookCollaboratorResponse::fromEntity)</span>
+<span class="pc" id="L76">                .orElseThrow(() -&gt; collaboratorTargetNotFound());</span>
+    }
+
+    @Transactional
+    public void remove(UUID bookId, UUID userId) {
+<span class="fc" id="L81">        Book lockedBook = bookAccessService.requireBookOwnerAccessForUpdate(bookId);</span>
+<span class="fc" id="L82">        BookCollaborator collaborator = collaboratorRepository.findByBook_IdAndTenant_IdAndUser_Id(</span>
+<span class="fc" id="L83">                        lockedBook.getId(),</span>
+<span class="fc" id="L84">                        lockedBook.getTenant().getId(),</span>
+                        userId
+                )
+<span class="fc" id="L87">                .orElseThrow(() -&gt; new ResourceNotFoundException(&quot;Book collaborator not found: &quot; + userId));</span>
+<span class="fc" id="L88">        collaboratorRepository.delete(collaborator);</span>
+<span class="fc" id="L89">        collaboratorRepository.flush();</span>
+<span class="fc" id="L90">    }</span>
+
+    @Transactional
+    public BookCollaboratorGrantResult grantInternal(UUID bookId, UUID targetUserId, UUID grantorUserId) {
+<span class="fc" id="L94">        Book book = bookRepository.findById(bookId)</span>
+<span class="pc" id="L95">                .orElseThrow(() -&gt; new ResourceNotFoundException(&quot;Book not found: &quot; + bookId));</span>
+<span class="fc" id="L96">        Book lockedBook = lockBookForGrant(book.getId(), book.getTenant().getId(), grantorUserId);</span>
+<span class="fc" id="L97">        return grantLocked(lockedBook, targetUserId, grantorUserId);</span>
+    }
+
+    private BookCollaboratorGrantResult grantLocked(Book lockedBook, UUID targetUserId, UUID grantorUserId) {
+<span class="fc bfc" id="L101" title="All 2 branches covered.">        if (lockedBook.getOwner().getId().equals(targetUserId)) {</span>
+<span class="fc" id="L102">            throw new ConflictException(&quot;Book owner cannot be added as a collaborator.&quot;);</span>
+        }
+
+<span class="fc" id="L105">        UUID tenantId = lockedBook.getTenant().getId();</span>
+<span class="fc bfc" id="L106" title="All 2 branches covered.">        if (!membershipRepository.existsByTenant_IdAndUser_Id(tenantId, targetUserId)) {</span>
+<span class="fc" id="L107">            throw collaboratorTargetNotFound();</span>
+        }
+<span class="fc bfc" id="L109" title="All 2 branches covered.">        if (collaboratorRepository.existsByBook_IdAndTenant_IdAndUser_Id(lockedBook.getId(), tenantId, targetUserId)) {</span>
+<span class="fc" id="L110">            return BookCollaboratorGrantResult.ALREADY_GRANTED;</span>
+        }
+
+<span class="fc" id="L113">        BookCollaborator collaborator = new BookCollaborator();</span>
+<span class="fc" id="L114">        collaborator.setTenant(lockedBook.getTenant());</span>
+<span class="fc" id="L115">        collaborator.setBook(lockedBook);</span>
+<span class="fc" id="L116">        collaborator.setUser(userRepository.getReferenceById(targetUserId));</span>
+<span class="fc" id="L117">        collaborator.setCreatedBy(userRepository.getReferenceById(grantorUserId));</span>
+
+        try {
+<span class="fc" id="L120">            collaboratorRepository.saveAndFlush(collaborator);</span>
+<span class="fc" id="L121">            return BookCollaboratorGrantResult.GRANTED;</span>
+<span class="nc" id="L122">        } catch (DataIntegrityViolationException exception) {</span>
+<span class="nc bnc" id="L123" title="All 2 branches missed.">            if (collaboratorRepository.existsByBook_IdAndTenant_IdAndUser_Id(lockedBook.getId(), tenantId, targetUserId)) {</span>
+<span class="nc" id="L124">                return BookCollaboratorGrantResult.ALREADY_GRANTED;</span>
+            }
+<span class="nc" id="L126">            throw collaboratorTargetNotFound();</span>
+        }
+    }
+
+    private Book lockBookForGrant(UUID bookId, UUID tenantId, UUID grantorUserId) {
+<span class="fc" id="L131">        return bookRepository.findOwnedByIdAndTenantIdAndUserIdForUpdate(bookId, tenantId, grantorUserId)</span>
+<span class="pc" id="L132">                .orElseThrow(() -&gt; new ResourceNotFoundException(&quot;Book not found: &quot; + bookId));</span>
+    }
+
+    private ResourceNotFoundException collaboratorTargetNotFound() {
+<span class="fc" id="L136">        return new ResourceNotFoundException(&quot;Book collaborator target not found&quot;);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

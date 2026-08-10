@@ -1,0 +1,293 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="pt"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>Scene.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">iwrite-backend</a> &gt; <a href="index.source.html" class="el_package">com.iwrite.scene.entity</a> &gt; <span class="el_source">Scene.java</span></div><h1>Scene.java</h1><pre class="source lang-java linenums">package com.iwrite.scene.entity;
+
+import com.iwrite.book.entity.Book;
+import com.iwrite.chapter.entity.Chapter;
+import com.iwrite.character.entity.Character;
+import com.iwrite.item.entity.Item;
+import com.iwrite.location.entity.Location;
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
+import jakarta.persistence.FetchType;
+import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.GenerationType;
+import jakarta.persistence.Id;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.JoinTable;
+import jakarta.persistence.ManyToMany;
+import jakarta.persistence.ManyToOne;
+import jakarta.persistence.PrePersist;
+import jakarta.persistence.PreUpdate;
+import jakarta.persistence.Table;
+
+import java.time.OffsetDateTime;
+import java.util.LinkedHashSet;
+import java.util.Set;
+import java.util.UUID;
+
+@Entity
+@Table(name = &quot;scenes&quot;)
+<span class="fc" id="L31">public class Scene {</span>
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.UUID)
+    private UUID id;
+
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @JoinColumn(name = &quot;book_id&quot;, nullable = false)
+    private Book book;
+
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @JoinColumn(name = &quot;chapter_id&quot;, nullable = false)
+    private Chapter chapter;
+
+    @Column(nullable = false)
+    private String title;
+
+    @Column(columnDefinition = &quot;text&quot;)
+    private String summary;
+
+    @Column(columnDefinition = &quot;text&quot;)
+    private String contentJson;
+
+    @Column(columnDefinition = &quot;text&quot;)
+    private String contentText;
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    private SceneStatus status;
+
+    @Column(nullable = false)
+    private Integer sortOrder;
+
+    @Column(nullable = false)
+    private Integer wordCount;
+
+    @Column(nullable = false)
+    private Long contentRevision;
+
+    @Column(columnDefinition = &quot;text&quot;)
+    private String goal;
+
+    @Column(columnDefinition = &quot;text&quot;)
+    private String conflict;
+
+    @Column(columnDefinition = &quot;text&quot;)
+    private String outcome;
+
+    @Column(columnDefinition = &quot;text&quot;)
+    private String planningNotes;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = &quot;pov_character_id&quot;)
+    private Character povCharacter;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = &quot;main_location_id&quot;)
+    private Location mainLocation;
+
+<span class="fc" id="L90">    @ManyToMany(fetch = FetchType.LAZY)</span>
+    @JoinTable(
+            name = &quot;scene_participants&quot;,
+            joinColumns = @JoinColumn(name = &quot;scene_id&quot;),
+            inverseJoinColumns = @JoinColumn(name = &quot;character_id&quot;)
+    )
+    private Set&lt;Character&gt; participantCharacters = new LinkedHashSet&lt;&gt;();
+
+<span class="fc" id="L98">    @ManyToMany(fetch = FetchType.LAZY)</span>
+    @JoinTable(
+            name = &quot;scene_items&quot;,
+            joinColumns = @JoinColumn(name = &quot;scene_id&quot;),
+            inverseJoinColumns = @JoinColumn(name = &quot;item_id&quot;)
+    )
+    private Set&lt;Item&gt; items = new LinkedHashSet&lt;&gt;();
+
+    @Column(nullable = false, updatable = false)
+    private OffsetDateTime createdAt;
+
+    @Column(nullable = false)
+    private OffsetDateTime updatedAt;
+
+    @PrePersist
+    void onCreate() {
+<span class="fc" id="L114">        OffsetDateTime now = OffsetDateTime.now();</span>
+<span class="fc" id="L115">        createdAt = now;</span>
+<span class="fc" id="L116">        updatedAt = now;</span>
+<span class="pc bpc" id="L117" title="1 of 2 branches missed.">        if (status == null) {</span>
+<span class="nc" id="L118">            status = SceneStatus.IDEA;</span>
+        }
+<span class="pc bpc" id="L120" title="1 of 2 branches missed.">        if (wordCount == null) {</span>
+<span class="nc" id="L121">            wordCount = 0;</span>
+        }
+<span class="pc bpc" id="L123" title="1 of 2 branches missed.">        if (contentRevision == null) {</span>
+<span class="nc" id="L124">            contentRevision = 0L;</span>
+        }
+<span class="fc" id="L126">    }</span>
+
+    @PreUpdate
+    void onUpdate() {
+<span class="fc" id="L130">        updatedAt = OffsetDateTime.now();</span>
+<span class="fc" id="L131">    }</span>
+
+    public UUID getId() {
+<span class="fc" id="L134">        return id;</span>
+    }
+
+    public Book getBook() {
+<span class="fc" id="L138">        return book;</span>
+    }
+
+    public void setBook(Book book) {
+<span class="fc" id="L142">        this.book = book;</span>
+<span class="fc" id="L143">    }</span>
+
+    public Chapter getChapter() {
+<span class="fc" id="L146">        return chapter;</span>
+    }
+
+    public void setChapter(Chapter chapter) {
+<span class="fc" id="L150">        this.chapter = chapter;</span>
+<span class="fc" id="L151">    }</span>
+
+    public String getTitle() {
+<span class="fc" id="L154">        return title;</span>
+    }
+
+    public void setTitle(String title) {
+<span class="fc" id="L158">        this.title = title;</span>
+<span class="fc" id="L159">    }</span>
+
+    public String getSummary() {
+<span class="fc" id="L162">        return summary;</span>
+    }
+
+    public void setSummary(String summary) {
+<span class="fc" id="L166">        this.summary = summary;</span>
+<span class="fc" id="L167">    }</span>
+
+    public String getContentJson() {
+<span class="fc" id="L170">        return contentJson;</span>
+    }
+
+    public void setContentJson(String contentJson) {
+<span class="fc" id="L174">        this.contentJson = contentJson;</span>
+<span class="fc" id="L175">    }</span>
+
+    public String getContentText() {
+<span class="fc" id="L178">        return contentText;</span>
+    }
+
+    public void setContentText(String contentText) {
+<span class="fc" id="L182">        this.contentText = contentText;</span>
+<span class="fc" id="L183">    }</span>
+
+    public SceneStatus getStatus() {
+<span class="fc" id="L186">        return status;</span>
+    }
+
+    public void setStatus(SceneStatus status) {
+<span class="fc" id="L190">        this.status = status;</span>
+<span class="fc" id="L191">    }</span>
+
+    public Integer getSortOrder() {
+<span class="fc" id="L194">        return sortOrder;</span>
+    }
+
+    public void setSortOrder(Integer sortOrder) {
+<span class="fc" id="L198">        this.sortOrder = sortOrder;</span>
+<span class="fc" id="L199">    }</span>
+
+    public Integer getWordCount() {
+<span class="fc" id="L202">        return wordCount;</span>
+    }
+
+    public void setWordCount(Integer wordCount) {
+<span class="fc" id="L206">        this.wordCount = wordCount;</span>
+<span class="fc" id="L207">    }</span>
+
+    public Long getContentRevision() {
+<span class="fc" id="L210">        return contentRevision;</span>
+    }
+
+    public void setContentRevision(Long contentRevision) {
+<span class="fc" id="L214">        this.contentRevision = contentRevision;</span>
+<span class="fc" id="L215">    }</span>
+
+    public void incrementContentRevision() {
+<span class="pc bpc" id="L218" title="1 of 2 branches missed.">        contentRevision = contentRevision == null ? 1L : contentRevision + 1;</span>
+<span class="fc" id="L219">    }</span>
+
+    public String getGoal() {
+<span class="fc" id="L222">        return goal;</span>
+    }
+
+    public void setGoal(String goal) {
+<span class="fc" id="L226">        this.goal = goal;</span>
+<span class="fc" id="L227">    }</span>
+
+    public String getConflict() {
+<span class="fc" id="L230">        return conflict;</span>
+    }
+
+    public void setConflict(String conflict) {
+<span class="fc" id="L234">        this.conflict = conflict;</span>
+<span class="fc" id="L235">    }</span>
+
+    public String getOutcome() {
+<span class="fc" id="L238">        return outcome;</span>
+    }
+
+    public void setOutcome(String outcome) {
+<span class="fc" id="L242">        this.outcome = outcome;</span>
+<span class="fc" id="L243">    }</span>
+
+    public String getPlanningNotes() {
+<span class="fc" id="L246">        return planningNotes;</span>
+    }
+
+    public void setPlanningNotes(String planningNotes) {
+<span class="fc" id="L250">        this.planningNotes = planningNotes;</span>
+<span class="fc" id="L251">    }</span>
+
+    public Character getPovCharacter() {
+<span class="fc" id="L254">        return povCharacter;</span>
+    }
+
+    public void setPovCharacter(Character povCharacter) {
+<span class="fc" id="L258">        this.povCharacter = povCharacter;</span>
+<span class="fc" id="L259">    }</span>
+
+    public Location getMainLocation() {
+<span class="fc" id="L262">        return mainLocation;</span>
+    }
+
+    public void setMainLocation(Location mainLocation) {
+<span class="fc" id="L266">        this.mainLocation = mainLocation;</span>
+<span class="fc" id="L267">    }</span>
+
+    public Set&lt;Character&gt; getParticipantCharacters() {
+<span class="fc" id="L270">        return participantCharacters;</span>
+    }
+
+    public void setParticipantCharacters(Set&lt;Character&gt; participantCharacters) {
+<span class="fc" id="L274">        this.participantCharacters = participantCharacters;</span>
+<span class="fc" id="L275">    }</span>
+
+    public Set&lt;Item&gt; getItems() {
+<span class="fc" id="L278">        return items;</span>
+    }
+
+    public void setItems(Set&lt;Item&gt; items) {
+<span class="fc" id="L282">        this.items = items;</span>
+<span class="fc" id="L283">    }</span>
+
+    public OffsetDateTime getCreatedAt() {
+<span class="fc" id="L286">        return createdAt;</span>
+    }
+
+    public OffsetDateTime getUpdatedAt() {
+<span class="fc" id="L290">        return updatedAt;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>
